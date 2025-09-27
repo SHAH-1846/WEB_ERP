@@ -1,0 +1,167 @@
+.lead-management {
+  padding: 32px;
+}
+
+.leads-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(400px, 1fr));
+  gap: 24px;
+  margin-top: 24px;
+}
+
+.lead-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 24px;
+  transition: all 0.3s ease;
+}
+
+.lead-card:hover {
+  transform: translateY(-4px);
+  box-shadow: var(--shadow-lg);
+}
+
+.lead-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.lead-header h3 {
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.status-badge {
+  padding: 4px 12px;
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.status-badge.gray { background: rgba(107, 114, 128, 0.1); color: #6b7280; }
+.status-badge.blue { background: rgba(59, 130, 246, 0.1); color: #3b82f6; }
+.status-badge.green { background: rgba(16, 185, 129, 0.1); color: #10b981; }
+.status-badge.red { background: rgba(239, 68, 68, 0.1); color: #ef4444; }
+.status-badge.purple { background: rgba(139, 92, 246, 0.1); color: #8b5cf6; }
+
+.lead-details {
+  margin-bottom: 20px;
+}
+
+.lead-details p {
+  margin-bottom: 8px;
+  color: var(--text-muted);
+  font-size: 14px;
+}
+
+.approvals {
+  border-top: 1px solid var(--border);
+  padding-top: 16px;
+  margin-bottom: 16px;
+}
+
+.approval-section {
+  margin-bottom: 12px;
+}
+
+.approval-section h4 {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 8px;
+}
+
+.approval-status {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.approval-status.pending { background: rgba(245, 158, 11, 0.1); color: #f59e0b; }
+.approval-status.approved { background: rgba(16, 185, 129, 0.1); color: #10b981; }
+.approval-status.rejected { background: rgba(239, 68, 68, 0.1); color: #ef4444; }
+
+.approval-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.approve-btn, .reject-btn {
+  padding: 4px 12px;
+  border: none;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+
+.approve-btn {
+  background: var(--success);
+  color: white;
+}
+
+.approve-btn:hover {
+  background: #059669;
+}
+
+.reject-btn {
+  background: var(--danger);
+  color: white;
+}
+
+.reject-btn:hover {
+  background: #dc2626;
+}
+
+.lead-actions {
+  display: flex;
+  gap: 12px;
+}
+
+.submit-btn, .convert-btn {
+  padding: 8px 16px;
+  border: none;
+  border-radius: 8px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+
+.submit-btn {
+  background: var(--primary);
+  color: white;
+}
+
+.submit-btn:hover {
+  background: var(--primary-dark);
+}
+
+.convert-btn {
+  background: var(--success);
+  color: white;
+}
+
+.convert-btn:hover {
+  background: #059669;
+}
+
+.lead-form textarea {
+  min-height: 80px;
+  resize: vertical;
+}
+
+@media (max-width: 768px) {
+  .leads-grid {
+    grid-template-columns: 1fr;
+  }
+}

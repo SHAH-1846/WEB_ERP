@@ -1,0 +1,200 @@
+.project-management {
+  padding: 32px;
+}
+
+.projects-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(450px, 1fr));
+  gap: 24px;
+  margin-top: 24px;
+}
+
+.project-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 24px;
+  transition: all 0.3s ease;
+}
+
+.project-card:hover {
+  transform: translateY(-4px);
+  box-shadow: var(--shadow-lg);
+}
+
+.project-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.project-header h3 {
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.project-details {
+  margin-bottom: 20px;
+}
+
+.project-details p {
+  margin-bottom: 8px;
+  color: var(--text-muted);
+  font-size: 14px;
+}
+
+.revisions-section {
+  border-top: 1px solid var(--border);
+  padding-top: 16px;
+  margin-bottom: 16px;
+}
+
+.revisions-section h4 {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 12px;
+}
+
+.revisions-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.revision-item {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+}
+
+.revision-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.revision-type {
+  background: var(--primary);
+  color: white;
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.revision-status {
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.revision-status.pending { background: rgba(245, 158, 11, 0.1); color: #f59e0b; }
+.revision-status.approved { background: rgba(16, 185, 129, 0.1); color: #10b981; }
+.revision-status.rejected { background: rgba(239, 68, 68, 0.1); color: #ef4444; }
+
+.revision-desc {
+  font-size: 13px;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+}
+
+.revision-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.revision-actions .approve-btn,
+.revision-actions .reject-btn {
+  padding: 4px 12px;
+  border: none;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+
+.revision-actions .approve-btn {
+  background: var(--success);
+  color: white;
+}
+
+.revision-actions .approve-btn:hover {
+  background: #059669;
+}
+
+.revision-actions .reject-btn {
+  background: var(--danger);
+  color: white;
+}
+
+.revision-actions .reject-btn:hover {
+  background: #dc2626;
+}
+
+.project-actions {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.assign-btn, .revision-btn {
+  padding: 10px 16px;
+  border: none;
+  border-radius: 8px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  font-size: 14px;
+}
+
+.assign-btn {
+  background: var(--primary);
+  color: white;
+}
+
+.assign-btn:hover {
+  background: var(--primary-dark);
+}
+
+.revision-btn {
+  background: var(--warning);
+  color: white;
+}
+
+.revision-btn:hover {
+  background: #d97706;
+}
+
+.assign-form textarea,
+.revision-form textarea {
+  min-height: 80px;
+  resize: vertical;
+}
+
+.revision-form textarea[placeholder*="JSON"] {
+  font-family: 'Courier New', monospace;
+  font-size: 13px;
+}
+
+@media (max-width: 768px) {
+  .projects-grid {
+    grid-template-columns: 1fr;
+  }
+  
+  .project-actions {
+    flex-direction: column;
+  }
+  
+  .assign-btn, .revision-btn {
+    width: 100%;
+  }
+}
