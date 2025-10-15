@@ -124,7 +124,7 @@ function LeadManagement() {
             </div>
             
             <div className="lead-details">
-              <p><strong>Budget:</strong> ${lead.budget?.toLocaleString() || 'N/A'}</p>
+              <p><strong>Budget:</strong> AED {lead.budget?.toLocaleString() || 'N/A'}</p>
               <p><strong>Location:</strong> {lead.locationDetails}</p>
               <p><strong>Working Hours:</strong> {lead.workingHours || 'N/A'}</p>
               <p><strong>Manpower:</strong> {lead.manpowerCount || 'N/A'}</p>

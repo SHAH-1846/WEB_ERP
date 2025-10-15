@@ -143,19 +143,28 @@ function UserManagement() {
             <div className="user-avatar">
               {user.name.charAt(0).toUpperCase()}
             </div>
-            <div className="user-info">
-              <h3>{user.name}</h3>
-              <p className="user-email">{user.email}</p>
-              <div className="roles-container">
-                {user.roles?.map(role => (
-                  <span key={role} className={`role-badge ${role}`}>
-                    {getRoleLabel(role)}
-                  </span>
-                ))}
+            <div className="user-details">
+              <div className="detail-column">
+                <span className="detail-label">Name</span>
+                <span className="detail-value">{user.name}</span>
               </div>
-              <div className={`status ${user.isActive ? 'active' : 'inactive'}`}>
-                {user.isActive ? 'Active' : 'Inactive'}
+              <div className="detail-column">
+                <span className="detail-label">Email</span>
+                <span className="detail-value">{user.email}</span>
               </div>
+              <div className="detail-column">
+                <span className="detail-label">User Type</span>
+                <div className="roles-container">
+                  {user.roles?.map(role => (
+                    <span key={role} className={`role-badge ${role}`}>
+                      {getRoleLabel(role)}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            </div>
+            <div className={`status ${user.isActive ? 'active' : 'inactive'}`}>
+              {user.isActive ? 'Active' : 'Inactive'}
             </div>
             <div className="user-actions">
               <button onClick={() => handleEdit(user)} className="edit-btn">

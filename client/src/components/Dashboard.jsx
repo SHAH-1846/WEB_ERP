@@ -3,10 +3,14 @@ import './Dashboard.css'
 import UserManagement from './UserManagement'
 import LeadManagement from './LeadManagement'
 import ProjectManagement from './ProjectManagement'
+import { initTheme, setTheme } from '../utils/theme'
 
 function Dashboard() {
   const [user, setUser] = useState(null)
-  const [isDark, setIsDark] = useState(false)
+  const [isDark, setIsDark] = useState(() => {
+    const saved = localStorage.getItem('theme')
+    return saved === 'dark'
+  })
   const [activeTab, setActiveTab] = useState('dashboard')
   const [stats, setStats] = useState({
     totalUsers: 1247,
@@ -18,15 +22,10 @@ function Dashboard() {
   useEffect(() => {
     const userData = JSON.parse(localStorage.getItem('user'))
     setUser(userData)
-    const saved = localStorage.getItem('theme')
-    if (saved) {
-      setIsDark(saved === 'dark')
-    }
   }, [])
 
   useEffect(() => {
-    document.documentElement.setAttribute('data-theme', isDark ? 'dark' : 'light')
-    localStorage.setItem('theme', isDark ? 'dark' : 'light')
+    setTheme(isDark)
   }, [isDark])
 
   const handleLogout = () => {
@@ -147,7 +146,7 @@ function Dashboard() {
                     </svg>
                   </div>
                   <div className="stat-content">
-                    <h3>${stats.revenue.toLocaleString()}</h3>
+                    <h3>AED {stats.revenue.toLocaleString()}</h3>
                     <p>Revenue</p>
                     <span className="stat-change positive">+8.2%</span>
                   </div>

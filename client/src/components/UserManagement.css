@@ -73,20 +73,35 @@
   color: white;
   font-weight: 700;
   font-size: 24px;
+  margin: 0 auto 20px;
+}
+
+.user-details {
+  display: flex;
+  gap: 20px;
   margin-bottom: 16px;
 }
 
-.user-info h3 {
-  font-size: 20px;
-  font-weight: 600;
-  color: var(--text);
-  margin-bottom: 4px;
+.detail-column {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 
-.user-email {
+.detail-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
   color: var(--text-muted);
+  letter-spacing: 0.5px;
+}
+
+.detail-value {
   font-size: 14px;
-  margin-bottom: 12px;
+  font-weight: 500;
+  color: var(--text);
+  word-wrap: break-word;
 }
 
 .role-badge {
@@ -115,6 +130,8 @@
   font-weight: 600;
   padding: 4px 8px;
   border-radius: 6px;
+  width: fit-content;
+  margin: 0 auto;
 }
 
 .status.active {
@@ -263,9 +280,8 @@
 
 .roles-container {
   display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-bottom: 8px;
+  flex-direction: column;
+  gap: 4px;
 }
 
 .roles-grid {

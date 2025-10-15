@@ -12,8 +12,7 @@ function ProjectManagement() {
   const [assignData, setAssignData] = useState({ siteEngineerId: '' })
   const [revisionData, setRevisionData] = useState({
     type: 'price',
-    description: '',
-    changes: ''
+    description: ''
   })
 
   useEffect(() => {
@@ -74,7 +73,7 @@ function ProjectManagement() {
       })
       fetchProjects()
       setShowRevisionModal(false)
-      setRevisionData({ type: 'price', description: '', changes: '' })
+      setRevisionData({ type: 'price', description: '' })
     } catch (error) {
       alert(error.response?.data?.message || 'Error creating revision')
     }
@@ -128,7 +127,7 @@ function ProjectManagement() {
             </div>
             
             <div className="project-details">
-              <p><strong>Budget:</strong> ${project.budget?.toLocaleString() || 'N/A'}</p>
+              <p><strong>Budget:</strong> AED {project.budget?.toLocaleString() || 'N/A'}</p>
               <p><strong>Location:</strong> {project.locationDetails}</p>
               <p><strong>Working Hours:</strong> {project.workingHours || 'N/A'}</p>
               <p><strong>Manpower:</strong> {project.manpowerCount || 'N/A'}</p>
@@ -253,15 +252,6 @@ function ProjectManagement() {
                   onChange={(e) => setRevisionData({...revisionData, description: e.target.value})}
                   placeholder="Describe the revision..."
                   required
-                />
-              </div>
-              
-              <div className="form-group">
-                <label>Changes (JSON format)</label>
-                <textarea
-                  value={revisionData.changes}
-                  onChange={(e) => setRevisionData({...revisionData, changes: e.target.value})}
-                  placeholder='{"budget": 50000, "timeline": "6 months"}'
                 />
               </div>
               
