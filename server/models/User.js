@@ -17,8 +17,8 @@ const userSchema = new mongoose.Schema({
     required: true
   },
   roles: [{
-    type: String,
-    enum: ['admin', 'manager', 'account_manager', 'hr', 'inventory_manager', 'store_keeper', 'supervisor', 'site_engineer', 'vendor', 'employee']
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Role'
   }],
   isActive: {
     type: Boolean,

@@ -1,5 +1,6 @@
 const mongoose = require('mongoose');
 const User = require('./models/User');
+const Role = require('./models/Role');
 require('dotenv').config();
 
 const seedAdmin = async () => {
@@ -7,40 +8,18 @@ const seedAdmin = async () => {
     await mongoose.connect(process.env.MONGODB_URI);
     
     const adminExists = await User.findOne({ email: 'admin@wbes.com' });
+    // Require admin role to exist
+    const adminRole = await Role.findOne({ key: 'admin' });
+    if (!adminRole) {
+      console.error('Admin role not found. Run "npm run seed:roles" first.');
+      process.exit(1);
+    }
     if (!adminExists) {
       await User.create({
         name: 'WBES Admin',
         email: 'admin@wbes.com',
         password: 'admin123',
-        roles: ['admin']
-      });
-      
-      await User.create({
-        name: 'Test Manager',
-        email: 'manager@wbes.com',
-        password: 'manager123',
-        roles: ['manager']
-      });
-      
-      await User.create({
-        name: 'Test HR',
-        email: 'hr@wbes.com',
-        password: 'hr123',
-        roles: ['hr']
-      });
-      
-      await User.create({
-        name: 'Test Supervisor',
-        email: 'supervisor@wbes.com',
-        password: 'supervisor123',
-        roles: ['supervisor']
-      });
-      
-      await User.create({
-        name: 'Test Inventory Manager',
-        email: 'inventory@wbes.com',
-        password: 'inventory123',
-        roles: ['inventory_manager']
+        roles: [adminRole._id]
       });
       console.log('Admin user created successfully');
     } else {

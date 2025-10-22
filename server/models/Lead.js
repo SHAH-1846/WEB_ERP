@@ -1,16 +1,33 @@
 const mongoose = require('mongoose');
 
 const leadSchema = new mongoose.Schema({
+  // New fields for sales/estimation engineers
+  customerName: {
+    type: String
+  },
+  projectTitle: {
+    type: String
+  },
+  enquiryNumber: {
+    type: String
+  },
+  enquiryDate: {
+    type: Date
+  },
+  scopeSummary: {
+    type: String
+  },
+  submissionDueDate: {
+    type: Date
+  },
   name: {
-    type: String,
-    required: true
+    type: String
   },
   budget: {
     type: Number
   },
   locationDetails: {
-    type: String,
-    required: true
+    type: String
   },
   workingHours: {
     type: String
@@ -45,7 +62,16 @@ const leadSchema = new mongoose.Schema({
   projectId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Project'
-  }
+  },
+  edits: [{
+    editedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+    editedAt: { type: Date, default: Date.now },
+    changes: [{
+      field: { type: String, required: true },
+      from: { type: mongoose.Schema.Types.Mixed },
+      to: { type: mongoose.Schema.Types.Mixed }
+    }]
+  }]
 }, {
   timestamps: true
 });

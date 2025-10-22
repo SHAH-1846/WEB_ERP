@@ -37,14 +37,14 @@ router.patch('/:id/assign-engineer', auth, async (req, res) => {
   try {
     const { siteEngineerId } = req.body;
     const userRoles = req.user.roles;
-    
     const canAssign = userRoles.includes('admin') || userRoles.includes('manager') || userRoles.includes('supervisor');
     if (!canAssign) {
       return res.status(403).json({ message: 'Not authorized to assign engineers' });
     }
 
-    const engineer = await User.findById(siteEngineerId);
-    if (!engineer || !engineer.roles.includes('site_engineer')) {
+    const engineer = await User.findById(siteEngineerId).populate('roles');
+    const engineerRoleKeys = (engineer?.roles || []).map(r => (typeof r === 'string' ? r : r.key));
+    if (!engineer || !engineerRoleKeys.includes('site_engineer')) {
       return res.status(400).json({ message: 'Invalid site engineer' });
     }
 

@@ -22,6 +22,7 @@ router.get('/', auth, async (req, res) => {
   try {
     const leads = await Lead.find()
       .populate('createdBy', 'name email')
+      .populate('edits.editedBy', 'name email')
       .populate('approvals.accounts.approvedBy', 'name')
       .populate('approvals.management.approvedBy', 'name')
       .sort({ createdAt: -1 });
@@ -34,12 +35,26 @@ router.get('/', auth, async (req, res) => {
 // Create lead (Supervisors only)
 router.post('/', auth, async (req, res) => {
   try {
-    if (!req.user.roles.includes('supervisor')) {
-      return res.status(403).json({ message: 'Only supervisors can create leads' });
+    const canCreate = req.user.roles.includes('supervisor') || req.user.roles.includes('sales_engineer') || req.user.roles.includes('estimation_engineer');
+    if (!canCreate) {
+      return res.status(403).json({ message: 'Only supervisors, sales engineers or estimation engineers can create leads' });
+    }
+
+    const { customerName, projectTitle, enquiryNumber, enquiryDate, scopeSummary, submissionDueDate } = req.body;
+    
+    // Validate minimal required fields for the new role-based creation
+    if ((req.user.roles.includes('sales_engineer') || req.user.roles.includes('estimation_engineer')) && (!customerName || !projectTitle || !enquiryNumber || !enquiryDate || !scopeSummary || !submissionDueDate)) {
+      return res.status(400).json({ message: 'Missing required fields' });
     }
 
     const lead = new Lead({
-      ...req.body,
+      customerName,
+      projectTitle,
+      enquiryNumber,
+      enquiryDate,
+      scopeSummary,
+      submissionDueDate,
+      name: projectTitle,
       createdBy: req.user.userId
     });
 
@@ -138,6 +153,78 @@ router.post('/:id/convert', auth, async (req, res) => {
     await lead.save();
 
     res.json(project);
+  } catch (error) {
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Update lead (creator can edit only when draft)
+router.put('/:id', auth, async (req, res) => {
+  try {
+    const lead = await Lead.findById(req.params.id);
+    if (!lead) return res.status(404).json({ message: 'Lead not found' });
+
+    const canEditByRole = (req.user.roles || []).some(r => ['sales_engineer', 'estimation_engineer'].includes(r));
+    const isCreator = lead.createdBy.toString() === req.user.userId;
+    if (!isCreator && !canEditByRole) {
+      return res.status(403).json({ message: 'Not authorized to edit this lead' });
+    }
+
+    if (lead.status !== 'draft') {
+      return res.status(400).json({ message: 'Only draft leads can be edited' });
+    }
+
+    const { customerName, projectTitle, enquiryNumber, enquiryDate, scopeSummary, submissionDueDate } = req.body;
+
+    if ((req.user.roles.includes('sales_engineer') || req.user.roles.includes('estimation_engineer')) && (!customerName || !projectTitle || !enquiryNumber || !enquiryDate || !scopeSummary || !submissionDueDate)) {
+      return res.status(400).json({ message: 'Missing required fields' });
+    }
+
+    const fields = { customerName, projectTitle, enquiryNumber, enquiryDate, scopeSummary, submissionDueDate };
+    const changes = [];
+    for (const [field, newValue] of Object.entries(fields)) {
+      const oldValue = lead[field];
+      const isDifferent = (oldValue instanceof Date || newValue instanceof Date)
+        ? (new Date(oldValue).getTime() !== new Date(newValue).getTime())
+        : oldValue !== newValue;
+      if (typeof newValue !== 'undefined' && isDifferent) {
+        changes.push({ field, from: oldValue, to: newValue });
+        lead[field] = newValue;
+      }
+    }
+    if (typeof projectTitle !== 'undefined') {
+      lead.name = projectTitle;
+    }
+
+    if (changes.length > 0) {
+      lead.edits.push({ editedBy: req.user.userId, changes });
+    }
+
+    await lead.save();
+    await lead.populate('createdBy', 'name email');
+    await lead.populate('edits.editedBy', 'name email');
+    res.json(lead);
+  } catch (error) {
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Delete lead (creator can delete only when draft)
+router.delete('/:id', auth, async (req, res) => {
+  try {
+    const lead = await Lead.findById(req.params.id);
+    if (!lead) return res.status(404).json({ message: 'Lead not found' });
+
+    if (lead.createdBy.toString() !== req.user.userId) {
+      return res.status(403).json({ message: 'Not authorized to delete this lead' });
+    }
+
+    if (lead.status !== 'draft') {
+      return res.status(400).json({ message: 'Only draft leads can be deleted' });
+    }
+
+    await Lead.findByIdAndDelete(req.params.id);
+    res.json({ message: 'Lead deleted successfully' });
   } catch (error) {
     res.status(500).json({ message: 'Server error' });
   }

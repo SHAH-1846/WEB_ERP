@@ -2,22 +2,23 @@ import { useState, useEffect } from 'react'
 import axios from 'axios'
 import './UserManagement.css'
 
-const ALL_ROLES = [
-  { value: 'admin', label: 'Admin' },
-  { value: 'manager', label: 'Manager' },
-  { value: 'account_manager', label: 'Account Manager' },
-  { value: 'hr', label: 'HR' },
-  { value: 'inventory_manager', label: 'Inventory Manager' },
-  { value: 'store_keeper', label: 'Store Keeper' },
-  { value: 'supervisor', label: 'Supervisor' },
-  { value: 'site_engineer', label: 'Site Engineer' },
-  { value: 'vendor', label: 'Vendor' },
-  { value: 'employee', label: 'Employee' }
+// Will be fetched from server
+const STATIC_FALLBACK_ROLES = [
+  { key: 'admin', name: 'Admin' },
+  { key: 'manager', name: 'Manager' },
+  { key: 'account_manager', name: 'Account Manager' },
+  { key: 'hr', name: 'HR' },
+  { key: 'inventory_manager', name: 'Inventory Manager' },
+  { key: 'store_keeper', name: 'Store Keeper' },
+  { key: 'supervisor', name: 'Supervisor' },
+  { key: 'site_engineer', name: 'Site Engineer' },
+  { key: 'vendor', name: 'Vendor' },
+  { key: 'employee', name: 'Employee' }
 ]
 
 const ROLE_PERMISSIONS = {
-  admin: ['admin', 'manager', 'account_manager', 'hr', 'inventory_manager', 'store_keeper', 'supervisor', 'site_engineer', 'vendor', 'employee'],
-  manager: ['account_manager', 'hr', 'inventory_manager', 'store_keeper', 'supervisor', 'site_engineer', 'vendor', 'employee'],
+  admin: ['admin', 'manager', 'account_manager', 'hr', 'inventory_manager', 'store_keeper', 'supervisor', 'site_engineer', 'sales_engineer', 'project_engineer', 'estimation_engineer', 'vendor', 'employee'],
+  manager: ['account_manager', 'hr', 'inventory_manager', 'store_keeper', 'supervisor', 'site_engineer', 'sales_engineer', 'project_engineer', 'estimation_engineer', 'vendor', 'employee'],
   hr: ['account_manager', 'inventory_manager', 'store_keeper', 'supervisor', 'site_engineer', 'employee'],
   supervisor: ['vendor'],
   site_engineer: ['vendor'],
@@ -28,15 +29,29 @@ function UserManagement() {
   const [users, setUsers] = useState([])
   const [showModal, setShowModal] = useState(false)
   const [editingUser, setEditingUser] = useState(null)
-  const [formData, setFormData] = useState({ name: '', email: '', roles: [] })
+  const [formData, setFormData] = useState({ name: '', email: '', roles: [], roleIds: [] })
   const [currentUser, setCurrentUser] = useState(null)
   const [loading, setLoading] = useState(false)
+  const [allRoles, setAllRoles] = useState(STATIC_FALLBACK_ROLES)
 
   useEffect(() => {
     const userData = JSON.parse(localStorage.getItem('user'))
     setCurrentUser(userData)
     fetchUsers()
+    fetchRoles()
   }, [])
+  const fetchRoles = async () => {
+    try {
+      const token = localStorage.getItem('token')
+      const response = await axios.get('http://localhost:5000/api/roles', {
+        headers: { Authorization: `Bearer ${token}` }
+      })
+      setAllRoles(response.data)
+    } catch (error) {
+      // keep fallback
+    }
+  }
+
 
   const fetchUsers = async () => {
     try {
@@ -57,12 +72,19 @@ function UserManagement() {
     try {
       const token = localStorage.getItem('token')
       
+      const payload = {
+        name: formData.name,
+        email: formData.email,
+        // Prefer roleIds; server can also accept roles keys
+        roleIds: formData.roleIds,
+        roles: formData.roles
+      }
       if (editingUser) {
-        await axios.put(`http://localhost:5000/api/users/${editingUser._id}`, formData, {
+        await axios.put(`http://localhost:5000/api/users/${editingUser._id}`, payload, {
           headers: { Authorization: `Bearer ${token}` }
         })
       } else {
-        await axios.post('http://localhost:5000/api/users', formData, {
+        await axios.post('http://localhost:5000/api/users', payload, {
           headers: { Authorization: `Bearer ${token}` }
         })
       }
@@ -70,7 +92,7 @@ function UserManagement() {
       fetchUsers()
       setShowModal(false)
       setEditingUser(null)
-      setFormData({ name: '', email: '', roles: [] })
+      setFormData({ name: '', email: '', roles: [], roleIds: [] })
     } catch (error) {
       alert(error.response?.data?.message || 'Error saving user')
     } finally {
@@ -80,7 +102,8 @@ function UserManagement() {
 
   const handleEdit = (user) => {
     setEditingUser(user)
-    setFormData({ name: user.name, email: user.email, roles: user.roles || [] })
+    setEditingUser(user)
+    setFormData({ name: user.name, email: user.email, roles: user.roles || [], roleIds: user.roleIds || [] })
     setShowModal(true)
   }
 
@@ -98,8 +121,8 @@ function UserManagement() {
     }
   }
 
-  const getRoleLabel = (role) => {
-    return ALL_ROLES.find(r => r.value === role)?.label || role
+  const getRoleLabel = (roleKey) => {
+    return allRoles.find(r => r.key === roleKey)?.name || roleKey
   }
 
   const getAvailableRoles = () => {
@@ -115,14 +138,20 @@ function UserManagement() {
     
     // Remove duplicates and return role objects
     const uniqueRoles = [...new Set(allowedRoles)]
-    return ALL_ROLES.filter(role => uniqueRoles.includes(role.value))
+    return allRoles
+      .filter(role => uniqueRoles.includes(role.key))
+      .map(r => ({ value: r.key, label: r.name, _id: r._id }))
   }
 
-  const handleRoleChange = (roleValue) => {
-    const newRoles = formData.roles.includes(roleValue)
+  const handleRoleChange = (roleValue, roleId) => {
+    const hasRole = formData.roles.includes(roleValue)
+    const newRoles = hasRole
       ? formData.roles.filter(r => r !== roleValue)
       : [...formData.roles, roleValue]
-    setFormData({ ...formData, roles: newRoles })
+    const newRoleIds = hasRole
+      ? formData.roleIds.filter(id => id !== roleId)
+      : [...formData.roleIds, roleId]
+    setFormData({ ...formData, roles: newRoles, roleIds: newRoleIds })
   }
 
   return (
@@ -219,7 +248,7 @@ function UserManagement() {
                       <input
                         type="checkbox"
                         checked={formData.roles.includes(role.value)}
-                        onChange={() => handleRoleChange(role.value)}
+                        onChange={() => handleRoleChange(role.value, role._id)}
                       />
                       <span className="checkmark"></span>
                       {role.label}
