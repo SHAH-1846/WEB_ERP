@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import './LeadManagement.css'
 import './LeadDetail.css'
 import { setTheme } from '../utils/theme'
+import logo from '../assets/logo/WBES_Logo.png'
 
 function LeadDetail() {
   const [lead, setLead] = useState(null)
@@ -50,6 +51,132 @@ function LeadDetail() {
     weatherConditions: '',
     description: ''
   })
+
+  // Helpers for PDF export
+  const ensurePdfMake = async () => {
+    if (window.pdfMake) return
+    await new Promise((resolve, reject) => {
+      const script = document.createElement('script')
+      script.src = 'https://cdn.jsdelivr.net/npm/pdfmake@0.2.7/build/pdfmake.min.js'
+      script.onload = resolve
+      script.onerror = reject
+      document.body.appendChild(script)
+    })
+    await new Promise((resolve, reject) => {
+      const script = document.createElement('script')
+      script.src = 'https://cdn.jsdelivr.net/npm/pdfmake@0.2.7/build/vfs_fonts.js'
+      script.onload = resolve
+      script.onerror = reject
+      document.body.appendChild(script)
+    })
+  }
+
+  const toDataURL = async (url) => {
+    const res = await fetch(url)
+    const blob = await res.blob()
+    return await new Promise((resolve) => {
+      const reader = new FileReader()
+      reader.onloadend = () => resolve(reader.result)
+      reader.readAsDataURL(blob)
+    })
+  }
+
+  const exportVisitPDF = async (visit) => {
+    try {
+      await ensurePdfMake()
+      const logoDataUrl = await toDataURL(logo)
+      const reportTitle = 'Site Visit Report'
+      const filename = `${(lead.projectTitle || lead.name || 'Lead')}_Visit_${visit.visitAt ? new Date(visit.visitAt).toISOString().slice(0,10) : 'Date'}.pdf`
+
+      const leadFields = [
+        ['Customer', lead.customerName || 'N/A'],
+        ['Project Title', lead.projectTitle || 'N/A'],
+        ['Enquiry #', lead.enquiryNumber || 'N/A'],
+        ['Enquiry Date', lead.enquiryDate ? new Date(lead.enquiryDate).toLocaleDateString() : 'N/A'],
+        ['Submission Due', lead.submissionDueDate ? new Date(lead.submissionDueDate).toLocaleDateString() : 'N/A'],
+        ['Scope Summary', lead.scopeSummary || 'N/A']
+      ]
+
+      const visitFields = [
+        ['Date & Time', visit.visitAt ? new Date(visit.visitAt).toLocaleString() : 'N/A'],
+        ['Engineer', visit.engineerName || 'N/A'],
+        ['Added By', visit.createdBy?.name ? `${visit.createdBy.name}${visit.createdBy.email ? ' (' + visit.createdBy.email + ')' : ''}` : 'N/A'],
+        ['Site Location', visit.siteLocation || 'N/A'],
+        ['Work Progress', visit.workProgressSummary || 'N/A'],
+        ['Safety Observations', visit.safetyObservations || 'N/A'],
+        ['Quality & Material Check', visit.qualityMaterialCheck || 'N/A'],
+        ['Issues / Non-Conformities', visit.issuesFound || 'N/A'],
+        ['Action Items / Follow-up', visit.actionItems || 'N/A'],
+        ['Weather Conditions', visit.weatherConditions || 'N/A'],
+        ['Description / Remarks', visit.description || 'N/A']
+      ]
+
+      const professionalParagraphs = [
+        { text: 'Executive Summary', style: 'h2', margin: [0, 16, 0, 8] },
+        { text: `The site visit was conducted by ${visit.engineerName || 'the assigned engineer'} on ${visit.visitAt ? new Date(visit.visitAt).toLocaleString() : 'N/A'}. The overall progress is summarized below with key observations and recommended follow-up actions for maintaining momentum and quality across on‑site operations.`, margin: [0,0,0,8] },
+        { text: 'Observations & Insights', style: 'h2', margin: [0, 12, 0, 8] },
+        { text: `Work on site is progressing ${visit.workProgressSummary ? 'as follows: ' + visit.workProgressSummary : 'according to plan'}.
+${visit.safetyObservations ? 'Safety: ' + visit.safetyObservations : 'Safety standards appear to be upheld with no critical deviations reported at the time of visit.'}
+${visit.qualityMaterialCheck ? 'Quality & Materials: ' + visit.qualityMaterialCheck : 'Materials inspected met expected quality benchmarks; workmanship aligns with design intent.'}`, margin: [0,0,0,8] },
+        { text: 'Risks & Recommendations', style: 'h2', margin: [0, 12, 0, 8] },
+        { text: `${visit.issuesFound ? 'Issues identified: ' + visit.issuesFound : 'No material issues were identified that could impact schedule or quality.'}
+${visit.actionItems ? 'Recommended follow‑up: ' + visit.actionItems : 'Continue with current plan, monitor progress and perform targeted spot checks on critical path items.'}`, margin: [0,0,0,0] }
+      ]
+
+      const docDefinition = {
+        pageMargins: [40, 60, 40, 60],
+        content: [
+          {
+            columns: [
+              { image: logoDataUrl, width: 90 },
+              [
+                { text: 'WBES', style: 'brand' },
+                { text: reportTitle, style: 'h1' }
+              ],
+              { text: new Date().toLocaleDateString(), alignment: 'right', color: '#64748b' }
+            ]
+          },
+          { text: '\n' },
+          { text: 'Lead Details', style: 'h2', margin: [0, 8, 0, 6] },
+          {
+            table: {
+              widths: ['30%', '70%'],
+              body: [
+                [{ text: 'Field', style: 'th' }, { text: 'Value', style: 'th' }],
+                ...leadFields.map(([k,v]) => [{ text: k, style: 'tdKey' }, { text: v, style: 'tdVal' }])
+              ]
+            },
+            layout: 'lightHorizontalLines'
+          },
+          { text: 'Site Visit Details', style: 'h2', margin: [0, 14, 0, 6] },
+          {
+            table: {
+              widths: ['30%', '70%'],
+              body: [
+                [{ text: 'Field', style: 'th' }, { text: 'Value', style: 'th' }],
+                ...visitFields.map(([k,v]) => [{ text: k, style: 'tdKey' }, { text: v, style: 'tdVal' }])
+              ]
+            },
+            layout: 'lightHorizontalLines'
+          },
+          ...professionalParagraphs
+        ],
+        styles: {
+          brand: { fontSize: 14, color: '#6366f1', bold: true, margin: [0, 0, 0, 2] },
+          h1: { fontSize: 20, bold: true, margin: [0, 2, 0, 0] },
+          h2: { fontSize: 14, bold: true, color: '#0f172a' },
+          th: { bold: true, fillColor: '#f1f5f9' },
+          tdKey: { color: '#64748b' },
+          tdVal: { color: '#0f172a' }
+        },
+        defaultStyle: { fontSize: 10 }
+      }
+
+      window.pdfMake.createPdf(docDefinition).download(filename)
+    } catch (e) {
+      alert('Failed to export PDF')
+    }
+  }
 
   useEffect(() => {
     async function load() {
@@ -328,7 +455,8 @@ function LeadDetail() {
                               })
                             }}>Edit</button>
                           )}
-                          {v.edits?.length > 0 && (
+                        <button className="save-btn" onClick={() => exportVisitPDF(v)}>Export</button>
+                        {v.edits?.length > 0 && (
                             <button className="link-btn" onClick={() => setVisitHistoryOpen(prev => ({ ...prev, [v._id]: !prev[v._id] }))}>
                               {visitHistoryOpen[v._id] ? 'Hide History' : 'View History'}
                             </button>
