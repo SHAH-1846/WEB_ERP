@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { useLocation, useNavigate, NavLink } from 'react-router-dom'
 import './Dashboard.css'
 import UserManagement from './UserManagement'
 import LeadManagement from './LeadManagement'
@@ -11,6 +12,8 @@ function Dashboard() {
     const saved = localStorage.getItem('theme')
     return saved === 'dark'
   })
+  const location = useLocation()
+  const navigate = useNavigate()
   const [activeTab, setActiveTab] = useState('dashboard')
   const [stats, setStats] = useState({
     totalUsers: 1247,
@@ -22,7 +25,11 @@ function Dashboard() {
   useEffect(() => {
     const userData = JSON.parse(localStorage.getItem('user'))
     setUser(userData)
-  }, [])
+    const path = location.pathname.replace('/', '') || 'dashboard'
+    if (['dashboard','users','leads','projects'].includes(path)) {
+      setActiveTab(path)
+    }
+  }, [location.pathname])
 
   useEffect(() => {
     setTheme(isDark)
@@ -59,31 +66,31 @@ function Dashboard() {
         </div>
         
         <nav className="sidebar-nav">
-          <a href="#" className={`nav-item ${activeTab === 'dashboard' ? 'active' : ''}`} onClick={() => setActiveTab('dashboard')}>
+          <NavLink to="/dashboard" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
             <svg viewBox="0 0 24 24" fill="currentColor">
               <path d="M3 13h8V3H3v10zm0 8h8v-6H3v6zm10 0h8V11h-8v10zm0-18v6h8V3h-8z"/>
             </svg>
             Dashboard
-          </a>
-          <a href="#" className={`nav-item ${activeTab === 'users' ? 'active' : ''}`} onClick={() => setActiveTab('users')}>
+          </NavLink>
+          <NavLink to="/users" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
             <svg viewBox="0 0 24 24" fill="currentColor">
               <path d="M16 7c0-1.1-.9-2-2-2s-2 .9-2 2 .9 2 2 2 2-.9 2-2zm-2 3c-1.48 0-4.5.75-4.5 2.25V14h9v-1.75C18.5 10.75 15.48 10 14 10z"/>
               <path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/>
             </svg>
             Users
-          </a>
-          <a href="#" className={`nav-item ${activeTab === 'leads' ? 'active' : ''}`} onClick={() => setActiveTab('leads')}>
+          </NavLink>
+          <NavLink to="/leads" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
             <svg viewBox="0 0 24 24" fill="currentColor">
               <path d="M9 11H7v2h2v-2zm4 0h-2v2h2v-2zm4 0h-2v2h2v-2zm2-7h-1V2h-2v2H8V2H6v2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 16H5V9h14v11z"/>
             </svg>
             Leads
-          </a>
-          <a href="#" className={`nav-item ${activeTab === 'projects' ? 'active' : ''}`} onClick={() => setActiveTab('projects')}>
+          </NavLink>
+          <NavLink to="/projects" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
             <svg viewBox="0 0 24 24" fill="currentColor">
               <path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-5 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z"/>
             </svg>
             Projects
-          </a>
+          </NavLink>
         </nav>
         
         <div className="sidebar-footer">

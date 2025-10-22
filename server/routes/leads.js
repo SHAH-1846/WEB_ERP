@@ -1,5 +1,6 @@
 const express = require('express');
 const Lead = require('../models/Lead');
+const SiteVisit = require('../models/SiteVisit');
 const Project = require('../models/Project');
 const jwt = require('jsonwebtoken');
 const router = express.Router();
@@ -27,6 +28,21 @@ router.get('/', auth, async (req, res) => {
       .populate('approvals.management.approvedBy', 'name')
       .sort({ createdAt: -1 });
     res.json(leads);
+  } catch (error) {
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Get single lead by id with populated fields
+router.get('/:id', auth, async (req, res) => {
+  try {
+    const lead = await Lead.findById(req.params.id)
+      .populate('createdBy', 'name email')
+      .populate('edits.editedBy', 'name email')
+      .populate('approvals.accounts.approvedBy', 'name')
+      .populate('approvals.management.approvedBy', 'name');
+    if (!lead) return res.status(404).json({ message: 'Lead not found' });
+    res.json(lead);
   } catch (error) {
     res.status(500).json({ message: 'Server error' });
   }
@@ -72,13 +88,20 @@ router.patch('/:id/submit', auth, async (req, res) => {
     const lead = await Lead.findById(req.params.id);
     if (!lead) return res.status(404).json({ message: 'Lead not found' });
 
-    if (lead.createdBy.toString() !== req.user.userId) {
-      return res.status(403).json({ message: 'Not authorized' });
+    // Only estimation engineers can submit for approval
+    if (!req.user.roles.includes('estimation_engineer')) {
+      return res.status(403).json({ message: 'Only estimation engineers can submit for approval' });
     }
 
-    // Check required fields
-    if (!lead.name || !lead.locationDetails) {
-      return res.status(400).json({ message: 'Name and Location Details are required' });
+    // Check required fields for submission
+    const hasRequired = !!lead.name;
+    if (!hasRequired) {
+      return res.status(400).json({ message: 'Missing required lead fields' });
+    }
+    // Require at least one site visit before submitting
+    const visitCount = await SiteVisit.countDocuments({ lead: lead._id });
+    if (visitCount === 0) {
+      return res.status(400).json({ message: 'Please add a site visit before submitting' });
     }
 
     lead.status = 'submitted';
@@ -223,6 +246,12 @@ router.delete('/:id', auth, async (req, res) => {
       return res.status(400).json({ message: 'Only draft leads can be deleted' });
     }
 
+    // Do not allow deletion if there are site visits
+    const visitCount = await SiteVisit.countDocuments({ lead: lead._id });
+    if (visitCount > 0) {
+      return res.status(400).json({ message: 'Cannot delete lead with existing site visits' });
+    }
+
     await Lead.findByIdAndDelete(req.params.id);
     res.json({ message: 'Lead deleted successfully' });
   } catch (error) {
@@ -231,3 +260,88 @@ router.delete('/:id', auth, async (req, res) => {
 });
 
 module.exports = router;
+
+// Create a site visit for a lead (project engineers only)
+router.post('/:id/site-visits', auth, async (req, res) => {
+  try {
+    if (!req.user.roles.includes('project_engineer')) {
+      return res.status(403).json({ message: 'Only project engineers can create site visits' });
+    }
+    const lead = await Lead.findById(req.params.id);
+    if (!lead) return res.status(404).json({ message: 'Lead not found' });
+
+    const { visitAt, siteLocation, engineerName, workProgressSummary, safetyObservations, qualityMaterialCheck, issuesFound, actionItems, weatherConditions, description } = req.body;
+    if (!visitAt || !siteLocation || !engineerName || !workProgressSummary || !description) {
+      return res.status(400).json({ message: 'Missing required fields' });
+    }
+
+    const siteVisit = await SiteVisit.create({
+      lead: lead._id,
+      visitAt,
+      siteLocation,
+      engineerName,
+      workProgressSummary,
+      safetyObservations,
+      qualityMaterialCheck,
+      issuesFound,
+      actionItems,
+      weatherConditions,
+      description,
+      createdBy: req.user.userId
+    });
+
+    res.status(201).json(siteVisit);
+  } catch (error) {
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// List site visits for a lead
+router.get('/:id/site-visits', auth, async (req, res) => {
+  try {
+    const visits = await SiteVisit.find({ lead: req.params.id })
+      .sort({ visitAt: -1 })
+      .populate('createdBy', 'name email')
+      .populate('edits.editedBy', 'name email');
+    res.json(visits);
+  } catch (error) {
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Update site visit (project or estimation engineers)
+router.put('/:leadId/site-visits/:visitId', auth, async (req, res) => {
+  try {
+    const roles = req.user.roles || [];
+    const canEdit = roles.includes('project_engineer') || roles.includes('estimation_engineer');
+    if (!canEdit) return res.status(403).json({ message: 'Not authorized to edit site visit' });
+
+    const sv = await SiteVisit.findOne({ _id: req.params.visitId, lead: req.params.leadId });
+    if (!sv) return res.status(404).json({ message: 'Site visit not found' });
+
+    const fields = ['visitAt','siteLocation','engineerName','workProgressSummary','safetyObservations','qualityMaterialCheck','issuesFound','actionItems','weatherConditions','description'];
+    const changes = [];
+    for (const field of fields) {
+      if (typeof req.body[field] === 'undefined') continue;
+      const oldValue = sv[field];
+      const newValue = req.body[field];
+      const isDifferent = (oldValue instanceof Date || newValue instanceof Date)
+        ? (new Date(oldValue).getTime() !== new Date(newValue).getTime())
+        : oldValue !== newValue;
+      if (isDifferent) {
+        changes.push({ field, from: oldValue, to: newValue });
+        sv[field] = newValue;
+      }
+    }
+
+    if (changes.length > 0) {
+      sv.edits.push({ editedBy: req.user.userId, changes });
+    }
+
+    await sv.save();
+    await sv.populate('edits.editedBy', 'name email');
+    res.json(sv);
+  } catch (error) {
+    res.status(500).json({ message: 'Server error' });
+  }
+});

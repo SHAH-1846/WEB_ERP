@@ -8,6 +8,7 @@ const userRoutes = require('./routes/users');
 const leadRoutes = require('./routes/leads');
 const roleRoutes = require('./routes/roles');
 const projectRoutes = require('./routes/projects');
+const siteVisitRoutes = require('./routes/siteVisits');
 
 const app = express();
 
@@ -22,6 +23,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/leads', leadRoutes);
 app.use('/api/projects', projectRoutes);
+app.use('/api/site-visits', siteVisitRoutes);
 app.use('/api/roles', roleRoutes);
 
 const PORT = process.env.PORT || 5000;

@@ -4,6 +4,7 @@ import axios from 'axios'
 import './App.css'
 import logo from './assets/logo/WBES_Logo.png'
 import Dashboard from './components/Dashboard'
+import LeadDetail from './components/LeadDetail'
 import { initTheme, setTheme } from './utils/theme'
 
 function Login() {
@@ -182,6 +183,26 @@ function App() {
         <Route path="/dashboard" element={
           <ProtectedRoute>
             <Dashboard />
+          </ProtectedRoute>
+        } />
+        <Route path="/users" element={
+          <ProtectedRoute>
+            <Dashboard />
+          </ProtectedRoute>
+        } />
+        <Route path="/leads" element={
+          <ProtectedRoute>
+            <Dashboard />
+          </ProtectedRoute>
+        } />
+        <Route path="/projects" element={
+          <ProtectedRoute>
+            <Dashboard />
+          </ProtectedRoute>
+        } />
+        <Route path="/lead-detail" element={
+          <ProtectedRoute>
+            <LeadDetail />
           </ProtectedRoute>
         } />
       </Routes>

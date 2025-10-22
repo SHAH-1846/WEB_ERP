@@ -18,6 +18,19 @@ function LeadManagement() {
   const [myOnly, setMyOnly] = useState(false)
   const [profileUser, setProfileUser] = useState(null)
   const [historyLead, setHistoryLead] = useState(null)
+  const [showVisitModal, setShowVisitModal] = useState(false)
+  const [visitData, setVisitData] = useState({
+    visitAt: '',
+    siteLocation: '',
+    engineerName: '',
+    workProgressSummary: '',
+    safetyObservations: '',
+    qualityMaterialCheck: '',
+    issuesFound: '',
+    actionItems: '',
+    weatherConditions: '',
+    description: ''
+  })
 
   useEffect(() => {
     const userData = JSON.parse(localStorage.getItem('user'))
@@ -62,6 +75,16 @@ function LeadManagement() {
   const submitForApproval = async (leadId) => {
     try {
       const token = localStorage.getItem('token')
+      // If estimation engineer: validate site visit exists first
+      if (currentUser?.roles?.includes('estimation_engineer')) {
+        const visits = await axios.get(`http://localhost:5000/api/leads/${leadId}/site-visits`, {
+          headers: { Authorization: `Bearer ${token}` }
+        })
+        if (!visits.data || visits.data.length === 0) {
+          alert('Please add a site visit before submitting for approval')
+          return
+        }
+      }
       await axios.patch(`http://localhost:5000/api/leads/${leadId}/submit`, {}, {
         headers: { Authorization: `Bearer ${token}` }
       })
@@ -187,7 +210,7 @@ function LeadManagement() {
               {/* Removed legacy fields in UI */}
               <p><strong>Created by:</strong> {lead.createdBy?._id === currentUser?.id ? 'You' : lead.createdBy?.name}</p>
               {lead.createdBy?._id !== currentUser?.id && (
-                <button className="link-btn" onClick={() => setProfileUser(lead.createdBy)}>
+              <button className="link-btn" onClick={() => setProfileUser(lead.createdBy)}>
                   View Profile
                 </button>
               )}
@@ -234,7 +257,7 @@ function LeadManagement() {
             <div className="lead-actions">
               {lead.status === 'draft' && (
                 <>
-                  {lead.createdBy?._id === currentUser?.id && (
+                  {currentUser?.roles?.includes('estimation_engineer') && (
                     <button onClick={() => submitForApproval(lead._id)} className="submit-btn">
                       Submit for Approval
                     </button>
@@ -244,6 +267,11 @@ function LeadManagement() {
                       Edit
                     </button>
                   )}
+                  {currentUser?.roles?.includes('project_engineer') && (
+                    <button onClick={() => { setEditingLead(lead); setShowVisitModal(true); }} className="assign-btn">
+                      New Site Visit
+                    </button>
+                  )}
                   {lead.createdBy?._id === currentUser?.id && (
                     <button onClick={() => handleDeleteLead(lead._id)} className="cancel-btn">
                       Delete
@@ -251,6 +279,27 @@ function LeadManagement() {
                   )}
                 </>
               )}
+              <button
+                className="assign-btn"
+                onClick={async () => {
+                  // open detail view in a new window for now
+                  const token = localStorage.getItem('token')
+                  try {
+                    const res = await axios.get(`http://localhost:5000/api/leads/${lead._id}`, { headers: { Authorization: `Bearer ${token}` } })
+                    const data = res.data
+                    const visitsRes = await axios.get(`http://localhost:5000/api/leads/${lead._id}/site-visits`, { headers: { Authorization: `Bearer ${token}` } })
+                    const visits = visitsRes.data
+                    const detail = { ...data, siteVisits: visits }
+                    localStorage.setItem('leadDetail', JSON.stringify(detail))
+                    localStorage.setItem('leadId', lead._id)
+                    window.location.href = '/lead-detail'
+                  } catch (e) {
+                    alert('Unable to open lead detail')
+                  }
+                }}
+              >
+                View
+              </button>
               {lead.status === 'approved' && (
                 <button onClick={() => convertToProject(lead._id)} className="convert-btn">
                   Convert to Project
@@ -352,6 +401,80 @@ function LeadManagement() {
                 <button type="submit" className="save-btn">
                   {editingLead ? 'Save Changes' : 'Create Lead'}
                 </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {showVisitModal && editingLead && (
+        <div className="modal-overlay" onClick={() => setShowVisitModal(false)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>New Site Visit</h2>
+              <button onClick={() => setShowVisitModal(false)} className="close-btn">×</button>
+            </div>
+            <form onSubmit={async (e) => {
+              e.preventDefault()
+              try {
+                const token = localStorage.getItem('token')
+                await axios.post(`http://localhost:5000/api/leads/${editingLead._id}/site-visits`, visitData, {
+                  headers: { Authorization: `Bearer ${token}` }
+                })
+                setShowVisitModal(false)
+                setVisitData({ visitAt: '', siteLocation: '', engineerName: '', workProgressSummary: '', safetyObservations: '', qualityMaterialCheck: '', issuesFound: '', actionItems: '', weatherConditions: '', description: '' })
+                alert('Site visit saved')
+              } catch (error) {
+                alert(error.response?.data?.message || 'Error creating site visit')
+              }
+            }} className="lead-form">
+              <div className="form-group">
+                <label>Project Name</label>
+                <input type="text" value={editingLead?.projectTitle || editingLead?.name || ''} readOnly />
+              </div>
+              <div className="form-group">
+                <label>Date and Time of Visit *</label>
+                <input type="datetime-local" value={visitData.visitAt} onChange={e => setVisitData({ ...visitData, visitAt: e.target.value })} required />
+              </div>
+              <div className="form-group">
+                <label>Site Location *</label>
+                <input type="text" value={visitData.siteLocation} onChange={e => setVisitData({ ...visitData, siteLocation: e.target.value })} required />
+              </div>
+              <div className="form-group">
+                <label>Engineer / Inspector Name *</label>
+                <input type="text" value={visitData.engineerName} onChange={e => setVisitData({ ...visitData, engineerName: e.target.value })} required />
+              </div>
+              <div className="form-group">
+                <label>Work Progress Summary *</label>
+                <textarea value={visitData.workProgressSummary} onChange={e => setVisitData({ ...visitData, workProgressSummary: e.target.value })} required />
+              </div>
+              <div className="form-group">
+                <label>Safety Observations</label>
+                <textarea value={visitData.safetyObservations} onChange={e => setVisitData({ ...visitData, safetyObservations: e.target.value })} />
+              </div>
+              <div className="form-group">
+                <label>Quality and Material Check</label>
+                <textarea value={visitData.qualityMaterialCheck} onChange={e => setVisitData({ ...visitData, qualityMaterialCheck: e.target.value })} />
+              </div>
+              <div className="form-group">
+                <label>Issues / Non-Conformities Found</label>
+                <textarea value={visitData.issuesFound} onChange={e => setVisitData({ ...visitData, issuesFound: e.target.value })} />
+              </div>
+              <div className="form-group">
+                <label>Action Items / Follow-up</label>
+                <textarea value={visitData.actionItems} onChange={e => setVisitData({ ...visitData, actionItems: e.target.value })} />
+              </div>
+              <div className="form-group">
+                <label>Weather Conditions</label>
+                <input type="text" value={visitData.weatherConditions} onChange={e => setVisitData({ ...visitData, weatherConditions: e.target.value })} />
+              </div>
+              <div className="form-group">
+                <label>Detailed Description / Remarks *</label>
+                <textarea value={visitData.description} onChange={e => setVisitData({ ...visitData, description: e.target.value })} required />
+              </div>
+              <div className="form-actions">
+                <button type="button" onClick={() => setShowVisitModal(false)} className="cancel-btn">Cancel</button>
+                <button type="submit" className="save-btn">Save Visit</button>
               </div>
             </form>
           </div>

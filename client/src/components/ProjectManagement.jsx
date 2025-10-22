@@ -7,11 +7,24 @@ function ProjectManagement() {
   const [siteEngineers, setSiteEngineers] = useState([])
   const [showAssignModal, setShowAssignModal] = useState(false)
   const [showRevisionModal, setShowRevisionModal] = useState(false)
+  const [showVisitModal, setShowVisitModal] = useState(false)
   const [selectedProject, setSelectedProject] = useState(null)
   const [currentUser, setCurrentUser] = useState(null)
   const [assignData, setAssignData] = useState({ siteEngineerId: '' })
   const [revisionData, setRevisionData] = useState({
     type: 'price',
+    description: ''
+  })
+  const [visitData, setVisitData] = useState({
+    visitAt: '',
+    siteLocation: '',
+    engineerName: '',
+    workProgressSummary: '',
+    safetyObservations: '',
+    qualityMaterialCheck: '',
+    issuesFound: '',
+    actionItems: '',
+    weatherConditions: '',
     description: ''
   })
 
@@ -101,6 +114,10 @@ function ProjectManagement() {
     return currentUser?.roles?.some(role => ['admin', 'manager'].includes(role))
   }
 
+  const canCreateSiteVisit = () => {
+    return currentUser?.roles?.includes('project_engineer')
+  }
+
   const getStatusColor = (status) => {
     const colors = {
       active: 'green',
@@ -180,6 +197,14 @@ function ProjectManagement() {
                   setShowRevisionModal(true)
                 }} className="revision-btn">
                   Create Revision
+                </button>
+              )}
+              {canCreateSiteVisit() && (
+                <button onClick={() => {
+                  setSelectedProject(project)
+                  setShowVisitModal(true)
+                }} className="assign-btn">
+                  New Site Visit
                 </button>
               )}
             </div>
@@ -262,6 +287,86 @@ function ProjectManagement() {
                 <button type="submit" className="save-btn">
                   Create Revision
                 </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {showVisitModal && (
+        <div className="modal-overlay" onClick={() => setShowVisitModal(false)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>New Site Visit</h2>
+              <button onClick={() => setShowVisitModal(false)} className="close-btn">×</button>
+            </div>
+            <form
+              onSubmit={async (e) => {
+                e.preventDefault()
+                try {
+                  const token = localStorage.getItem('token')
+                  await axios.post('http://localhost:5000/api/site-visits', {
+                    projectId: selectedProject._id,
+                    ...visitData
+                  }, {
+                    headers: { Authorization: `Bearer ${token}` }
+                  })
+                  setShowVisitModal(false)
+                  setVisitData({ visitAt: '', siteLocation: '', engineerName: '', workProgressSummary: '', safetyObservations: '', qualityMaterialCheck: '', issuesFound: '', actionItems: '', weatherConditions: '', description: '' })
+                  alert('Site visit saved')
+                } catch (error) {
+                  alert(error.response?.data?.message || 'Error creating site visit')
+                }
+              }}
+              className="assign-form"
+            >
+              <div className="form-group">
+                <label>Project Name</label>
+                <input type="text" value={selectedProject?.name || ''} readOnly />
+              </div>
+              <div className="form-group">
+                <label>Date and Time of Visit *</label>
+                <input type="datetime-local" value={visitData.visitAt} onChange={e => setVisitData({ ...visitData, visitAt: e.target.value })} required />
+              </div>
+              <div className="form-group">
+                <label>Site Location *</label>
+                <input type="text" value={visitData.siteLocation} onChange={e => setVisitData({ ...visitData, siteLocation: e.target.value })} required />
+              </div>
+              <div className="form-group">
+                <label>Engineer / Inspector Name *</label>
+                <input type="text" value={visitData.engineerName} onChange={e => setVisitData({ ...visitData, engineerName: e.target.value })} required />
+              </div>
+              <div className="form-group">
+                <label>Work Progress Summary *</label>
+                <textarea value={visitData.workProgressSummary} onChange={e => setVisitData({ ...visitData, workProgressSummary: e.target.value })} required />
+              </div>
+              <div className="form-group">
+                <label>Safety Observations</label>
+                <textarea value={visitData.safetyObservations} onChange={e => setVisitData({ ...visitData, safetyObservations: e.target.value })} />
+              </div>
+              <div className="form-group">
+                <label>Quality and Material Check</label>
+                <textarea value={visitData.qualityMaterialCheck} onChange={e => setVisitData({ ...visitData, qualityMaterialCheck: e.target.value })} />
+              </div>
+              <div className="form-group">
+                <label>Issues / Non-Conformities Found</label>
+                <textarea value={visitData.issuesFound} onChange={e => setVisitData({ ...visitData, issuesFound: e.target.value })} />
+              </div>
+              <div className="form-group">
+                <label>Action Items / Follow-up</label>
+                <textarea value={visitData.actionItems} onChange={e => setVisitData({ ...visitData, actionItems: e.target.value })} />
+              </div>
+              <div className="form-group">
+                <label>Weather Conditions</label>
+                <input type="text" value={visitData.weatherConditions} onChange={e => setVisitData({ ...visitData, weatherConditions: e.target.value })} />
+              </div>
+              <div className="form-group">
+                <label>Detailed Description / Remarks *</label>
+                <textarea value={visitData.description} onChange={e => setVisitData({ ...visitData, description: e.target.value })} required />
+              </div>
+              <div className="form-actions">
+                <button type="button" onClick={() => setShowVisitModal(false)} className="cancel-btn">Cancel</button>
+                <button type="submit" className="save-btn">Save Visit</button>
               </div>
             </form>
           </div>
