@@ -4,6 +4,7 @@ import './Dashboard.css'
 import UserManagement from './UserManagement'
 import LeadManagement from './LeadManagement'
 import ProjectManagement from './ProjectManagement'
+import QuotationManagement from './QuotationManagement'
 import { initTheme, setTheme } from '../utils/theme'
 
 function Dashboard() {
@@ -26,7 +27,7 @@ function Dashboard() {
     const userData = JSON.parse(localStorage.getItem('user'))
     setUser(userData)
     const path = location.pathname.replace('/', '') || 'dashboard'
-    if (['dashboard','users','leads','projects'].includes(path)) {
+    if (['dashboard','users','leads','projects','quotations'].includes(path)) {
       setActiveTab(path)
     }
   }, [location.pathname])
@@ -91,6 +92,14 @@ function Dashboard() {
             </svg>
             Projects
           </NavLink>
+          {user?.roles?.includes('estimation_engineer') && (
+            <NavLink to="/quotations" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
+              <svg viewBox="0 0 24 24" fill="currentColor">
+                <path d="M6 2h9a3 3 0 013 3v14a3 3 0 01-3 3H6a3 3 0 01-3-3V5a3 3 0 013-3zm2 5h7v2H8V7zm0 4h7v2H8v-2zm0 4h5v2H8v-2z"/>
+              </svg>
+              Quotations
+            </NavLink>
+          )}
         </nav>
         
         <div className="sidebar-footer">
@@ -118,6 +127,7 @@ function Dashboard() {
             {activeTab === 'users' && 'User Management'}
             {activeTab === 'leads' && 'Lead Management'}
             {activeTab === 'projects' && 'Project Management'}
+            {activeTab === 'quotations' && 'Quotation Management'}
           </h1>
             <p>Welcome back, {user?.name}!</p>
           </div>
@@ -234,6 +244,7 @@ function Dashboard() {
           {activeTab === 'users' && <UserManagement />}
           {activeTab === 'leads' && <LeadManagement />}
           {activeTab === 'projects' && <ProjectManagement />}
+          {activeTab === 'quotations' && <QuotationManagement />}
         </div>
       </div>
     </div>

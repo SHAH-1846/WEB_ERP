@@ -72,41 +72,7 @@ function LeadManagement() {
     }
   }
 
-  const submitForApproval = async (leadId) => {
-    try {
-      const token = localStorage.getItem('token')
-      // If estimation engineer: validate site visit exists first
-      if (currentUser?.roles?.includes('estimation_engineer')) {
-        const visits = await axios.get(`http://localhost:5000/api/leads/${leadId}/site-visits`, {
-          headers: { Authorization: `Bearer ${token}` }
-        })
-        if (!visits.data || visits.data.length === 0) {
-          alert('Please add a site visit before submitting for approval')
-          return
-        }
-      }
-      await axios.patch(`http://localhost:5000/api/leads/${leadId}/submit`, {}, {
-        headers: { Authorization: `Bearer ${token}` }
-      })
-      fetchLeads()
-    } catch (error) {
-      alert(error.response?.data?.message || 'Error submitting lead')
-    }
-  }
-
-  const handleApproval = async (leadId, type, status, comments = '') => {
-    try {
-      const token = localStorage.getItem('token')
-      await axios.patch(`http://localhost:5000/api/leads/${leadId}/approve`, {
-        type, status, comments
-      }, {
-        headers: { Authorization: `Bearer ${token}` }
-      })
-      fetchLeads()
-    } catch (error) {
-      alert(error.response?.data?.message || 'Error processing approval')
-    }
-  }
+  // Lead approvals removed; handled at Quotation level
 
   const convertToProject = async (leadId) => {
     try {
@@ -162,10 +128,7 @@ function LeadManagement() {
     return currentUser?.roles?.some(role => ['supervisor', 'sales_engineer', 'estimation_engineer'].includes(role))
   }
 
-  const canApprove = (type) => {
-    return (type === 'accounts' && currentUser?.roles?.includes('account_manager')) ||
-           (type === 'management' && (currentUser?.roles?.includes('manager') || currentUser?.roles?.includes('admin')))
-  }
+  // Approvals removed from lead module
 
   return (
     <div className="lead-management">
@@ -216,52 +179,11 @@ function LeadManagement() {
               )}
             </div>
 
-            {lead.status === 'submitted' && (
-              <div className="approvals">
-                <div className="approval-section">
-                  <h4>Accounts Approval</h4>
-                  <span className={`approval-status ${lead.approvals.accounts.status}`}>
-                    {lead.approvals.accounts.status}
-                  </span>
-                  {canApprove('accounts') && lead.approvals.accounts.status === 'pending' && (
-                    <div className="approval-actions">
-                      <button onClick={() => handleApproval(lead._id, 'accounts', 'approved')} className="approve-btn">
-                        Approve
-                      </button>
-                      <button onClick={() => handleApproval(lead._id, 'accounts', 'rejected')} className="reject-btn">
-                        Reject
-                      </button>
-                    </div>
-                  )}
-                </div>
-
-                <div className="approval-section">
-                  <h4>Management Approval</h4>
-                  <span className={`approval-status ${lead.approvals.management.status}`}>
-                    {lead.approvals.management.status}
-                  </span>
-                  {canApprove('management') && lead.approvals.management.status === 'pending' && (
-                    <div className="approval-actions">
-                      <button onClick={() => handleApproval(lead._id, 'management', 'approved')} className="approve-btn">
-                        Approve
-                      </button>
-                      <button onClick={() => handleApproval(lead._id, 'management', 'rejected')} className="reject-btn">
-                        Reject
-                      </button>
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
+            {/* Lead approvals removed; use Quotation approvals instead */}
 
             <div className="lead-actions">
               {lead.status === 'draft' && (
                 <>
-                  {currentUser?.roles?.includes('estimation_engineer') && (
-                    <button onClick={() => submitForApproval(lead._id)} className="submit-btn">
-                      Submit for Approval
-                    </button>
-                  )}
                   {(currentUser?.roles?.includes('sales_engineer') || currentUser?.roles?.includes('estimation_engineer') || lead.createdBy?._id === currentUser?.id) && (
                     <button onClick={() => handleEditLead(lead)} className="save-btn">
                       Edit
@@ -299,6 +221,35 @@ function LeadManagement() {
                 }}
               >
                 View
+              </button>
+              <button
+                className="link-btn"
+                onClick={async () => {
+                  try {
+                    const token = localStorage.getItem('token')
+                    const qRes = await axios.get('http://localhost:5000/api/quotations', { headers: { Authorization: `Bearer ${token}` } })
+                    const allQ = Array.isArray(qRes.data) ? qRes.data : []
+                    const list = allQ.filter(q => {
+                      const qLeadId = typeof q.lead === 'object' ? q.lead?._id : q.lead
+                      return qLeadId === lead._id
+                    })
+                    if (list.length === 0) {
+                      alert('No quotations found for this lead')
+                      return
+                    }
+                    const q = list[0]
+                    try {
+                      localStorage.setItem('quotationId', q._id)
+                      localStorage.setItem('quotationDetail', JSON.stringify(q))
+                      localStorage.setItem('leadId', lead._id)
+                    } catch {}
+                    window.location.href = '/quotation-detail'
+                  } catch (e) {
+                    alert('Unable to open quotation')
+                  }
+                }}
+              >
+                View Quotation
               </button>
               {lead.status === 'approved' && (
                 <button onClick={() => convertToProject(lead._id)} className="convert-btn">

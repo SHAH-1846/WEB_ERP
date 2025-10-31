@@ -45,20 +45,6 @@ const leadSchema = new mongoose.Schema({
     ref: 'User',
     required: true
   },
-  approvals: {
-    accounts: {
-      status: { type: String, enum: ['pending', 'approved', 'rejected'], default: 'pending' },
-      approvedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
-      approvedAt: Date,
-      comments: String
-    },
-    management: {
-      status: { type: String, enum: ['pending', 'approved', 'rejected'], default: 'pending' },
-      approvedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
-      approvedAt: Date,
-      comments: String
-    }
-  },
   projectId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Project'

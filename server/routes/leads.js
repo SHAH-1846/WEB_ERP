@@ -24,8 +24,6 @@ router.get('/', auth, async (req, res) => {
     const leads = await Lead.find()
       .populate('createdBy', 'name email')
       .populate('edits.editedBy', 'name email')
-      .populate('approvals.accounts.approvedBy', 'name')
-      .populate('approvals.management.approvedBy', 'name')
       .sort({ createdAt: -1 });
     res.json(leads);
   } catch (error) {
@@ -39,8 +37,7 @@ router.get('/:id', auth, async (req, res) => {
     const lead = await Lead.findById(req.params.id)
       .populate('createdBy', 'name email')
       .populate('edits.editedBy', 'name email')
-      .populate('approvals.accounts.approvedBy', 'name')
-      .populate('approvals.management.approvedBy', 'name');
+      ;
     if (!lead) return res.status(404).json({ message: 'Lead not found' });
     res.json(lead);
   } catch (error) {
@@ -82,72 +79,7 @@ router.post('/', auth, async (req, res) => {
   }
 });
 
-// Submit lead for approval
-router.patch('/:id/submit', auth, async (req, res) => {
-  try {
-    const lead = await Lead.findById(req.params.id);
-    if (!lead) return res.status(404).json({ message: 'Lead not found' });
-
-    // Only estimation engineers can submit for approval
-    if (!req.user.roles.includes('estimation_engineer')) {
-      return res.status(403).json({ message: 'Only estimation engineers can submit for approval' });
-    }
-
-    // Check required fields for submission
-    const hasRequired = !!lead.name;
-    if (!hasRequired) {
-      return res.status(400).json({ message: 'Missing required lead fields' });
-    }
-    // Require at least one site visit before submitting
-    const visitCount = await SiteVisit.countDocuments({ lead: lead._id });
-    if (visitCount === 0) {
-      return res.status(400).json({ message: 'Please add a site visit before submitting' });
-    }
-
-    lead.status = 'submitted';
-    await lead.save();
-    res.json(lead);
-  } catch (error) {
-    res.status(500).json({ message: 'Server error' });
-  }
-});
-
-// Approve/Reject lead
-router.patch('/:id/approve', auth, async (req, res) => {
-  try {
-    const { type, status, comments } = req.body; // type: 'accounts' or 'management'
-    const lead = await Lead.findById(req.params.id);
-    
-    if (!lead) return res.status(404).json({ message: 'Lead not found' });
-
-    const userRoles = req.user.roles;
-    const canApprove = (type === 'accounts' && userRoles.includes('account_manager')) ||
-                      (type === 'management' && (userRoles.includes('manager') || userRoles.includes('admin')));
-
-    if (!canApprove) {
-      return res.status(403).json({ message: 'Not authorized to approve' });
-    }
-
-    lead.approvals[type] = {
-      status,
-      approvedBy: req.user.userId,
-      approvedAt: new Date(),
-      comments
-    };
-
-    // Check if both approvals are done
-    if (lead.approvals.accounts.status === 'approved' && lead.approvals.management.status === 'approved') {
-      lead.status = 'approved';
-    } else if (lead.approvals.accounts.status === 'rejected' || lead.approvals.management.status === 'rejected') {
-      lead.status = 'rejected';
-    }
-
-    await lead.save();
-    res.json(lead);
-  } catch (error) {
-    res.status(500).json({ message: 'Server error' });
-  }
-});
+// Note: Lead approval routes removed; approvals handled on Quotation level now.
 
 // Convert lead to project
 router.post('/:id/convert', auth, async (req, res) => {

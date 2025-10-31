@@ -6,6 +6,7 @@ import logo from '../assets/logo/WBES_Logo.png'
 
 function LeadDetail() {
   const [lead, setLead] = useState(null)
+  const [quotations, setQuotations] = useState([])
   const [currentUser, setCurrentUser] = useState(() => {
     try { return JSON.parse(localStorage.getItem('user')) } catch { return null }
   })
@@ -24,6 +25,7 @@ function LeadDetail() {
     description: ''
   })
   const [visitHistoryOpen, setVisitHistoryOpen] = useState({})
+  const [quotationHistoryOpen, setQuotationHistoryOpen] = useState({})
   const [profileUser, setProfileUser] = useState(null)
   const [editLeadOpen, setEditLeadOpen] = useState(false)
   const [isDark, setIsDark] = useState(() => {
@@ -197,6 +199,15 @@ ${visit.actionItems ? 'Recommended follow‑up: ' + visit.actionItems : 'Continu
           const visitsRes = await fetch(`http://localhost:5000/api/leads/${id}/site-visits`, { headers: { Authorization: `Bearer ${token}` }})
           const visitsData = await visitsRes.json()
           setLead({ ...leadData, siteVisits: visitsData })
+          try {
+            const qRes = await fetch('http://localhost:5000/api/quotations', { headers: { Authorization: `Bearer ${token}` }})
+            const allQ = await qRes.json()
+            const list = Array.isArray(allQ) ? allQ.filter(q => {
+              const qLeadId = typeof q.lead === 'object' ? q.lead?._id : q.lead
+              return qLeadId === id
+            }) : []
+            setQuotations(list)
+          } catch {}
         }
       } catch {}
     }
@@ -476,6 +487,75 @@ ${visit.actionItems ? 'Recommended follow‑up: ' + visit.actionItems : 'Continu
                                   {e.editedBy?._id !== currentUser?.id && e.editedBy && (
                                     <button className="link-btn" onClick={() => setProfileUser(e.editedBy)}>View Profile</button>
                                   )}
+                                </div>
+                                <ul className="changes-list">
+                                  {e.changes.map((c, k) => (
+                                    <li key={k}><strong>{c.field}:</strong> {String(c.from || '')} → {String(c.to || '')}</li>
+                                  ))}
+                                </ul>
+                              </div>
+                            ))}
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                  </>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {Array.isArray(quotations) && quotations.length > 0 && (
+        <div className="ld-card ld-section">
+          <h3>Quotations ({quotations.length})</h3>
+          <div className="table">
+            <table>
+              <thead>
+                <tr>
+                  <th>Offer Ref</th>
+                  <th>Offer Date</th>
+                  <th>Grand Total</th>
+                  <th>Status</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {quotations.map((q) => (
+                  <>
+                    <tr key={q._id}>
+                      <td data-label="Offer Ref">{q.offerReference || 'N/A'}</td>
+                      <td data-label="Offer Date">{q.offerDate ? new Date(q.offerDate).toLocaleDateString() : 'N/A'}</td>
+                      <td data-label="Grand Total">{(q.priceSchedule?.currency || 'AED')} {Number(q.priceSchedule?.grandTotal || 0).toFixed(2)}</td>
+                      <td data-label="Status">{q.managementApproval?.status || 'pending'}</td>
+                      <td data-label="Actions">
+                        <div className="ld-actions">
+                          <button className="save-btn" onClick={() => {
+                            try {
+                              localStorage.setItem('quotationId', q._id)
+                              localStorage.setItem('quotationDetail', JSON.stringify(q))
+                              localStorage.setItem('leadId', lead._id)
+                            } catch {}
+                            window.location.href = '/quotation-detail'
+                          }}>View Quotation</button>
+                          {q.edits?.length > 0 && (
+                            <button className="link-btn" onClick={() => setQuotationHistoryOpen(prev => ({ ...prev, [q._id]: !prev[q._id] }))}>
+                              {quotationHistoryOpen[q._id] ? 'Hide History' : 'View History'}
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                    {quotationHistoryOpen[q._id] && q.edits?.length > 0 && (
+                      <tr className="history-row">
+                        <td colSpan={5}>
+                          <div className="history-panel">
+                            {q.edits.slice().reverse().map((e, j) => (
+                              <div key={j} className="edit-item" style={{ marginTop: 8 }}>
+                                <div className="edit-header">
+                                  <span>By {e.editedBy?._id === currentUser?.id ? 'You' : (e.editedBy?.name || 'N/A')}</span>
+                                  <span>{new Date(e.editedAt).toLocaleString()}</span>
                                 </div>
                                 <ul className="changes-list">
                                   {e.changes.map((c, k) => (
