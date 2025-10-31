@@ -23,7 +23,10 @@ router.get('/', auth, async (req, res) => {
       .populate('lead', 'customerName projectTitle enquiryNumber enquiryDate')
       .populate('createdBy', 'name email')
       .populate('edits.editedBy', 'name email')
+      .populate('managementApproval.requestedBy', 'name email')
       .populate('managementApproval.approvedBy', 'name email')
+      .populate('managementApproval.logs.requestedBy', 'name email')
+      .populate('managementApproval.logs.decidedBy', 'name email')
       .sort({ createdAt: -1 });
     res.json(list);
   } catch (e) {
@@ -38,7 +41,10 @@ router.get('/:id', auth, async (req, res) => {
       .populate('lead', 'customerName projectTitle enquiryNumber enquiryDate')
       .populate('createdBy', 'name email')
       .populate('edits.editedBy', 'name email')
-      .populate('managementApproval.approvedBy', 'name email');
+      .populate('managementApproval.requestedBy', 'name email')
+      .populate('managementApproval.approvedBy', 'name email')
+      .populate('managementApproval.logs.requestedBy', 'name email')
+      .populate('managementApproval.logs.decidedBy', 'name email');
     if (!q) return res.status(404).json({ message: 'Quotation not found' });
     res.json(q);
   } catch (e) {
@@ -169,25 +175,55 @@ router.put('/:id', auth, async (req, res) => {
 // Management approval
 router.patch('/:id/approve', auth, async (req, res) => {
   try {
-    const roles = req.user.roles || [];
-    if (!(roles.includes('manager') || roles.includes('admin'))) {
-      return res.status(403).json({ message: 'Not authorized to approve' });
-    }
-    const { status, comments } = req.body; // 'approved' | 'rejected'
-    if (!['approved','rejected'].includes(status)) {
+    const { status } = req.body;
+    const note = req.body.note ?? req.body.comments;
+    if (!['pending', 'approved', 'rejected'].includes(status)) {
       return res.status(400).json({ message: 'Invalid status' });
     }
+
     const q = await Quotation.findById(req.params.id);
     if (!q) return res.status(404).json({ message: 'Quotation not found' });
 
-    q.managementApproval = {
-      status,
-      approvedBy: req.user.userId,
-      approvedAt: new Date(),
-      comments
-    };
+    const roles = req.user.roles || [];
+    const isCreator = q.createdBy?.toString?.() === req.user.userId;
+
+    if (status === 'pending') {
+      if (!(isCreator || roles.includes('estimation_engineer'))) {
+        return res.status(403).json({ message: 'Not authorized to request approval' });
+      }
+      const prev = q.managementApproval || {};
+      q.managementApproval = {
+        ...prev,
+        status: 'pending',
+        requestedBy: req.user.userId,
+        approvedBy: undefined,
+        approvedAt: undefined,
+        comments: note || prev.comments
+      };
+      q.managementApproval.logs = Array.isArray(prev.logs) ? prev.logs : [];
+      q.managementApproval.logs.push({ status: 'pending', requestedBy: req.user.userId, note });
+    } else {
+      if (!(roles.includes('manager') || roles.includes('admin'))) {
+        return res.status(403).json({ message: 'Not authorized to approve/reject' });
+      }
+      const prev = q.managementApproval || {};
+      q.managementApproval = {
+        ...prev,
+        status,
+        approvedBy: req.user.userId,
+        approvedAt: new Date(),
+        comments: note || prev.comments,
+        requestedBy: prev.requestedBy
+      };
+      q.managementApproval.logs = Array.isArray(prev.logs) ? prev.logs : [];
+      q.managementApproval.logs.push({ status, decidedBy: req.user.userId, note });
+    }
+
     await q.save();
+    await q.populate('managementApproval.requestedBy', 'name email');
     await q.populate('managementApproval.approvedBy', 'name email');
+    await q.populate('managementApproval.logs.requestedBy', 'name email');
+    await q.populate('managementApproval.logs.decidedBy', 'name email');
     res.json(q);
   } catch (e) {
     res.status(500).json({ message: 'Server error' });

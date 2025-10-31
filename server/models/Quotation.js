@@ -60,10 +60,20 @@ const QuotationSchema = new mongoose.Schema({
   },
 
   managementApproval: {
-    status: { type: String, enum: ['pending', 'approved', 'rejected'], default: 'pending' },
+    status: { type: String, enum: ['pending', 'approved', 'rejected'] },
+    requestedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     approvedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     approvedAt: Date,
-    comments: String
+    comments: String,
+    logs: [
+      {
+        status: { type: String, enum: ['pending', 'approved', 'rejected'] },
+        at: { type: Date, default: Date.now },
+        requestedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+        decidedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+        note: String
+      }
+    ]
   },
 
   edits: [{

@@ -92,7 +92,7 @@ function Dashboard() {
             </svg>
             Projects
           </NavLink>
-          {user?.roles?.includes('estimation_engineer') && (
+          {user?.roles?.some(r => ['estimation_engineer','manager','admin'].includes(r)) && (
             <NavLink to="/quotations" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
               <svg viewBox="0 0 24 24" fill="currentColor">
                 <path d="M6 2h9a3 3 0 013 3v14a3 3 0 01-3 3H6a3 3 0 01-3-3V5a3 3 0 013-3zm2 5h7v2H8V7zm0 4h7v2H8v-2zm0 4h5v2H8v-2z"/>
