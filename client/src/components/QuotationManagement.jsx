@@ -16,6 +16,7 @@ function QuotationManagement() {
   const [approvalsView, setApprovalsView] = useState(null)
   const [revisionModal, setRevisionModal] = useState({ open: false, quote: null, form: null })
   const [hasRevisionFor, setHasRevisionFor] = useState({})
+  const [notify, setNotify] = useState({ open: false, title: '', message: '' })
 
   const defaultCompany = useMemo(() => ({
     logo,
@@ -160,7 +161,7 @@ function QuotationManagement() {
       await fetchQuotations()
       setShowModal(false)
     } catch (err) {
-      alert(err.response?.data?.message || 'Error saving quotation')
+      setNotify({ open: true, title: 'Save Failed', message: err.response?.data?.message || 'We could not save this quotation. Please try again.' })
     }
   }
 
@@ -170,7 +171,7 @@ function QuotationManagement() {
       await axios.patch(`http://localhost:5000/api/quotations/${q._id}/approve`, { status, note }, { headers: { Authorization: `Bearer ${token}` } })
       await fetchQuotations()
     } catch (e) {
-      alert(e.response?.data?.message || 'Failed to update approval')
+      setNotify({ open: true, title: 'Approval Failed', message: e.response?.data?.message || 'We could not update approval. Please try again.' })
     }
   }
 
@@ -179,9 +180,9 @@ function QuotationManagement() {
       const token = localStorage.getItem('token')
       await axios.patch(`http://localhost:5000/api/quotations/${q._id}/approve`, { status: 'pending' }, { headers: { Authorization: `Bearer ${token}` } })
       await fetchQuotations()
-      alert('Approval request sent')
+      setNotify({ open: true, title: 'Request Sent', message: 'Approval request has been sent successfully.' })
     } catch (e) {
-      alert(e.response?.data?.message || 'Failed to send for approval')
+      setNotify({ open: true, title: 'Send Failed', message: e.response?.data?.message || 'We could not send for approval. Please try again.' })
     }
   }
 
@@ -195,13 +196,13 @@ function QuotationManagement() {
       for (const f of fields) {
         if (JSON.stringify(original?.[f] ?? null) !== JSON.stringify(payload?.[f] ?? null)) { changed = true; break }
       }
-      if (!changed) { alert('No changes detected. Please modify data before creating a revision.'); return }
+      if (!changed) { setNotify({ open: true, title: 'No Changes', message: 'No changes detected. Please modify data before creating a revision.' }); return }
       await axios.post('http://localhost:5000/api/revisions', { sourceQuotationId: q._id, data: payload }, { headers: { Authorization: `Bearer ${token}` } })
-      alert('Revision created')
+      setNotify({ open: true, title: 'Revision Created', message: 'The revision was created successfully.' })
       setRevisionModal({ open: false, quote: null, form: null })
       setHasRevisionFor({ ...hasRevisionFor, [q._id]: true })
     } catch (e) {
-      alert(e.response?.data?.message || 'Failed to create revision')
+      setNotify({ open: true, title: 'Create Failed', message: e.response?.data?.message || 'We could not create the revision. Please try again.' })
     }
   }
 
@@ -504,7 +505,7 @@ function QuotationManagement() {
       const filename = `${q.projectTitle || 'Quotation'}_${q.offerReference || q._id}.pdf`
       window.pdfMake.createPdf(docDefinition).download(filename)
     } catch (e) {
-      alert('Failed to export PDF')
+      setNotify({ open: true, title: 'Export Failed', message: 'We could not generate the PDF for this quotation. Please try again.' })
     }
   }
 
@@ -722,7 +723,7 @@ function QuotationManagement() {
                     localStorage.setItem('leadDetail', JSON.stringify(detail))
                     localStorage.setItem('leadId', q.lead._id)
                     window.location.href = '/lead-detail'
-                  } catch { alert('Unable to open lead') }
+                  } catch { setNotify({ open: true, title: 'Open Lead Failed', message: 'We could not open the linked lead. Please try again.' }) }
                 }}>View Lead</button>
               )}
               {q.edits?.length > 0 && (
@@ -1448,6 +1449,23 @@ function QuotationManagement() {
               ) : (
                 <p>No edits recorded.</p>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {notify.open && (
+        <div className="modal-overlay" onClick={() => setNotify({ open: false, title: '', message: '' })}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>{notify.title || 'Notice'}</h2>
+              <button onClick={() => setNotify({ open: false, title: '', message: '' })} className="close-btn">×</button>
+            </div>
+            <div className="lead-form">
+              <p>{notify.message}</p>
+              <div className="form-actions">
+                <button type="button" className="save-btn" onClick={() => setNotify({ open: false, title: '', message: '' })}>OK</button>
+              </div>
             </div>
           </div>
         </div>

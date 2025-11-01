@@ -1,5 +1,6 @@
 :root {
   --sidebar-width: 280px;
+  --sidebar-width-collapsed: 72px;
   --primary: #6366f1;
   --primary-dark: #4f46e5;
   --bg: #f8fafc;
@@ -82,6 +83,11 @@
   height: 100vh;
   z-index: 100;
   animation: slideInLeft 0.5s ease;
+  transition: width 0.25s ease;
+}
+
+.sidebar.collapsed {
+  width: var(--sidebar-width-collapsed);
 }
 
 @keyframes slideInLeft {
@@ -92,13 +98,20 @@
 .sidebar-header {
   padding: 24px;
   border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
 }
+
+.sidebar.collapsed .sidebar-header { padding: 16px; }
 
 .logo {
   display: flex;
   align-items: center;
   gap: 12px;
 }
+
+.sidebar.collapsed .logo { justify-content: center; width: 100%; }
 
 .logo-icon {
   width: 40px;
@@ -123,7 +136,33 @@
   font-size: 20px;
   font-weight: 700;
   color: var(--text);
+  transition: opacity 0.2s ease, width 0.2s ease;
 }
+
+.sidebar.collapsed .logo span {
+  opacity: 0;
+  width: 0;
+  overflow: hidden;
+}
+
+.collapse-btn {
+  width: 36px;
+  height: 36px;
+  border: 1px solid var(--border);
+  background: var(--card);
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.collapse-btn:hover {
+  box-shadow: var(--shadow);
+}
+
+.collapse-btn svg { width: 18px; height: 18px; color: var(--text); }
 
 .sidebar-nav {
   flex: 1;
@@ -141,6 +180,15 @@
   position: relative;
   overflow: hidden;
 }
+
+.sidebar.collapsed .nav-item {
+  justify-content: center;
+  padding: 12px 12px;
+}
+
+.nav-item .label { white-space: nowrap; }
+.nav-item .label { transition: opacity 0.2s ease, width 0.2s ease; }
+.sidebar.collapsed .nav-item .label { opacity: 0; width: 0; overflow: hidden; }
 
 .nav-item::before {
   content: '';
@@ -180,6 +228,12 @@
   padding: 24px;
   border-top: 1px solid var(--border);
 }
+
+.sidebar.collapsed .sidebar-footer { padding: 16px; }
+
+.user-details { transition: opacity 0.2s ease, width 0.2s ease; }
+.sidebar.collapsed .user-details { opacity: 0; width: 0; overflow: hidden; }
+.sidebar.collapsed .user-info { justify-content: center; }
 
 .user-info {
   display: flex;
@@ -241,6 +295,9 @@
   transition: all 0.3s ease;
 }
 
+.sidebar.collapsed .logout-btn { justify-content: center; padding: 12px; }
+.sidebar.collapsed .logout-btn .label { opacity: 0; width: 0; overflow: hidden; }
+
 .logout-btn:hover {
   background: var(--danger);
   color: white;
@@ -259,6 +316,11 @@
   display: flex;
   flex-direction: column;
   animation: slideInRight 0.5s ease;
+  transition: margin-left 0.25s ease;
+}
+
+.main-content.collapsed {
+  margin-left: var(--sidebar-width-collapsed);
 }
 
 @keyframes slideInRight {

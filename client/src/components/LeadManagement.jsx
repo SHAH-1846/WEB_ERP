@@ -31,6 +31,7 @@ function LeadManagement() {
     weatherConditions: '',
     description: ''
   })
+  const [notify, setNotify] = useState({ open: false, title: '', message: '' })
 
   useEffect(() => {
     const userData = JSON.parse(localStorage.getItem('user'))
@@ -68,7 +69,7 @@ function LeadManagement() {
       setFormData({ customerName: '', projectTitle: '', enquiryNumber: '', enquiryDate: '', scopeSummary: '', submissionDueDate: '' })
       setEditingLead(null)
     } catch (error) {
-      alert(error.response?.data?.message || 'Error creating lead')
+      setNotify({ open: true, title: 'Save Failed', message: error.response?.data?.message || 'We could not save this lead. Please try again.' })
     }
   }
 
@@ -81,9 +82,9 @@ function LeadManagement() {
         headers: { Authorization: `Bearer ${token}` }
       })
       fetchLeads()
-      alert('Lead converted to project successfully!')
+      setNotify({ open: true, title: 'Converted', message: 'Lead converted to project successfully.' })
     } catch (error) {
-      alert(error.response?.data?.message || 'Error converting lead')
+      setNotify({ open: true, title: 'Convert Failed', message: error.response?.data?.message || 'We could not convert this lead. Please try again.' })
     }
   }
 
@@ -109,7 +110,7 @@ function LeadManagement() {
       })
       fetchLeads()
     } catch (error) {
-      alert(error.response?.data?.message || 'Error deleting lead')
+      setNotify({ open: true, title: 'Delete Failed', message: error.response?.data?.message || 'We could not delete this lead. Please try again.' })
     }
   }
 
@@ -216,7 +217,7 @@ function LeadManagement() {
                     localStorage.setItem('leadId', lead._id)
                     window.location.href = '/lead-detail'
                   } catch (e) {
-                    alert('Unable to open lead detail')
+                    setNotify({ open: true, title: 'Open Failed', message: 'We could not open the lead detail. Please try again.' })
                   }
                 }}
               >
@@ -234,7 +235,7 @@ function LeadManagement() {
                       return qLeadId === lead._id
                     })
                     if (list.length === 0) {
-                      alert('No quotations found for this lead')
+                      setNotify({ open: true, title: 'No Quotations', message: 'No quotations found for this lead.' })
                       return
                     }
                     const q = list[0]
@@ -245,7 +246,7 @@ function LeadManagement() {
                     } catch {}
                     window.location.href = '/quotation-detail'
                   } catch (e) {
-                    alert('Unable to open quotation')
+                    setNotify({ open: true, title: 'Open Failed', message: 'We could not open the quotation. Please try again.' })
                   }
                 }}
               >
@@ -374,9 +375,9 @@ function LeadManagement() {
                 })
                 setShowVisitModal(false)
                 setVisitData({ visitAt: '', siteLocation: '', engineerName: '', workProgressSummary: '', safetyObservations: '', qualityMaterialCheck: '', issuesFound: '', actionItems: '', weatherConditions: '', description: '' })
-                alert('Site visit saved')
+                setNotify({ open: true, title: 'Saved', message: 'Site visit saved successfully.' })
               } catch (error) {
-                alert(error.response?.data?.message || 'Error creating site visit')
+                setNotify({ open: true, title: 'Save Failed', message: error.response?.data?.message || 'We could not save the site visit. Please try again.' })
               }
             }} className="lead-form">
               <div className="form-group">
@@ -481,6 +482,23 @@ function LeadManagement() {
               ) : (
                 <p>No edits recorded.</p>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {notify.open && (
+        <div className="modal-overlay" onClick={() => setNotify({ open: false, title: '', message: '' })}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>{notify.title || 'Notice'}</h2>
+              <button onClick={() => setNotify({ open: false, title: '', message: '' })} className="close-btn">×</button>
+            </div>
+            <div className="lead-form">
+              <p>{notify.message}</p>
+              <div className="form-actions">
+                <button type="button" className="save-btn" onClick={() => setNotify({ open: false, title: '', message: '' })}>OK</button>
+              </div>
             </div>
           </div>
         </div>

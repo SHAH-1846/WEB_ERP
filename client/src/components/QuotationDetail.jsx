@@ -15,6 +15,7 @@ function QuotationDetail() {
   const [approvalsViewOpen, setApprovalsViewOpen] = useState(false)
   const [revisionModal, setRevisionModal] = useState({ open: false, form: null })
   const [hasRevisions, setHasRevisions] = useState(false)
+  const [notify, setNotify] = useState({ open: false, title: '', message: '' })
 
   const ensurePdfMake = async () => {
     if (window.pdfMake) return
@@ -321,7 +322,7 @@ function QuotationDetail() {
       const filename = `${q.projectTitle || 'Quotation'}_${q.offerReference || q._id}.pdf`
       window.pdfMake.createPdf(docDefinition).download(filename)
     } catch (e) {
-      alert('Failed to export PDF')
+      setNotify({ open: true, title: 'Export Failed', message: 'We could not generate the PDF. Please try again.' })
     }
   }
 
@@ -350,7 +351,7 @@ function QuotationDetail() {
       setQuotation(updated)
       setApprovalModal({ open: false, action: null, note: '' })
     } catch (e) {
-      alert('Failed to update approval')
+      setNotify({ open: true, title: 'Approval Failed', message: 'We could not update approval. Please try again.' })
     }
   }
 
@@ -365,9 +366,9 @@ function QuotationDetail() {
       const res = await fetch(`http://localhost:5000/api/quotations/${quotation._id}`, { headers: { Authorization: `Bearer ${token}` } })
       const updated = await res.json()
       setQuotation(updated)
-      alert('Approval request sent')
+      setNotify({ open: true, title: 'Request Sent', message: 'Approval request has been sent successfully.' })
     } catch (e) {
-      alert('Failed to send for approval')
+      setNotify({ open: true, title: 'Send Failed', message: 'We could not send for approval. Please try again.' })
     }
   }
 
@@ -381,17 +382,17 @@ function QuotationDetail() {
       for (const f of fields) {
         if (JSON.stringify(original?.[f] ?? null) !== JSON.stringify(payload?.[f] ?? null)) { changed = true; break }
       }
-      if (!changed) { alert('No changes detected. Please modify data before creating a revision.'); return }
+      if (!changed) { setNotify({ open: true, title: 'No Changes', message: 'No changes detected. Please modify data before creating a revision.' }); return }
       await fetch('http://localhost:5000/api/revisions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ sourceQuotationId: quotation._id, data: payload })
       })
-      alert('Revision created')
+      setNotify({ open: true, title: 'Revision Created', message: 'The revision was created successfully.' })
       setRevisionModal({ open: false, form: null })
       window.location.href = '/revisions'
     } catch (e) {
-      alert('Failed to create revision')
+      setNotify({ open: true, title: 'Create Failed', message: 'We could not create the revision. Please try again.' })
     }
   }
 
@@ -569,7 +570,7 @@ function QuotationDetail() {
                 localStorage.setItem('leadDetail', JSON.stringify({ ...leadData, siteVisits: visits }))
                 localStorage.setItem('leadId', quotation.lead._id)
                 window.location.href = '/lead-detail'
-              } catch { alert('Unable to open lead') }
+              } catch { setNotify({ open: true, title: 'Open Lead Failed', message: 'We could not open the linked lead. Please try again.' }) }
             }}>View Lead</button>
           )}
           <button className="link-btn" onClick={() => setApprovalsViewOpen(true)}>View Approvals/Rejections</button>
@@ -977,6 +978,23 @@ function QuotationDetail() {
               <div className="form-group">
                 <label>Email</label>
                 <input type="text" value={profileUser?.email || ''} readOnly />
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {notify.open && (
+        <div className="modal-overlay" onClick={() => setNotify({ open: false, title: '', message: '' })}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>{notify.title || 'Notice'}</h2>
+              <button onClick={() => setNotify({ open: false, title: '', message: '' })} className="close-btn">×</button>
+            </div>
+            <div className="lead-form">
+              <p>{notify.message}</p>
+              <div className="form-actions">
+                <button type="button" className="save-btn" onClick={() => setNotify({ open: false, title: '', message: '' })}>OK</button>
               </div>
             </div>
           </div>

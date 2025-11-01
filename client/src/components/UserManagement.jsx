@@ -33,6 +33,7 @@ function UserManagement() {
   const [currentUser, setCurrentUser] = useState(null)
   const [loading, setLoading] = useState(false)
   const [allRoles, setAllRoles] = useState(STATIC_FALLBACK_ROLES)
+  const [notify, setNotify] = useState({ open: false, title: '', message: '' })
 
   useEffect(() => {
     const userData = JSON.parse(localStorage.getItem('user'))
@@ -94,7 +95,7 @@ function UserManagement() {
       setEditingUser(null)
       setFormData({ name: '', email: '', roles: [], roleIds: [] })
     } catch (error) {
-      alert(error.response?.data?.message || 'Error saving user')
+      setNotify({ open: true, title: 'Save Failed', message: error.response?.data?.message || 'We could not save the user. Please try again.' })
     } finally {
       setLoading(false)
     }
@@ -117,7 +118,7 @@ function UserManagement() {
       })
       fetchUsers()
     } catch (error) {
-      alert('Error deleting user')
+      setNotify({ open: true, title: 'Delete Failed', message: 'We could not delete the user. Please try again.' })
     }
   }
 
@@ -266,6 +267,22 @@ function UserManagement() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+      {notify.open && (
+        <div className="modal-overlay" onClick={() => setNotify({ open: false, title: '', message: '' })}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>{notify.title || 'Notice'}</h2>
+              <button onClick={() => setNotify({ open: false, title: '', message: '' })} className="close-btn">×</button>
+            </div>
+            <div className="lead-form">
+              <p>{notify.message}</p>
+              <div className="form-actions">
+                <button type="button" className="save-btn" onClick={() => setNotify({ open: false, title: '', message: '' })}>OK</button>
+              </div>
+            </div>
           </div>
         </div>
       )}

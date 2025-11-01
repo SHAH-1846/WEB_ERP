@@ -10,6 +10,9 @@ import { initTheme, setTheme } from '../utils/theme'
 
 function Dashboard() {
   const [user, setUser] = useState(null)
+  const [collapsed, setCollapsed] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('sidebarCollapsed') || 'false') } catch { return false }
+  })
   const [isDark, setIsDark] = useState(() => {
     const saved = localStorage.getItem('theme')
     return saved === 'dark'
@@ -59,12 +62,23 @@ function Dashboard() {
         )}
       </button>
       
-      <div className="sidebar">
+      <div className={`sidebar ${collapsed ? 'collapsed' : ''}`}>
         <div className="sidebar-header">
           <div className="logo">
             <div className="logo-icon">W</div>
             <span>WBES</span>
           </div>
+          <button className="collapse-btn" onClick={() => {
+            const next = !collapsed
+            setCollapsed(next)
+            try { localStorage.setItem('sidebarCollapsed', JSON.stringify(next)) } catch {}
+          }} aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}>
+            {collapsed ? (
+              <svg viewBox="0 0 24 24" fill="currentColor"><path d="M15.41 7.41 14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg>
+            ) : (
+              <svg viewBox="0 0 24 24" fill="currentColor"><path d="M8.59 16.59 10 18l6-6-6-6-1.41 1.41L13.17 12z"/></svg>
+            )}
+          </button>
         </div>
         
         <nav className="sidebar-nav">
@@ -72,33 +86,33 @@ function Dashboard() {
             <svg viewBox="0 0 24 24" fill="currentColor">
               <path d="M3 13h8V3H3v10zm0 8h8v-6H3v6zm10 0h8V11h-8v10zm0-18v6h8V3h-8z"/>
             </svg>
-            Dashboard
+            <span className="label">Dashboard</span>
           </NavLink>
           <NavLink to="/users" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
             <svg viewBox="0 0 24 24" fill="currentColor">
               <path d="M16 7c0-1.1-.9-2-2-2s-2 .9-2 2 .9 2 2 2 2-.9 2-2zm-2 3c-1.48 0-4.5.75-4.5 2.25V14h9v-1.75C18.5 10.75 15.48 10 14 10z"/>
               <path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/>
             </svg>
-            Users
+            <span className="label">Users</span>
           </NavLink>
           <NavLink to="/leads" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
             <svg viewBox="0 0 24 24" fill="currentColor">
               <path d="M9 11H7v2h2v-2zm4 0h-2v2h2v-2zm4 0h-2v2h2v-2zm2-7h-1V2h-2v2H8V2H6v2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 16H5V9h14v11z"/>
             </svg>
-            Leads
+            <span className="label">Leads</span>
           </NavLink>
           <NavLink to="/projects" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
             <svg viewBox="0 0 24 24" fill="currentColor">
               <path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-5 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z"/>
             </svg>
-            Projects
+            <span className="label">Projects</span>
           </NavLink>
           {user?.roles?.some(r => ['estimation_engineer','manager','admin'].includes(r)) && (
             <NavLink to="/quotations" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
               <svg viewBox="0 0 24 24" fill="currentColor">
                 <path d="M6 2h9a3 3 0 013 3v14a3 3 0 01-3 3H6a3 3 0 01-3-3V5a3 3 0 013-3zm2 5h7v2H8V7zm0 4h7v2H8v-2zm0 4h5v2H8v-2z"/>
               </svg>
-              Quotations
+              <span className="label">Quotations</span>
             </NavLink>
           )}
           {user?.roles?.some(r => ['estimation_engineer','manager','admin'].includes(r)) && (
@@ -106,7 +120,7 @@ function Dashboard() {
               <svg viewBox="0 0 24 24" fill="currentColor">
                 <path d="M5 4h9a3 3 0 013 3v11a3 3 0 01-3 3H5a3 3 0 01-3-3V7a3 3 0 013-3zm2 4h7v2H7V8zm0 4h7v2H7v-2zm0 4h5v2H7v-2z"/>
               </svg>
-              Revisions
+              <span className="label">Revisions</span>
             </NavLink>
           )}
         </nav>
@@ -123,12 +137,12 @@ function Dashboard() {
             <svg viewBox="0 0 24 24" fill="currentColor">
               <path d="M17 7l-1.41 1.41L18.17 11H8v2h10.17l-2.58 2.59L17 17l5-5zM4 5h8V3H4c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h8v-2H4V5z"/>
             </svg>
-            Logout
+            <span className="label">Logout</span>
           </button>
         </div>
       </div>
       
-      <div className="main-content">
+      <div className={`main-content ${collapsed ? 'collapsed' : ''}`}>
         <header className="header">
           <div className="header-left">
             <h1>

@@ -53,6 +53,7 @@ function LeadDetail() {
     weatherConditions: '',
     description: ''
   })
+  const [notify, setNotify] = useState({ open: false, title: '', message: '' })
 
   // Helpers for PDF export
   const ensurePdfMake = async () => {
@@ -176,7 +177,7 @@ ${visit.actionItems ? 'Recommended follow‑up: ' + visit.actionItems : 'Continu
 
       window.pdfMake.createPdf(docDefinition).download(filename)
     } catch (e) {
-      alert('Failed to export PDF')
+      setNotify({ open: true, title: 'Export Failed', message: 'We could not generate the site visit PDF. Please try again.' })
     }
   }
 
@@ -286,7 +287,7 @@ ${visit.actionItems ? 'Recommended follow‑up: ' + visit.actionItems : 'Continu
                   })
                   const visits = await resVisits.json()
                   if (Array.isArray(visits) && visits.length > 0) {
-                    alert('Cannot delete lead with existing site visits')
+                    setNotify({ open: true, title: 'Delete Blocked', message: 'Cannot delete lead with existing site visits.' })
                     return
                   }
                   const res = await fetch(`http://localhost:5000/api/leads/${lead._id}`, {
@@ -297,10 +298,10 @@ ${visit.actionItems ? 'Recommended follow‑up: ' + visit.actionItems : 'Continu
                     const err = await res.json().catch(() => ({}))
                     throw new Error(err.message || 'Error deleting lead')
                   }
-                  alert('Lead deleted')
+                  setNotify({ open: true, title: 'Deleted', message: 'Lead deleted successfully.' })
                   window.location.href = '/'
                 } catch (e) {
-                  alert(e.message || 'Error deleting lead')
+                  setNotify({ open: true, title: 'Delete Failed', message: e.message || 'We could not delete the lead. Please try again.' })
                 }
               }}
             >
@@ -319,7 +320,7 @@ ${visit.actionItems ? 'Recommended follow‑up: ' + visit.actionItems : 'Continu
                   })
                   const visits = await resVisits.json()
                   if (!Array.isArray(visits) || visits.length === 0) {
-                    alert('Please add a site visit before submitting for approval')
+                    setNotify({ open: true, title: 'Add Site Visit', message: 'Please add a site visit before submitting for approval.' })
                     return
                   }
 
@@ -333,9 +334,9 @@ ${visit.actionItems ? 'Recommended follow‑up: ' + visit.actionItems : 'Continu
                   }
                   const updated = await res.json()
                   setLead(prev => ({ ...prev, status: updated.status }))
-                  alert('Lead submitted for approval')
+                  setNotify({ open: true, title: 'Submitted', message: 'Lead submitted for approval.' })
                 } catch (e) {
-                  alert(e.message || 'Error submitting lead')
+                  setNotify({ open: true, title: 'Submit Failed', message: e.message || 'We could not submit the lead. Please try again.' })
                 }
               }}
             >
@@ -691,7 +692,7 @@ ${visit.actionItems ? 'Recommended follow‑up: ' + visit.actionItems : 'Continu
                   }))
                   setEditVisit(null)
                 } catch (err) {
-                  alert('Error updating site visit')
+                  setNotify({ open: true, title: 'Update Failed', message: 'We could not update the site visit. Please try again.' })
                 }
               }}
               className="assign-form"
@@ -776,7 +777,7 @@ ${visit.actionItems ? 'Recommended follow‑up: ' + visit.actionItems : 'Continu
                   setNewVisitOpen(false)
                   setNewVisitData({ visitAt: '', siteLocation: '', engineerName: '', workProgressSummary: '', safetyObservations: '', qualityMaterialCheck: '', issuesFound: '', actionItems: '', weatherConditions: '', description: '' })
                 } catch (err) {
-                  alert(err.message || 'Error creating site visit')
+                  setNotify({ open: true, title: 'Create Failed', message: err.message || 'We could not create the site visit. Please try again.' })
                 }
               }}
               className="assign-form"
@@ -826,6 +827,22 @@ ${visit.actionItems ? 'Recommended follow‑up: ' + visit.actionItems : 'Continu
                 <button type="submit" className="save-btn">Save Visit</button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+      {notify.open && (
+        <div className="modal-overlay" onClick={() => setNotify({ open: false, title: '', message: '' })}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>{notify.title || 'Notice'}</h2>
+              <button onClick={() => setNotify({ open: false, title: '', message: '' })} className="close-btn">×</button>
+            </div>
+            <div className="lead-form">
+              <p>{notify.message}</p>
+              <div className="form-actions">
+                <button type="button" className="save-btn" onClick={() => setNotify({ open: false, title: '', message: '' })}>OK</button>
+              </div>
+            </div>
           </div>
         </div>
       )}

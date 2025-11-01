@@ -27,6 +27,7 @@ function ProjectManagement() {
     weatherConditions: '',
     description: ''
   })
+  const [notify, setNotify] = useState({ open: false, title: '', message: '' })
 
   useEffect(() => {
     const userData = JSON.parse(localStorage.getItem('user'))
@@ -72,7 +73,7 @@ function ProjectManagement() {
       setShowAssignModal(false)
       setAssignData({ siteEngineerId: '' })
     } catch (error) {
-      alert(error.response?.data?.message || 'Error assigning engineer')
+      setNotify({ open: true, title: 'Assign Failed', message: error.response?.data?.message || 'We could not assign the engineer. Please try again.' })
     }
   }
 
@@ -88,7 +89,7 @@ function ProjectManagement() {
       setShowRevisionModal(false)
       setRevisionData({ type: 'price', description: '' })
     } catch (error) {
-      alert(error.response?.data?.message || 'Error creating revision')
+      setNotify({ open: true, title: 'Create Failed', message: error.response?.data?.message || 'We could not create the revision. Please try again.' })
     }
   }
 
@@ -102,7 +103,7 @@ function ProjectManagement() {
       })
       fetchProjects()
     } catch (error) {
-      alert(error.response?.data?.message || 'Error processing revision')
+      setNotify({ open: true, title: 'Process Failed', message: error.response?.data?.message || 'We could not process the revision. Please try again.' })
     }
   }
 
@@ -313,9 +314,9 @@ function ProjectManagement() {
                   })
                   setShowVisitModal(false)
                   setVisitData({ visitAt: '', siteLocation: '', engineerName: '', workProgressSummary: '', safetyObservations: '', qualityMaterialCheck: '', issuesFound: '', actionItems: '', weatherConditions: '', description: '' })
-                  alert('Site visit saved')
+                  setNotify({ open: true, title: 'Saved', message: 'Site visit saved successfully.' })
                 } catch (error) {
-                  alert(error.response?.data?.message || 'Error creating site visit')
+                  setNotify({ open: true, title: 'Create Failed', message: error.response?.data?.message || 'We could not create the site visit. Please try again.' })
                 }
               }}
               className="assign-form"
@@ -369,6 +370,22 @@ function ProjectManagement() {
                 <button type="submit" className="save-btn">Save Visit</button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+      {notify.open && (
+        <div className="modal-overlay" onClick={() => setNotify({ open: false, title: '', message: '' })}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>{notify.title || 'Notice'}</h2>
+              <button onClick={() => setNotify({ open: false, title: '', message: '' })} className="close-btn">×</button>
+            </div>
+            <div className="lead-form">
+              <p>{notify.message}</p>
+              <div className="form-actions">
+                <button type="button" className="save-btn" onClick={() => setNotify({ open: false, title: '', message: '' })}>OK</button>
+              </div>
+            </div>
           </div>
         </div>
       )}

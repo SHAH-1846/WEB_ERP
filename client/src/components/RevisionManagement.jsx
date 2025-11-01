@@ -9,6 +9,10 @@ function RevisionManagement() {
   const [myOnly, setMyOnly] = useState(false)
   const [search, setSearch] = useState('')
   const [sortKey, setSortKey] = useState('createdAt_desc')
+  const [editModal, setEditModal] = useState({ open: false, revision: null, form: null })
+  const [profileUser, setProfileUser] = useState(null)
+  const [notify, setNotify] = useState({ open: false, title: '', message: '' })
+  const [confirmDelete, setConfirmDelete] = useState({ open: false, revision: null })
 
   const defaultCompany = useMemo(() => ({
     logo,
@@ -292,7 +296,7 @@ function RevisionManagement() {
       const filename = `Revision_${q.revisionNumber}_${q.projectTitle || 'Quotation'}.pdf`
       window.pdfMake.createPdf(docDefinition).download(filename)
     } catch (e) {
-      alert('Failed to export PDF')
+      setNotify({ open: true, title: 'Export Failed', message: 'We could not generate the PDF for this revision. Please try again.' })
     }
   }
 
@@ -378,23 +382,42 @@ function RevisionManagement() {
                       <td data-label="Offer Ref">{r.offerReference || 'N/A'}</td>
                       <td data-label="Customer">{r.lead?.customerName || 'N/A'}</td>
                       <td data-label="Grand Total">{r.priceSchedule?.currency || 'AED'} {Number(r.priceSchedule?.grandTotal || 0).toFixed(2)}</td>
-                      <td data-label="Created By">{r.createdBy?._id === currentUser?.id ? 'You' : (r.createdBy?.name || 'N/A')}</td>
-                      <td data-label="Actions">
-                        <button className="save-btn" onClick={() => exportPDF(r)}>Export</button>
-                        <button className="link-btn" onClick={() => {
-                          localStorage.setItem('revisionId', r._id)
-                          window.location.href = '/revision-detail'
-                        }} style={{ marginLeft: 6 }}>View Details</button>
-                        {currentUser?.roles?.includes('estimation_engineer') && (
-                      <button className="reject-btn" onClick={async () => {
-                            try {
-                              const token = localStorage.getItem('token')
-                              await axios.delete(`http://localhost:5000/api/revisions/${r._id}`, { headers: { Authorization: `Bearer ${token}` } })
-                              alert('Revision undone')
-                              await fetchRevisions()
-                        } catch (e) { alert(e.response?.data?.message || 'Failed to delete revision') }
-                      }} style={{ marginLeft: 6 }}>Delete Revision</button>
+                      <td data-label="Created By">
+                        {r.createdBy?._id === currentUser?.id ? 'You' : (r.createdBy?.name || 'N/A')}
+                        {r.createdBy?._id && r.createdBy._id !== currentUser?.id && (
+                          <button className="link-btn" onClick={() => setProfileUser(r.createdBy)} style={{ marginLeft: 6 }}>View Profile</button>
                         )}
+                      </td>
+                      <td data-label="Actions">
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+                          <button className="save-btn" onClick={() => exportPDF(r)}>Export</button>
+                          {(currentUser?.roles?.includes('estimation_engineer') || currentUser?.roles?.includes('manager') || currentUser?.roles?.includes('admin') || r.createdBy?._id === currentUser?.id) && (
+                            <button className="assign-btn" onClick={() => setEditModal({ open: true, revision: r, form: {
+                              companyInfo: r.companyInfo || {},
+                              submittedTo: r.submittedTo || '',
+                              attention: r.attention || '',
+                              offerReference: r.offerReference || '',
+                              enquiryNumber: r.enquiryNumber || '',
+                              offerDate: r.offerDate ? String(r.offerDate).slice(0,10) : '',
+                              enquiryDate: r.enquiryDate ? String(r.enquiryDate).slice(0,10) : '',
+                              projectTitle: r.projectTitle || r.lead?.projectTitle || '',
+                              introductionText: r.introductionText || '',
+                              scopeOfWork: r.scopeOfWork || [],
+                              priceSchedule: r.priceSchedule || { items: [], subTotal: 0, grandTotal: 0, currency: r.priceSchedule?.currency || 'AED', taxDetails: { vatRate: 5, vatAmount: 0 } },
+                              ourViewpoints: r.ourViewpoints || '',
+                              exclusions: r.exclusions || [],
+                              paymentTerms: r.paymentTerms || [],
+                              deliveryCompletionWarrantyValidity: r.deliveryCompletionWarrantyValidity || { deliveryTimeline: '', warrantyPeriod: '', offerValidity: 30, authorizedSignatory: currentUser?.name || '' }
+                            } })}>Edit</button>
+                          )}
+                          <button className="assign-btn" onClick={() => {
+                            localStorage.setItem('revisionId', r._id)
+                            window.location.href = '/revision-detail'
+                          }}>View Details</button>
+                          {currentUser?.roles?.includes('estimation_engineer') && (
+                            <button className="reject-btn" onClick={() => setConfirmDelete({ open: true, revision: r })}>Delete Revision</button>
+                          )}
+                        </div>
                       </td>
                       <td data-label="Differences">
                         {Array.isArray(r.diffFromParent) && r.diffFromParent.length > 0 ? (
@@ -448,6 +471,359 @@ function RevisionManagement() {
           </div>
         ))}
       </div>
+      {editModal.open && (
+        <div className="modal-overlay" onClick={() => setEditModal({ open: false, revision: null, form: null })}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>Edit Revision</h2>
+              <button onClick={() => setEditModal({ open: false, revision: null, form: null })} className="close-btn">×</button>
+            </div>
+            {editModal.form && (
+              <div className="lead-form" style={{ maxHeight: '70vh', overflow: 'auto' }}>
+                <div className="form-section">
+                  <div className="section-header">
+                    <h3>Cover & Basic Details</h3>
+                  </div>
+                  <div className="form-group">
+                    <label>Submitted To (Client Company)</label>
+                    <input type="text" value={editModal.form.submittedTo} onChange={e => setEditModal({ ...editModal, form: { ...editModal.form, submittedTo: e.target.value } })} />
+                  </div>
+                  <div className="form-group">
+                    <label>Attention (Contact Person)</label>
+                    <input type="text" value={editModal.form.attention} onChange={e => setEditModal({ ...editModal, form: { ...editModal.form, attention: e.target.value } })} />
+                  </div>
+                  <div className="form-row">
+                    <div className="form-group" style={{ flex: 1 }}>
+                      <label>Offer Reference</label>
+                      <input type="text" value={editModal.form.offerReference} onChange={e => setEditModal({ ...editModal, form: { ...editModal.form, offerReference: e.target.value } })} />
+                    </div>
+                    <div className="form-group" style={{ flex: 1 }}>
+                      <label>Enquiry Number</label>
+                      <input type="text" value={editModal.form.enquiryNumber} onChange={e => setEditModal({ ...editModal, form: { ...editModal.form, enquiryNumber: e.target.value } })} />
+                    </div>
+                  </div>
+                  <div className="form-row">
+                    <div className="form-group" style={{ flex: 1 }}>
+                      <label>Offer Date</label>
+                      <input type="date" value={editModal.form.offerDate} onChange={e => setEditModal({ ...editModal, form: { ...editModal.form, offerDate: e.target.value } })} />
+                    </div>
+                    <div className="form-group" style={{ flex: 1 }}>
+                      <label>Enquiry Date</label>
+                      <input type="date" value={editModal.form.enquiryDate} onChange={e => setEditModal({ ...editModal, form: { ...editModal.form, enquiryDate: e.target.value } })} />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="form-section">
+                  <div className="section-header">
+                    <h3>Project Details</h3>
+                  </div>
+                  <div className="form-group">
+                    <label>Project Title</label>
+                    <input type="text" value={editModal.form.projectTitle} onChange={e => setEditModal({ ...editModal, form: { ...editModal.form, projectTitle: e.target.value } })} />
+                  </div>
+                  <div className="form-group">
+                    <label>Introduction</label>
+                    <textarea value={editModal.form.introductionText} onChange={e => setEditModal({ ...editModal, form: { ...editModal.form, introductionText: e.target.value } })} />
+                  </div>
+                </div>
+
+                <div className="form-section">
+                  <div className="section-header">
+                    <h3>Scope of Work</h3>
+                  </div>
+                  {editModal.form.scopeOfWork.map((s, i) => (
+                    <div key={i} className="item-card">
+                      <div className="item-header">
+                        <span>Item {i + 1}</span>
+                        <button type="button" className="cancel-btn" onClick={() => setEditModal({ ...editModal, form: { ...editModal.form, scopeOfWork: editModal.form.scopeOfWork.filter((_, idx) => idx !== i) } })}>Remove</button>
+                      </div>
+                      <div className="form-row">
+                        <div className="form-group" style={{ flex: 3 }}>
+                          <label>Description</label>
+                          <textarea value={s.description} onChange={e => setEditModal({ ...editModal, form: { ...editModal.form, scopeOfWork: editModal.form.scopeOfWork.map((x, idx) => idx === i ? { ...x, description: e.target.value } : x) } })} />
+                        </div>
+                        <div className="form-group" style={{ flex: 1 }}>
+                          <label>Qty</label>
+                          <input type="number" value={s.quantity} onChange={e => setEditModal({ ...editModal, form: { ...editModal.form, scopeOfWork: editModal.form.scopeOfWork.map((x, idx) => idx === i ? { ...x, quantity: e.target.value } : x) } })} />
+                        </div>
+                        <div className="form-group" style={{ flex: 1 }}>
+                          <label>Unit</label>
+                          <input type="text" value={s.unit} onChange={e => setEditModal({ ...editModal, form: { ...editModal.form, scopeOfWork: editModal.form.scopeOfWork.map((x, idx) => idx === i ? { ...x, unit: e.target.value } : x) } })} />
+                        </div>
+                        <div className="form-group" style={{ flex: 2 }}>
+                          <label>Location/Remarks</label>
+                          <input type="text" value={s.locationRemarks} onChange={e => setEditModal({ ...editModal, form: { ...editModal.form, scopeOfWork: editModal.form.scopeOfWork.map((x, idx) => idx === i ? { ...x, locationRemarks: e.target.value } : x) } })} />
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                  <div className="section-actions">
+                    <button type="button" className="link-btn" onClick={() => setEditModal({ ...editModal, form: { ...editModal.form, scopeOfWork: [...editModal.form.scopeOfWork, { description: '', quantity: '', unit: '', locationRemarks: '' }] } })}>+ Add Scope Item</button>
+                  </div>
+                </div>
+
+                <div className="form-section">
+                  <div className="section-header">
+                    <h3>Price Schedule</h3>
+                  </div>
+                  <div className="form-row">
+                    <div className="form-group" style={{ flex: 1 }}>
+                      <label>Currency</label>
+                      <input type="text" value={editModal.form.priceSchedule.currency} onChange={e => setEditModal({ ...editModal, form: { ...editModal.form, priceSchedule: { ...editModal.form.priceSchedule, currency: e.target.value } } })} />
+                    </div>
+                    <div className="form-group" style={{ flex: 1 }}>
+                      <label>VAT %</label>
+                      <input type="number" value={editModal.form.priceSchedule.taxDetails.vatRate} onChange={e => {
+                        const items = editModal.form.priceSchedule.items
+                        const sub = items.reduce((sum, it) => sum + (Number(it.quantity || 0) * Number(it.unitRate || 0)), 0)
+                        const vat = sub * (Number(e.target.value || 0) / 100)
+                        const grand = sub + vat
+                        setEditModal({ ...editModal, form: { ...editModal.form, priceSchedule: { ...editModal.form.priceSchedule, subTotal: Number(sub.toFixed(2)), grandTotal: Number(grand.toFixed(2)), taxDetails: { ...editModal.form.priceSchedule.taxDetails, vatRate: e.target.value, vatAmount: Number(vat.toFixed(2)) } } } })
+                      }} />
+                    </div>
+                  </div>
+                  {editModal.form.priceSchedule.items.map((it, i) => (
+                    <div key={i} className="item-card">
+                      <div className="item-header">
+                        <span>Item {i + 1}</span>
+                        <button type="button" className="cancel-btn" onClick={() => {
+                          const items = editModal.form.priceSchedule.items.filter((_, idx) => idx !== i)
+                          const sub = items.reduce((sum, it) => sum + (Number(it.quantity || 0) * Number(it.unitRate || 0)), 0)
+                          const vat = sub * (Number(editModal.form.priceSchedule.taxDetails.vatRate || 0) / 100)
+                          const grand = sub + vat
+                          setEditModal({ ...editModal, form: { ...editModal.form, priceSchedule: { ...editModal.form.priceSchedule, items, subTotal: Number(sub.toFixed(2)), grandTotal: Number(grand.toFixed(2)), taxDetails: { ...editModal.form.priceSchedule.taxDetails, vatAmount: Number(vat.toFixed(2)) } } } })
+                        }}>Remove</button>
+                      </div>
+                      <div className="form-row">
+                        <div className="form-group" style={{ flex: 3 }}>
+                          <label>Description</label>
+                          <input type="text" value={it.description} onChange={e => {
+                            const items = editModal.form.priceSchedule.items.map((x, idx) => idx === i ? { ...x, description: e.target.value } : x)
+                            setEditModal({ ...editModal, form: { ...editModal.form, priceSchedule: { ...editModal.form.priceSchedule, items } } })
+                          }} />
+                        </div>
+                        <div className="form-group" style={{ flex: 1 }}>
+                          <label>Qty</label>
+                          <input type="number" value={it.quantity} onChange={e => {
+                            const items = editModal.form.priceSchedule.items.map((x, idx) => idx === i ? { ...x, quantity: e.target.value, totalAmount: Number((Number(e.target.value || 0) * Number(x.unitRate || 0)).toFixed(2)) } : x)
+                            const sub = items.reduce((sum, it) => sum + (Number(it.quantity || 0) * Number(it.unitRate || 0)), 0)
+                            const vat = sub * (Number(editModal.form.priceSchedule.taxDetails.vatRate || 0) / 100)
+                            const grand = sub + vat
+                            setEditModal({ ...editModal, form: { ...editModal.form, priceSchedule: { ...editModal.form.priceSchedule, items, subTotal: Number(sub.toFixed(2)), grandTotal: Number(grand.toFixed(2)), taxDetails: { ...editModal.form.priceSchedule.taxDetails, vatAmount: Number(vat.toFixed(2)) } } } })
+                          }} />
+                        </div>
+                        <div className="form-group" style={{ flex: 1 }}>
+                          <label>Unit</label>
+                          <input type="text" value={it.unit} onChange={e => {
+                            const items = editModal.form.priceSchedule.items.map((x, idx) => idx === i ? { ...x, unit: e.target.value } : x)
+                            setEditModal({ ...editModal, form: { ...editModal.form, priceSchedule: { ...editModal.form.priceSchedule, items } } })
+                          }} />
+                        </div>
+                        <div className="form-group" style={{ flex: 1 }}>
+                          <label>Unit Rate</label>
+                          <input type="number" value={it.unitRate} onChange={e => {
+                            const items = editModal.form.priceSchedule.items.map((x, idx) => idx === i ? { ...x, unitRate: e.target.value, totalAmount: Number((Number(x.quantity || 0) * Number(e.target.value || 0)).toFixed(2)) } : x)
+                            const sub = items.reduce((sum, it) => sum + (Number(it.quantity || 0) * Number(it.unitRate || 0)), 0)
+                            const vat = sub * (Number(editModal.form.priceSchedule.taxDetails.vatRate || 0) / 100)
+                            const grand = sub + vat
+                            setEditModal({ ...editModal, form: { ...editModal.form, priceSchedule: { ...editModal.form.priceSchedule, items, subTotal: Number(sub.toFixed(2)), grandTotal: Number(grand.toFixed(2)), taxDetails: { ...editModal.form.priceSchedule.taxDetails, vatAmount: Number(vat.toFixed(2)) } } } })
+                          }} />
+                        </div>
+                        <div className="form-group" style={{ flex: 1 }}>
+                          <label>Amount</label>
+                          <input type="number" value={Number(it.totalAmount || 0)} readOnly />
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                  <div className="section-actions">
+                    <button type="button" className="link-btn" onClick={() => setEditModal({ ...editModal, form: { ...editModal.form, priceSchedule: { ...editModal.form.priceSchedule, items: [...editModal.form.priceSchedule.items, { description: '', quantity: 0, unit: '', unitRate: 0, totalAmount: 0 }] } } })}>+ Add Item</button>
+                  </div>
+
+                  <div className="totals-card">
+                    <div className="form-row">
+                      <div className="form-group" style={{ flex: 1 }}>
+                        <label>Sub Total</label>
+                        <input type="number" readOnly value={Number(editModal.form.priceSchedule.subTotal || 0)} />
+                      </div>
+                      <div className="form-group" style={{ flex: 1 }}>
+                        <label>VAT Amount</label>
+                        <input type="number" readOnly value={Number(editModal.form.priceSchedule.taxDetails.vatAmount || 0)} />
+                      </div>
+                      <div className="form-group" style={{ flex: 1 }}>
+                        <label>Grand Total</label>
+                        <input type="number" readOnly value={Number(editModal.form.priceSchedule.grandTotal || 0)} />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="form-section">
+                  <div className="section-header">
+                    <h3>Our Viewpoints / Special Terms</h3>
+                  </div>
+                  <div className="form-group">
+                    <label>Our Viewpoints / Special Terms</label>
+                    <textarea value={editModal.form.ourViewpoints} onChange={e => setEditModal({ ...editModal, form: { ...editModal.form, ourViewpoints: e.target.value } })} />
+                  </div>
+                </div>
+
+                <div className="form-section">
+                  <div className="section-header">
+                    <h3>Exclusions</h3>
+                  </div>
+                  {editModal.form.exclusions.map((ex, i) => (
+                    <div key={i} className="item-card">
+                      <div className="item-header">
+                        <span>Item {i + 1}</span>
+                        <button type="button" className="cancel-btn" onClick={() => setEditModal({ ...editModal, form: { ...editModal.form, exclusions: editModal.form.exclusions.filter((_, idx) => idx !== i) } })}>Remove</button>
+                      </div>
+                      <div className="form-row">
+                        <div className="form-group" style={{ flex: 1 }}>
+                          <input type="text" value={ex} onChange={e => setEditModal({ ...editModal, form: { ...editModal.form, exclusions: editModal.form.exclusions.map((x, idx) => idx === i ? e.target.value : x) } })} />
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                  <div className="section-actions">
+                    <button type="button" className="link-btn" onClick={() => setEditModal({ ...editModal, form: { ...editModal.form, exclusions: [...editModal.form.exclusions, ''] } })}>+ Add Exclusion</button>
+                  </div>
+                </div>
+
+                <div className="form-section">
+                  <div className="section-header">
+                    <h3>Payment Terms</h3>
+                  </div>
+                  {editModal.form.paymentTerms.map((p, i) => (
+                    <div key={i} className="item-card">
+                      <div className="item-header">
+                        <span>Term {i + 1}</span>
+                        <button type="button" className="cancel-btn" onClick={() => setEditModal({ ...editModal, form: { ...editModal.form, paymentTerms: editModal.form.paymentTerms.filter((_, idx) => idx !== i) } })}>Remove</button>
+                      </div>
+                      <div className="form-row">
+                        <div className="form-group" style={{ flex: 3 }}>
+                          <label>Milestone</label>
+                          <input type="text" value={p.milestoneDescription} onChange={e => setEditModal({ ...editModal, form: { ...editModal.form, paymentTerms: editModal.form.paymentTerms.map((x, idx) => idx === i ? { ...x, milestoneDescription: e.target.value } : x) } })} />
+                        </div>
+                        <div className="form-group" style={{ flex: 1 }}>
+                          <label>Amount %</label>
+                          <input type="number" value={p.amountPercent} onChange={e => setEditModal({ ...editModal, form: { ...editModal.form, paymentTerms: editModal.form.paymentTerms.map((x, idx) => idx === i ? { ...x, amountPercent: e.target.value } : x) } })} />
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                  <div className="section-actions">
+                    <button type="button" className="link-btn" onClick={() => setEditModal({ ...editModal, form: { ...editModal.form, paymentTerms: [...editModal.form.paymentTerms, { milestoneDescription: '', amountPercent: '' }] } })}>+ Add Payment Term</button>
+                  </div>
+                </div>
+
+                <div className="form-section">
+                  <div className="section-header">
+                    <h3>Delivery, Completion, Warranty & Validity</h3>
+                  </div>
+                  <div className="form-group">
+                    <label>Delivery / Completion Timeline</label>
+                    <input type="text" value={editModal.form.deliveryCompletionWarrantyValidity.deliveryTimeline} onChange={e => setEditModal({ ...editModal, form: { ...editModal.form, deliveryCompletionWarrantyValidity: { ...editModal.form.deliveryCompletionWarrantyValidity, deliveryTimeline: e.target.value } } })} />
+                  </div>
+                  <div className="form-row">
+                    <div className="form-group" style={{ flex: 1 }}>
+                      <label>Warranty Period</label>
+                      <input type="text" value={editModal.form.deliveryCompletionWarrantyValidity.warrantyPeriod} onChange={e => setEditModal({ ...editModal, form: { ...editModal.form, deliveryCompletionWarrantyValidity: { ...editModal.form.deliveryCompletionWarrantyValidity, warrantyPeriod: e.target.value } } })} />
+                    </div>
+                    <div className="form-group" style={{ flex: 1 }}>
+                      <label>Offer Validity (Days)</label>
+                      <input type="number" value={editModal.form.deliveryCompletionWarrantyValidity.offerValidity} onChange={e => setEditModal({ ...editModal, form: { ...editModal.form, deliveryCompletionWarrantyValidity: { ...editModal.form.deliveryCompletionWarrantyValidity, offerValidity: e.target.value } } })} />
+                    </div>
+                  </div>
+                  <div className="form-group">
+                    <label>Authorized Signatory</label>
+                    <input type="text" value={editModal.form.deliveryCompletionWarrantyValidity.authorizedSignatory} onChange={e => setEditModal({ ...editModal, form: { ...editModal.form, deliveryCompletionWarrantyValidity: { ...editModal.form.deliveryCompletionWarrantyValidity, authorizedSignatory: e.target.value } } })} />
+                  </div>
+                </div>
+
+                <div className="form-actions">
+                  <button type="button" className="cancel-btn" onClick={() => setEditModal({ open: false, revision: null, form: null })}>Cancel</button>
+                  <button type="button" className="save-btn" onClick={async () => {
+                    try {
+                      const token = localStorage.getItem('token')
+                      await axios.put(`http://localhost:5000/api/revisions/${editModal.revision._id}`, editModal.form, { headers: { Authorization: `Bearer ${token}` } })
+                      await fetchRevisions()
+                      setEditModal({ open: false, revision: null, form: null })
+                    } catch (e) { alert(e.response?.data?.message || 'Failed to save revision') }
+                  }}>Save Changes</button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+      {profileUser && (
+        <div className="modal-overlay profile" onClick={() => setProfileUser(null)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>User Profile</h2>
+              <button onClick={() => setProfileUser(null)} className="close-btn">×</button>
+            </div>
+            <div className="lead-form">
+              <div className="form-group">
+                <label>Name</label>
+                <input type="text" value={profileUser?.name || ''} readOnly />
+              </div>
+              <div className="form-group">
+                <label>Email</label>
+                <input type="text" value={profileUser?.email || ''} readOnly />
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {confirmDelete.open && confirmDelete.revision && (
+        <div className="modal-overlay" onClick={() => setConfirmDelete({ open: false, revision: null })}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>Delete Revision</h2>
+              <button onClick={() => setConfirmDelete({ open: false, revision: null })} className="close-btn">×</button>
+            </div>
+            <div className="lead-form">
+              <p>Are you sure you want to delete Revision {confirmDelete.revision.revisionNumber}? This action cannot be undone.</p>
+              <div className="form-actions">
+                <button type="button" className="cancel-btn" onClick={() => setConfirmDelete({ open: false, revision: null })}>Cancel</button>
+                <button type="button" className="reject-btn" onClick={async () => {
+                  try {
+                    const token = localStorage.getItem('token')
+                    await axios.delete(`http://localhost:5000/api/revisions/${confirmDelete.revision._id}`, { headers: { Authorization: `Bearer ${token}` } })
+                    setConfirmDelete({ open: false, revision: null })
+                    setNotify({ open: true, title: 'Revision Deleted', message: 'The revision was deleted successfully.' })
+                    await fetchRevisions()
+                  } catch (e) {
+                    setConfirmDelete({ open: false, revision: null })
+                    setNotify({ open: true, title: 'Delete Failed', message: e.response?.data?.message || 'We could not delete the revision. Please try again.' })
+                  }
+                }}>Confirm Delete</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {notify.open && (
+        <div className="modal-overlay" onClick={() => setNotify({ open: false, title: '', message: '' })}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>{notify.title || 'Notice'}</h2>
+              <button onClick={() => setNotify({ open: false, title: '', message: '' })} className="close-btn">×</button>
+            </div>
+            <div className="lead-form">
+              <p>{notify.message}</p>
+              <div className="form-actions">
+                <button type="button" className="save-btn" onClick={() => setNotify({ open: false, title: '', message: '' })}>OK</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

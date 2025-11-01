@@ -9,6 +9,10 @@ function RevisionDetail() {
   const [currentUser, setCurrentUser] = useState(() => {
     try { return JSON.parse(localStorage.getItem('user')) } catch { return null }
   })
+  const [editModal, setEditModal] = useState({ open: false, form: null })
+  const [showHistory, setShowHistory] = useState(false)
+  const [profileUser, setProfileUser] = useState(null)
+  const [notify, setNotify] = useState({ open: false, title: '', message: '' })
 
   useEffect(() => {
     async function load() {
@@ -314,7 +318,7 @@ function RevisionDetail() {
       const filename = `Revision_${revision.revisionNumber}_${revision.projectTitle || 'Quotation'}.pdf`
       window.pdfMake.createPdf(docDefinition).download(filename)
     } catch (e) {
-      alert('Failed to export PDF')
+      setNotify({ open: true, title: 'Export Failed', message: 'We could not generate the PDF for this revision. Please try again.' })
     }
   }
 
@@ -338,6 +342,25 @@ function RevisionDetail() {
         </div>
         <div className="ld-sticky-actions">
           <button className="save-btn" onClick={exportPDF}>Export</button>
+          {(currentUser?.roles?.includes('estimation_engineer') || revision?.createdBy?._id === currentUser?.id) && (
+            <button className="assign-btn" onClick={() => setEditModal({ open: true, form: {
+              companyInfo: revision.companyInfo || {},
+              submittedTo: revision.submittedTo || '',
+              attention: revision.attention || '',
+              offerReference: revision.offerReference || '',
+              enquiryNumber: revision.enquiryNumber || '',
+              offerDate: revision.offerDate ? String(revision.offerDate).slice(0,10) : '',
+              enquiryDate: revision.enquiryDate ? String(revision.enquiryDate).slice(0,10) : '',
+              projectTitle: revision.projectTitle || revision.lead?.projectTitle || '',
+              introductionText: revision.introductionText || '',
+              scopeOfWork: revision.scopeOfWork || [],
+              priceSchedule: revision.priceSchedule || { items: [], subTotal: 0, grandTotal: 0, currency: revision.priceSchedule?.currency || 'AED', taxDetails: { vatRate: 5, vatAmount: 0 } },
+              ourViewpoints: revision.ourViewpoints || '',
+              exclusions: revision.exclusions || [],
+              paymentTerms: revision.paymentTerms || [],
+              deliveryCompletionWarrantyValidity: revision.deliveryCompletionWarrantyValidity || { deliveryTimeline: '', warrantyPeriod: '', offerValidity: 30, authorizedSignatory: currentUser?.name || '' }
+            } })}>Edit</button>
+          )}
           <button className="link-btn" onClick={() => {
             if (revision.parentQuotation?._id) {
               localStorage.setItem('quotationId', revision.parentQuotation._id)
@@ -355,7 +378,7 @@ function RevisionDetail() {
                 localStorage.setItem('leadDetail', JSON.stringify({ ...leadData, siteVisits: visits }))
                 localStorage.setItem('leadId', revision.lead._id)
                 window.location.href = '/lead-detail'
-              } catch { alert('Unable to open lead') }
+              } catch { setNotify({ open: true, title: 'Open Lead Failed', message: 'We could not open the linked lead. Please try again.' }) }
             }}>View Lead</button>
           )}
         </div>
@@ -393,7 +416,9 @@ function RevisionDetail() {
             <p><strong>Enquiry #:</strong> {revision.enquiryNumber || revision.lead?.enquiryNumber || 'N/A'}</p>
             <p><strong>Currency:</strong> {currency}</p>
             <p><strong>Grand Total:</strong> {Number(revision.priceSchedule?.grandTotal || 0).toFixed(2)}</p>
-            <p><strong>Created By:</strong> {revision.createdBy?._id === currentUser?.id ? 'You' : (revision.createdBy?.name || 'N/A')}</p>
+            <p><strong>Created By:</strong> {revision.createdBy?._id === currentUser?.id ? 'You' : (revision.createdBy?.name || 'N/A')} {revision.createdBy?._id && revision.createdBy._id !== currentUser?.id && (
+              <button className="link-btn" onClick={() => setProfileUser(revision.createdBy)} style={{ marginLeft: 6 }}>View Profile</button>
+            )}</p>
           </div>
         </div>
 
@@ -524,6 +549,375 @@ function RevisionDetail() {
           </div>
         )}
       </div>
+
+      {revision && (
+        <div className="ld-card ld-section">
+          <button className="link-btn" onClick={() => setShowHistory(!showHistory)}>
+            {showHistory ? 'Hide Revision Edit History' : 'View Revision Edit History'}
+          </button>
+          {showHistory && Array.isArray(revision.edits) && revision.edits.length > 0 && (
+            <div className="edits-list" style={{ marginTop: 8 }}>
+              {revision.edits.slice().reverse().map((edit, idx) => (
+                <div key={idx} className="edit-item">
+                  <div className="edit-header">
+                    <span>By {edit.editedBy?._id === currentUser?.id ? 'You' : (edit.editedBy?.name || 'N/A')}</span>
+                    {edit.editedBy?._id && edit.editedBy._id !== currentUser?.id && (
+                      <button className="link-btn" onClick={() => setProfileUser(edit.editedBy)} style={{ marginLeft: 6 }}>View Profile</button>
+                    )}
+                    <span>{new Date(edit.editedAt).toLocaleString()}</span>
+                  </div>
+                  <ul className="changes-list">
+                    {edit.changes.map((c, i) => (
+                      <li key={i}>
+                        <strong>{c.field}:</strong>
+                        <div className="change-diff">
+                          <pre className="change-block">{JSON.stringify(c.from, null, 2)}</pre>
+                          <span>→</span>
+                          <pre className="change-block">{JSON.stringify(c.to, null, 2)}</pre>
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {editModal.open && (
+        <div className="modal-overlay" onClick={() => setEditModal({ open: false, form: null })}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>Edit Revision</h2>
+              <button onClick={() => setEditModal({ open: false, form: null })} className="close-btn">×</button>
+            </div>
+            {editModal.form && (
+              <div className="lead-form" style={{ maxHeight: '70vh', overflow: 'auto' }}>
+                <div className="form-section">
+                  <div className="section-header">
+                    <h3>Cover & Basic Details</h3>
+                  </div>
+                  <div className="form-group">
+                    <label>Submitted To (Client Company)</label>
+                    <input type="text" value={editModal.form.submittedTo} onChange={e => setEditModal({ ...editModal, form: { ...editModal.form, submittedTo: e.target.value } })} />
+                  </div>
+                  <div className="form-group">
+                    <label>Attention (Contact Person)</label>
+                    <input type="text" value={editModal.form.attention} onChange={e => setEditModal({ ...editModal, form: { ...editModal.form, attention: e.target.value } })} />
+                  </div>
+                  <div className="form-row">
+                    <div className="form-group" style={{ flex: 1 }}>
+                      <label>Offer Reference</label>
+                      <input type="text" value={editModal.form.offerReference} onChange={e => setEditModal({ ...editModal, form: { ...editModal.form, offerReference: e.target.value } })} />
+                    </div>
+                    <div className="form-group" style={{ flex: 1 }}>
+                      <label>Enquiry Number</label>
+                      <input type="text" value={editModal.form.enquiryNumber} onChange={e => setEditModal({ ...editModal, form: { ...editModal.form, enquiryNumber: e.target.value } })} />
+                    </div>
+                  </div>
+                  <div className="form-row">
+                    <div className="form-group" style={{ flex: 1 }}>
+                      <label>Offer Date</label>
+                      <input type="date" value={editModal.form.offerDate} onChange={e => setEditModal({ ...editModal, form: { ...editModal.form, offerDate: e.target.value } })} />
+                    </div>
+                    <div className="form-group" style={{ flex: 1 }}>
+                      <label>Enquiry Date</label>
+                      <input type="date" value={editModal.form.enquiryDate} onChange={e => setEditModal({ ...editModal, form: { ...editModal.form, enquiryDate: e.target.value } })} />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="form-section">
+                  <div className="section-header">
+                    <h3>Project Details</h3>
+                  </div>
+                  <div className="form-group">
+                    <label>Project Title</label>
+                    <input type="text" value={editModal.form.projectTitle} onChange={e => setEditModal({ ...editModal, form: { ...editModal.form, projectTitle: e.target.value } })} />
+                  </div>
+                  <div className="form-group">
+                    <label>Introduction</label>
+                    <textarea value={editModal.form.introductionText} onChange={e => setEditModal({ ...editModal, form: { ...editModal.form, introductionText: e.target.value } })} />
+                  </div>
+                </div>
+
+                <div className="form-section">
+                  <div className="section-header">
+                    <h3>Scope of Work</h3>
+                  </div>
+                  {editModal.form.scopeOfWork.map((s, i) => (
+                    <div key={i} className="item-card">
+                      <div className="item-header">
+                        <span>Item {i + 1}</span>
+                        <button type="button" className="cancel-btn" onClick={() => setEditModal({ ...editModal, form: { ...editModal.form, scopeOfWork: editModal.form.scopeOfWork.filter((_, idx) => idx !== i) } })}>Remove</button>
+                      </div>
+                      <div className="form-row">
+                        <div className="form-group" style={{ flex: 3 }}>
+                          <label>Description</label>
+                          <textarea value={s.description} onChange={e => setEditModal({ ...editModal, form: { ...editModal.form, scopeOfWork: editModal.form.scopeOfWork.map((x, idx) => idx === i ? { ...x, description: e.target.value } : x) } })} />
+                        </div>
+                        <div className="form-group" style={{ flex: 1 }}>
+                          <label>Qty</label>
+                          <input type="number" value={s.quantity} onChange={e => setEditModal({ ...editModal, form: { ...editModal.form, scopeOfWork: editModal.form.scopeOfWork.map((x, idx) => idx === i ? { ...x, quantity: e.target.value } : x) } })} />
+                        </div>
+                        <div className="form-group" style={{ flex: 1 }}>
+                          <label>Unit</label>
+                          <input type="text" value={s.unit} onChange={e => setEditModal({ ...editModal, form: { ...editModal.form, scopeOfWork: editModal.form.scopeOfWork.map((x, idx) => idx === i ? { ...x, unit: e.target.value } : x) } })} />
+                        </div>
+                        <div className="form-group" style={{ flex: 2 }}>
+                          <label>Location/Remarks</label>
+                          <input type="text" value={s.locationRemarks} onChange={e => setEditModal({ ...editModal, form: { ...editModal.form, scopeOfWork: editModal.form.scopeOfWork.map((x, idx) => idx === i ? { ...x, locationRemarks: e.target.value } : x) } })} />
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                  <div className="section-actions">
+                    <button type="button" className="link-btn" onClick={() => setEditModal({ ...editModal, form: { ...editModal.form, scopeOfWork: [...editModal.form.scopeOfWork, { description: '', quantity: '', unit: '', locationRemarks: '' }] } })}>+ Add Scope Item</button>
+                  </div>
+                </div>
+
+                <div className="form-section">
+                  <div className="section-header">
+                    <h3>Price Schedule</h3>
+                  </div>
+                  <div className="form-row">
+                    <div className="form-group" style={{ flex: 1 }}>
+                      <label>Currency</label>
+                      <input type="text" value={editModal.form.priceSchedule.currency} onChange={e => setEditModal({ ...editModal, form: { ...editModal.form, priceSchedule: { ...editModal.form.priceSchedule, currency: e.target.value } } })} />
+                    </div>
+                    <div className="form-group" style={{ flex: 1 }}>
+                      <label>VAT %</label>
+                      <input type="number" value={editModal.form.priceSchedule.taxDetails.vatRate} onChange={e => {
+                        const items = editModal.form.priceSchedule.items
+                        const sub = items.reduce((sum, it) => sum + (Number(it.quantity || 0) * Number(it.unitRate || 0)), 0)
+                        const vat = sub * (Number(e.target.value || 0) / 100)
+                        const grand = sub + vat
+                        setEditModal({ ...editModal, form: { ...editModal.form, priceSchedule: { ...editModal.form.priceSchedule, subTotal: Number(sub.toFixed(2)), grandTotal: Number(grand.toFixed(2)), taxDetails: { ...editModal.form.priceSchedule.taxDetails, vatRate: e.target.value, vatAmount: Number(vat.toFixed(2)) } } } })
+                      }} />
+                    </div>
+                  </div>
+                  {editModal.form.priceSchedule.items.map((it, i) => (
+                    <div key={i} className="item-card">
+                      <div className="item-header">
+                        <span>Item {i + 1}</span>
+                        <button type="button" className="cancel-btn" onClick={() => {
+                          const items = editModal.form.priceSchedule.items.filter((_, idx) => idx !== i)
+                          const sub = items.reduce((sum, it) => sum + (Number(it.quantity || 0) * Number(it.unitRate || 0)), 0)
+                          const vat = sub * (Number(editModal.form.priceSchedule.taxDetails.vatRate || 0) / 100)
+                          const grand = sub + vat
+                          setEditModal({ ...editModal, form: { ...editModal.form, priceSchedule: { ...editModal.form.priceSchedule, items, subTotal: Number(sub.toFixed(2)), grandTotal: Number(grand.toFixed(2)), taxDetails: { ...editModal.form.priceSchedule.taxDetails, vatAmount: Number(vat.toFixed(2)) } } } })
+                        }}>Remove</button>
+                      </div>
+                      <div className="form-row">
+                        <div className="form-group" style={{ flex: 3 }}>
+                          <label>Description</label>
+                          <input type="text" value={it.description} onChange={e => {
+                            const items = editModal.form.priceSchedule.items.map((x, idx) => idx === i ? { ...x, description: e.target.value } : x)
+                            setEditModal({ ...editModal, form: { ...editModal.form, priceSchedule: { ...editModal.form.priceSchedule, items } } })
+                          }} />
+                        </div>
+                        <div className="form-group" style={{ flex: 1 }}>
+                          <label>Qty</label>
+                          <input type="number" value={it.quantity} onChange={e => {
+                            const items = editModal.form.priceSchedule.items.map((x, idx) => idx === i ? { ...x, quantity: e.target.value, totalAmount: Number((Number(e.target.value || 0) * Number(x.unitRate || 0)).toFixed(2)) } : x)
+                            const sub = items.reduce((sum, it) => sum + (Number(it.quantity || 0) * Number(it.unitRate || 0)), 0)
+                            const vat = sub * (Number(editModal.form.priceSchedule.taxDetails.vatRate || 0) / 100)
+                            const grand = sub + vat
+                            setEditModal({ ...editModal, form: { ...editModal.form, priceSchedule: { ...editModal.form.priceSchedule, items, subTotal: Number(sub.toFixed(2)), grandTotal: Number(grand.toFixed(2)), taxDetails: { ...editModal.form.priceSchedule.taxDetails, vatAmount: Number(vat.toFixed(2)) } } } })
+                          }} />
+                        </div>
+                        <div className="form-group" style={{ flex: 1 }}>
+                          <label>Unit</label>
+                          <input type="text" value={it.unit} onChange={e => {
+                            const items = editModal.form.priceSchedule.items.map((x, idx) => idx === i ? { ...x, unit: e.target.value } : x)
+                            setEditModal({ ...editModal, form: { ...editModal.form, priceSchedule: { ...editModal.form.priceSchedule, items } } })
+                          }} />
+                        </div>
+                        <div className="form-group" style={{ flex: 1 }}>
+                          <label>Unit Rate</label>
+                          <input type="number" value={it.unitRate} onChange={e => {
+                            const items = editModal.form.priceSchedule.items.map((x, idx) => idx === i ? { ...x, unitRate: e.target.value, totalAmount: Number((Number(x.quantity || 0) * Number(e.target.value || 0)).toFixed(2)) } : x)
+                            const sub = items.reduce((sum, it) => sum + (Number(it.quantity || 0) * Number(it.unitRate || 0)), 0)
+                            const vat = sub * (Number(editModal.form.priceSchedule.taxDetails.vatRate || 0) / 100)
+                            const grand = sub + vat
+                            setEditModal({ ...editModal, form: { ...editModal.form, priceSchedule: { ...editModal.form.priceSchedule, items, subTotal: Number(sub.toFixed(2)), grandTotal: Number(grand.toFixed(2)), taxDetails: { ...editModal.form.priceSchedule.taxDetails, vatAmount: Number(vat.toFixed(2)) } } } })
+                          }} />
+                        </div>
+                        <div className="form-group" style={{ flex: 1 }}>
+                          <label>Amount</label>
+                          <input type="number" value={Number(it.totalAmount || 0)} readOnly />
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                  <div className="section-actions">
+                    <button type="button" className="link-btn" onClick={() => setEditModal({ ...editModal, form: { ...editModal.form, priceSchedule: { ...editModal.form.priceSchedule, items: [...editModal.form.priceSchedule.items, { description: '', quantity: 0, unit: '', unitRate: 0, totalAmount: 0 }] } } })}>+ Add Item</button>
+                  </div>
+
+                  <div className="totals-card">
+                    <div className="form-row">
+                      <div className="form-group" style={{ flex: 1 }}>
+                        <label>Sub Total</label>
+                        <input type="number" readOnly value={Number(editModal.form.priceSchedule.subTotal || 0)} />
+                      </div>
+                      <div className="form-group" style={{ flex: 1 }}>
+                        <label>VAT Amount</label>
+                        <input type="number" readOnly value={Number(editModal.form.priceSchedule.taxDetails.vatAmount || 0)} />
+                      </div>
+                      <div className="form-group" style={{ flex: 1 }}>
+                        <label>Grand Total</label>
+                        <input type="number" readOnly value={Number(editModal.form.priceSchedule.grandTotal || 0)} />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="form-section">
+                  <div className="section-header">
+                    <h3>Our Viewpoints / Special Terms</h3>
+                  </div>
+                  <div className="form-group">
+                    <label>Our Viewpoints / Special Terms</label>
+                    <textarea value={editModal.form.ourViewpoints} onChange={e => setEditModal({ ...editModal, form: { ...editModal.form, ourViewpoints: e.target.value } })} />
+                  </div>
+                </div>
+
+                <div className="form-section">
+                  <div className="section-header">
+                    <h3>Exclusions</h3>
+                  </div>
+                  {editModal.form.exclusions.map((ex, i) => (
+                    <div key={i} className="item-card">
+                      <div className="item-header">
+                        <span>Item {i + 1}</span>
+                        <button type="button" className="cancel-btn" onClick={() => setEditModal({ ...editModal, form: { ...editModal.form, exclusions: editModal.form.exclusions.filter((_, idx) => idx !== i) } })}>Remove</button>
+                      </div>
+                      <div className="form-row">
+                        <div className="form-group" style={{ flex: 1 }}>
+                          <input type="text" value={ex} onChange={e => setEditModal({ ...editModal, form: { ...editModal.form, exclusions: editModal.form.exclusions.map((x, idx) => idx === i ? e.target.value : x) } })} />
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                  <div className="section-actions">
+                    <button type="button" className="link-btn" onClick={() => setEditModal({ ...editModal, form: { ...editModal.form, exclusions: [...editModal.form.exclusions, ''] } })}>+ Add Exclusion</button>
+                  </div>
+                </div>
+
+                <div className="form-section">
+                  <div className="section-header">
+                    <h3>Payment Terms</h3>
+                  </div>
+                  {editModal.form.paymentTerms.map((p, i) => (
+                    <div key={i} className="item-card">
+                      <div className="item-header">
+                        <span>Term {i + 1}</span>
+                        <button type="button" className="cancel-btn" onClick={() => setEditModal({ ...editModal, form: { ...editModal.form, paymentTerms: editModal.form.paymentTerms.filter((_, idx) => idx !== i) } })}>Remove</button>
+                      </div>
+                      <div className="form-row">
+                        <div className="form-group" style={{ flex: 3 }}>
+                          <label>Milestone</label>
+                          <input type="text" value={p.milestoneDescription} onChange={e => setEditModal({ ...editModal, form: { ...editModal.form, paymentTerms: editModal.form.paymentTerms.map((x, idx) => idx === i ? { ...x, milestoneDescription: e.target.value } : x) } })} />
+                        </div>
+                        <div className="form-group" style={{ flex: 1 }}>
+                          <label>Amount %</label>
+                          <input type="number" value={p.amountPercent} onChange={e => setEditModal({ ...editModal, form: { ...editModal.form, paymentTerms: editModal.form.paymentTerms.map((x, idx) => idx === i ? { ...x, amountPercent: e.target.value } : x) } })} />
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                  <div className="section-actions">
+                    <button type="button" className="link-btn" onClick={() => setEditModal({ ...editModal, form: { ...editModal.form, paymentTerms: [...editModal.form.paymentTerms, { milestoneDescription: '', amountPercent: '' }] } })}>+ Add Payment Term</button>
+                  </div>
+                </div>
+
+                <div className="form-section">
+                  <div className="section-header">
+                    <h3>Delivery, Completion, Warranty & Validity</h3>
+                  </div>
+                  <div className="form-group">
+                    <label>Delivery / Completion Timeline</label>
+                    <input type="text" value={editModal.form.deliveryCompletionWarrantyValidity.deliveryTimeline} onChange={e => setEditModal({ ...editModal, form: { ...editModal.form, deliveryCompletionWarrantyValidity: { ...editModal.form.deliveryCompletionWarrantyValidity, deliveryTimeline: e.target.value } } })} />
+                  </div>
+                  <div className="form-row">
+                    <div className="form-group" style={{ flex: 1 }}>
+                      <label>Warranty Period</label>
+                      <input type="text" value={editModal.form.deliveryCompletionWarrantyValidity.warrantyPeriod} onChange={e => setEditModal({ ...editModal, form: { ...editModal.form, deliveryCompletionWarrantyValidity: { ...editModal.form.deliveryCompletionWarrantyValidity, warrantyPeriod: e.target.value } } })} />
+                    </div>
+                    <div className="form-group" style={{ flex: 1 }}>
+                      <label>Offer Validity (Days)</label>
+                      <input type="number" value={editModal.form.deliveryCompletionWarrantyValidity.offerValidity} onChange={e => setEditModal({ ...editModal, form: { ...editModal.form, deliveryCompletionWarrantyValidity: { ...editModal.form.deliveryCompletionWarrantyValidity, offerValidity: e.target.value } } })} />
+                    </div>
+                  </div>
+                  <div className="form-group">
+                    <label>Authorized Signatory</label>
+                    <input type="text" value={editModal.form.deliveryCompletionWarrantyValidity.authorizedSignatory} onChange={e => setEditModal({ ...editModal, form: { ...editModal.form, deliveryCompletionWarrantyValidity: { ...editModal.form.deliveryCompletionWarrantyValidity, authorizedSignatory: e.target.value } } })} />
+                  </div>
+                </div>
+
+                <div className="form-actions">
+                  <button type="button" className="cancel-btn" onClick={() => setEditModal({ open: false, form: null })}>Cancel</button>
+                  <button type="button" className="save-btn" onClick={async () => {
+                    try {
+                      const token = localStorage.getItem('token')
+                      await fetch(`http://localhost:5000/api/revisions/${revision._id}`, {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+                        body: JSON.stringify(editModal.form)
+                      })
+                      const res = await fetch(`http://localhost:5000/api/revisions/${revision._id}`, { headers: { Authorization: `Bearer ${token}` } })
+                      const updated = await res.json()
+                      setRevision(updated)
+                      setEditModal({ open: false, form: null })
+                    } catch {
+                      setNotify({ open: true, title: 'Save Failed', message: 'We could not save your changes. Please try again.' })
+                    }
+                  }}>Save Changes</button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {profileUser && (
+        <div className="modal-overlay profile" onClick={() => setProfileUser(null)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>User Profile</h2>
+              <button onClick={() => setProfileUser(null)} className="close-btn">×</button>
+            </div>
+            <div className="lead-form">
+              <div className="form-group">
+                <label>Name</label>
+                <input type="text" value={profileUser?.name || ''} readOnly />
+              </div>
+              <div className="form-group">
+                <label>Email</label>
+                <input type="text" value={profileUser?.email || ''} readOnly />
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {notify.open && (
+        <div className="modal-overlay" onClick={() => setNotify({ open: false, title: '', message: '' })}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>{notify.title || 'Notice'}</h2>
+              <button onClick={() => setNotify({ open: false, title: '', message: '' })} className="close-btn">×</button>
+            </div>
+            <div className="lead-form">
+              <p>{notify.message}</p>
+              <div className="form-actions">
+                <button type="button" className="save-btn" onClick={() => setNotify({ open: false, title: '', message: '' })}>OK</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

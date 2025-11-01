@@ -56,6 +56,84 @@ router.get('/:id', auth, async (req, res) => {
   }
 });
 
+// Update revision (creator or estimation engineers)
+router.put('/:id', auth, async (req, res) => {
+  try {
+    const r = await Revision.findById(req.params.id);
+    if (!r) return res.status(404).json({ message: 'Revision not found' });
+
+    const roles = req.user.roles || [];
+    const isCreator = r.createdBy?.toString?.() === req.user.userId;
+    if (!isCreator && !roles.includes('estimation_engineer')) {
+      return res.status(403).json({ message: 'Not authorized to edit revision' });
+    }
+
+    const updatableRootFields = [
+      'submittedTo','attention','offerReference','enquiryNumber','offerDate','enquiryDate','projectTitle','introductionText','ourViewpoints'
+    ];
+
+    const changes = [];
+
+    const isDateField = (f) => ['offerDate','enquiryDate'].includes(f);
+    const normalizeForCompare = (f, v) => {
+      if (v === '' || typeof v === 'undefined' || v === null) return null;
+      if (isDateField(f)) {
+        const d = new Date(v);
+        if (isNaN(d)) return null;
+        return d.toISOString().slice(0,10);
+      }
+      return v;
+    };
+
+    for (const field of updatableRootFields) {
+      if (typeof req.body[field] === 'undefined') continue;
+      const fromRaw = r[field];
+      const toRaw = req.body[field];
+      const from = normalizeForCompare(field, fromRaw);
+      const to = normalizeForCompare(field, toRaw);
+      if (JSON.stringify(from) !== JSON.stringify(to)) {
+        changes.push({ field, from, to });
+        r[field] = isDateField(field) ? (to ? new Date(to) : null) : toRaw;
+      }
+    }
+
+    if (typeof req.body.companyInfo !== 'undefined') {
+      const from = r.companyInfo; const to = req.body.companyInfo;
+      if (JSON.stringify(from) !== JSON.stringify(to)) { changes.push({ field: 'companyInfo', from, to }); r.companyInfo = to; }
+    }
+    if (typeof req.body.scopeOfWork !== 'undefined') {
+      const from = r.scopeOfWork; const to = req.body.scopeOfWork;
+      if (JSON.stringify(from) !== JSON.stringify(to)) { changes.push({ field: 'scopeOfWork', from, to }); r.scopeOfWork = to; }
+    }
+    if (typeof req.body.priceSchedule !== 'undefined') {
+      const from = r.priceSchedule; const to = req.body.priceSchedule;
+      if (JSON.stringify(from) !== JSON.stringify(to)) { changes.push({ field: 'priceSchedule', from, to }); r.priceSchedule = to; }
+    }
+    if (typeof req.body.exclusions !== 'undefined') {
+      const from = r.exclusions; const to = req.body.exclusions;
+      if (JSON.stringify(from) !== JSON.stringify(to)) { changes.push({ field: 'exclusions', from, to }); r.exclusions = to; }
+    }
+    if (typeof req.body.paymentTerms !== 'undefined') {
+      const from = r.paymentTerms; const to = req.body.paymentTerms;
+      if (JSON.stringify(from) !== JSON.stringify(to)) { changes.push({ field: 'paymentTerms', from, to }); r.paymentTerms = to; }
+    }
+    if (typeof req.body.deliveryCompletionWarrantyValidity !== 'undefined') {
+      const from = r.deliveryCompletionWarrantyValidity; const to = req.body.deliveryCompletionWarrantyValidity;
+      if (JSON.stringify(from) !== JSON.stringify(to)) { changes.push({ field: 'deliveryCompletionWarrantyValidity', from, to }); r.deliveryCompletionWarrantyValidity = to; }
+    }
+
+    if (changes.length > 0) {
+      r.edits.push({ editedBy: req.user.userId, changes });
+    }
+
+    await r.save();
+    await r.populate('edits.editedBy', 'name email');
+    res.json(r);
+  } catch (e) {
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
 // Create a revision from an approved quotation
 router.post('/', auth, async (req, res) => {
   try {
@@ -83,6 +161,9 @@ router.post('/', auth, async (req, res) => {
     delete base._id;
     delete base.createdAt;
     delete base.updatedAt;
+    // ensure clean slate for new revision-specific state
+    delete base.edits;
+    delete base.managementApproval;
 
     const allowedFields = [
       'companyInfo','submittedTo','attention','offerReference','enquiryNumber','offerDate','enquiryDate','projectTitle','introductionText',
@@ -128,7 +209,9 @@ router.post('/', auth, async (req, res) => {
       parentRevision: sourceRevisionId || undefined,
       revisionNumber,
       createdBy: req.user.userId,
-      diffFromParent: diffs
+      diffFromParent: diffs,
+      edits: [],
+      managementApproval: {}
     });
 
     const populated = await Revision.findById(revision._id)
