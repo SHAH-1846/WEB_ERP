@@ -10,6 +10,7 @@ const roleRoutes = require('./routes/roles');
 const projectRoutes = require('./routes/projects');
 const siteVisitRoutes = require('./routes/siteVisits');
 const quotationRoutes = require('./routes/quotations');
+const revisionRoutes = require('./routes/revisions');
 
 const app = express();
 
@@ -27,6 +28,7 @@ app.use('/api/projects', projectRoutes);
 app.use('/api/site-visits', siteVisitRoutes);
 app.use('/api/roles', roleRoutes);
 app.use('/api/quotations', quotationRoutes);
+app.use('/api/revisions', revisionRoutes);
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {

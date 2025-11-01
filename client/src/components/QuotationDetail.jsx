@@ -13,6 +13,8 @@ function QuotationDetail() {
   const [profileUser, setProfileUser] = useState(null)
   const [approvalModal, setApprovalModal] = useState({ open: false, action: null, note: '' })
   const [approvalsViewOpen, setApprovalsViewOpen] = useState(false)
+  const [revisionModal, setRevisionModal] = useState({ open: false, form: null })
+  const [hasRevisions, setHasRevisions] = useState(false)
 
   const ensurePdfMake = async () => {
     if (window.pdfMake) return
@@ -323,6 +325,18 @@ function QuotationDetail() {
     }
   }
 
+  const hasRevisionChanges = (original, form) => {
+    if (!original || !form) return false
+    const fields = [
+      'companyInfo','submittedTo','attention','offerReference','enquiryNumber','offerDate','enquiryDate','projectTitle','introductionText',
+      'scopeOfWork','priceSchedule','ourViewpoints','exclusions','paymentTerms','deliveryCompletionWarrantyValidity'
+    ]
+    for (const f of fields) {
+      if (JSON.stringify(original?.[f] ?? null) !== JSON.stringify(form?.[f] ?? null)) return true
+    }
+    return false
+  }
+
   const approveQuotation = async (status, note) => {
     try {
       const token = localStorage.getItem('token')
@@ -354,6 +368,30 @@ function QuotationDetail() {
       alert('Approval request sent')
     } catch (e) {
       alert('Failed to send for approval')
+    }
+  }
+
+  const createRevision = async () => {
+    try {
+      const token = localStorage.getItem('token')
+      const payload = { ...revisionModal.form }
+      const original = quotation
+      const fields = ['companyInfo','submittedTo','attention','offerReference','enquiryNumber','offerDate','enquiryDate','projectTitle','introductionText','scopeOfWork','priceSchedule','ourViewpoints','exclusions','paymentTerms','deliveryCompletionWarrantyValidity']
+      let changed = false
+      for (const f of fields) {
+        if (JSON.stringify(original?.[f] ?? null) !== JSON.stringify(payload?.[f] ?? null)) { changed = true; break }
+      }
+      if (!changed) { alert('No changes detected. Please modify data before creating a revision.'); return }
+      await fetch('http://localhost:5000/api/revisions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ sourceQuotationId: quotation._id, data: payload })
+      })
+      alert('Revision created')
+      setRevisionModal({ open: false, form: null })
+      window.location.href = '/revisions'
+    } catch (e) {
+      alert('Failed to create revision')
     }
   }
 
@@ -443,6 +481,11 @@ function QuotationDetail() {
             const visits = await visitsRes.json()
             setLead({ ...leadData, siteVisits: visits })
           }
+          try {
+            const revRes = await fetch(`http://localhost:5000/api/revisions?parentQuotation=${qid}`, { headers: { Authorization: `Bearer ${token}` } })
+            const revs = await revRes.json()
+            setHasRevisions(Array.isArray(revs) && revs.length > 0)
+          } catch {}
         } else if (initial) {
           setQuotation(initial)
           const leadId = typeof initial.lead === 'object' ? initial.lead?._id : initial.lead
@@ -453,6 +496,11 @@ function QuotationDetail() {
             const visits = await visitsRes.json()
             setLead({ ...leadData, siteVisits: visits })
           }
+          try {
+            const revRes = await fetch(`http://localhost:5000/api/revisions?parentQuotation=${initial._id || localStorage.getItem('quotationId')}`, { headers: { Authorization: `Bearer ${token}` } })
+            const revs = await revRes.json()
+            setHasRevisions(Array.isArray(revs) && revs.length > 0)
+          } catch {}
         }
       } catch {}
     }
@@ -488,8 +536,41 @@ function QuotationDetail() {
             ) : null
           ) : null}
           <button className="save-btn" onClick={() => exportPDF(quotation)}>Export</button>
+          {approvalStatus === 'approved' && !hasRevisions && (
+            <button className="assign-btn" onClick={() => setRevisionModal({ open: true, form: {
+              companyInfo: quotation.companyInfo || {},
+              submittedTo: quotation.submittedTo || '',
+              attention: quotation.attention || '',
+              offerReference: quotation.offerReference || '',
+              enquiryNumber: quotation.enquiryNumber || '',
+              offerDate: quotation.offerDate ? quotation.offerDate.substring(0,10) : '',
+              enquiryDate: quotation.enquiryDate ? quotation.enquiryDate.substring(0,10) : '',
+              projectTitle: quotation.projectTitle || quotation.lead?.projectTitle || '',
+              introductionText: quotation.introductionText || '',
+              scopeOfWork: quotation.scopeOfWork?.length ? quotation.scopeOfWork : [{ description: '', quantity: '', unit: '', locationRemarks: '' }],
+              priceSchedule: quotation.priceSchedule || { items: [], subTotal: 0, grandTotal: 0, currency: 'AED', taxDetails: { vatRate: 5, vatAmount: 0 } },
+              ourViewpoints: quotation.ourViewpoints || '',
+              exclusions: quotation.exclusions?.length ? quotation.exclusions : [''],
+              paymentTerms: quotation.paymentTerms?.length ? quotation.paymentTerms : [{ milestoneDescription: '', amountPercent: ''}],
+              deliveryCompletionWarrantyValidity: quotation.deliveryCompletionWarrantyValidity || { deliveryTimeline: '', warrantyPeriod: '', offerValidity: 30, authorizedSignatory: currentUser?.name || '' }
+            } })}>Create Revision</button>
+          )}
           {approvalStatus !== 'approved' && approvalStatus !== 'pending' && !(currentUser?.roles?.includes('manager') || currentUser?.roles?.includes('admin')) && (
             <button className="save-btn" onClick={sendForApproval}>Send for Approval</button>
+          )}
+          {quotation.lead?._id && (
+            <button className="link-btn" onClick={async () => {
+              try {
+                const token = localStorage.getItem('token')
+                const res = await fetch(`http://localhost:5000/api/leads/${quotation.lead._id}`, { headers: { Authorization: `Bearer ${token}` } })
+                const leadData = await res.json()
+                const visitsRes = await fetch(`http://localhost:5000/api/leads/${quotation.lead._id}/site-visits`, { headers: { Authorization: `Bearer ${token}` } })
+                const visits = await visitsRes.json()
+                localStorage.setItem('leadDetail', JSON.stringify({ ...leadData, siteVisits: visits }))
+                localStorage.setItem('leadId', quotation.lead._id)
+                window.location.href = '/lead-detail'
+              } catch { alert('Unable to open lead') }
+            }}>View Lead</button>
           )}
           <button className="link-btn" onClick={() => setApprovalsViewOpen(true)}>View Approvals/Rejections</button>
           {quotation.edits?.length > 0 && (
@@ -852,6 +933,32 @@ function QuotationDetail() {
                 )
               })()}
             </div>
+          </div>
+        </div>
+      )}
+      {revisionModal.open && (
+        <div className="modal-overlay" onClick={() => setRevisionModal({ open: false, form: null })}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>Create Revision</h2>
+              <button onClick={() => setRevisionModal({ open: false, form: null })} className="close-btn">×</button>
+            </div>
+            {revisionModal.form && (
+              <div className="lead-form" style={{ maxHeight: '70vh', overflow: 'auto' }}>
+                <div className="form-group">
+                  <label>Project Title</label>
+                  <input type="text" value={revisionModal.form.projectTitle} onChange={e => setRevisionModal({ ...revisionModal, form: { ...revisionModal.form, projectTitle: e.target.value } })} />
+                </div>
+                <div className="form-group">
+                  <label>Introduction</label>
+                  <textarea value={revisionModal.form.introductionText} onChange={e => setRevisionModal({ ...revisionModal, form: { ...revisionModal.form, introductionText: e.target.value } })} />
+                </div>
+                <div className="form-actions">
+                  <button type="button" className="cancel-btn" onClick={() => setRevisionModal({ open: false, form: null })}>Cancel</button>
+                  <button type="button" className="save-btn" disabled={!hasRevisionChanges(quotation, revisionModal.form)} onClick={createRevision}>Confirm Revision</button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}

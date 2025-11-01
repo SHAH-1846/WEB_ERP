@@ -5,6 +5,7 @@ import UserManagement from './UserManagement'
 import LeadManagement from './LeadManagement'
 import ProjectManagement from './ProjectManagement'
 import QuotationManagement from './QuotationManagement'
+import RevisionManagement from './RevisionManagement'
 import { initTheme, setTheme } from '../utils/theme'
 
 function Dashboard() {
@@ -27,7 +28,7 @@ function Dashboard() {
     const userData = JSON.parse(localStorage.getItem('user'))
     setUser(userData)
     const path = location.pathname.replace('/', '') || 'dashboard'
-    if (['dashboard','users','leads','projects','quotations'].includes(path)) {
+    if (['dashboard','users','leads','projects','quotations','revisions'].includes(path)) {
       setActiveTab(path)
     }
   }, [location.pathname])
@@ -100,6 +101,14 @@ function Dashboard() {
               Quotations
             </NavLink>
           )}
+          {user?.roles?.some(r => ['estimation_engineer','manager','admin'].includes(r)) && (
+            <NavLink to="/revisions" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
+              <svg viewBox="0 0 24 24" fill="currentColor">
+                <path d="M5 4h9a3 3 0 013 3v11a3 3 0 01-3 3H5a3 3 0 01-3-3V7a3 3 0 013-3zm2 4h7v2H7V8zm0 4h7v2H7v-2zm0 4h5v2H7v-2z"/>
+              </svg>
+              Revisions
+            </NavLink>
+          )}
         </nav>
         
         <div className="sidebar-footer">
@@ -128,6 +137,7 @@ function Dashboard() {
             {activeTab === 'leads' && 'Lead Management'}
             {activeTab === 'projects' && 'Project Management'}
             {activeTab === 'quotations' && 'Quotation Management'}
+            {activeTab === 'revisions' && 'Revisions Management'}
           </h1>
             <p>Welcome back, {user?.name}!</p>
           </div>
@@ -245,6 +255,7 @@ function Dashboard() {
           {activeTab === 'leads' && <LeadManagement />}
           {activeTab === 'projects' && <ProjectManagement />}
           {activeTab === 'quotations' && <QuotationManagement />}
+          {activeTab === 'revisions' && <RevisionManagement />}
         </div>
       </div>
     </div>

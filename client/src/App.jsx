@@ -6,6 +6,7 @@ import logo from './assets/logo/WBES_Logo.png'
 import Dashboard from './components/Dashboard'
 import LeadDetail from './components/LeadDetail'
 import QuotationDetail from './components/QuotationDetail'
+import RevisionDetail from './components/RevisionDetail'
 import { initTheme, setTheme } from './utils/theme'
 
 function Login() {
@@ -201,6 +202,11 @@ function App() {
             <Dashboard />
           </ProtectedRoute>
         } />
+        <Route path="/revisions" element={
+          <ProtectedRoute>
+            <Dashboard />
+          </ProtectedRoute>
+        } />
         <Route path="/quotations" element={
           <ProtectedRoute>
             <Dashboard />
@@ -214,6 +220,11 @@ function App() {
         <Route path="/quotation-detail" element={
           <ProtectedRoute>
             <QuotationDetail />
+          </ProtectedRoute>
+        } />
+        <Route path="/revision-detail" element={
+          <ProtectedRoute>
+            <RevisionDetail />
           </ProtectedRoute>
         } />
       </Routes>

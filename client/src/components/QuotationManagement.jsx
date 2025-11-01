@@ -14,6 +14,8 @@ function QuotationManagement() {
   const [myQuotationsOnly, setMyQuotationsOnly] = useState(false)
   const [approvalModal, setApprovalModal] = useState({ open: false, quote: null, action: null, note: '' })
   const [approvalsView, setApprovalsView] = useState(null)
+  const [revisionModal, setRevisionModal] = useState({ open: false, quote: null, form: null })
+  const [hasRevisionFor, setHasRevisionFor] = useState({})
 
   const defaultCompany = useMemo(() => ({
     logo,
@@ -72,6 +74,12 @@ function QuotationManagement() {
       const token = localStorage.getItem('token')
       const res = await axios.get('http://localhost:5000/api/quotations', { headers: { Authorization: `Bearer ${token}` } })
       setQuotations(res.data)
+      try {
+        const revRes = await axios.get('http://localhost:5000/api/revisions', { headers: { Authorization: `Bearer ${token}` } })
+        const map = {}
+        ;(revRes.data || []).forEach(r => { map[r.parentQuotation] = true })
+        setHasRevisionFor(map)
+      } catch {}
     } catch {}
   }
 
@@ -174,6 +182,26 @@ function QuotationManagement() {
       alert('Approval request sent')
     } catch (e) {
       alert(e.response?.data?.message || 'Failed to send for approval')
+    }
+  }
+
+  const createRevision = async (q) => {
+    try {
+      const token = localStorage.getItem('token')
+      const payload = { ...revisionModal.form }
+      const original = q
+      const fields = ['companyInfo','submittedTo','attention','offerReference','enquiryNumber','offerDate','enquiryDate','projectTitle','introductionText','scopeOfWork','priceSchedule','ourViewpoints','exclusions','paymentTerms','deliveryCompletionWarrantyValidity']
+      let changed = false
+      for (const f of fields) {
+        if (JSON.stringify(original?.[f] ?? null) !== JSON.stringify(payload?.[f] ?? null)) { changed = true; break }
+      }
+      if (!changed) { alert('No changes detected. Please modify data before creating a revision.'); return }
+      await axios.post('http://localhost:5000/api/revisions', { sourceQuotationId: q._id, data: payload }, { headers: { Authorization: `Bearer ${token}` } })
+      alert('Revision created')
+      setRevisionModal({ open: false, quote: null, form: null })
+      setHasRevisionFor({ ...hasRevisionFor, [q._id]: true })
+    } catch (e) {
+      alert(e.response?.data?.message || 'Failed to create revision')
     }
   }
 
@@ -480,6 +508,18 @@ function QuotationManagement() {
     }
   }
 
+  const hasRevisionChanges = (original, form) => {
+    if (!original || !form) return false
+    const fields = [
+      'companyInfo','submittedTo','attention','offerReference','enquiryNumber','offerDate','enquiryDate','projectTitle','introductionText',
+      'scopeOfWork','priceSchedule','ourViewpoints','exclusions','paymentTerms','deliveryCompletionWarrantyValidity'
+    ]
+    for (const f of fields) {
+      if (JSON.stringify(original?.[f] ?? null) !== JSON.stringify(form?.[f] ?? null)) return true
+    }
+    return false
+  }
+
   const formatHistoryValue = (field, value) => {
     if (value === null || value === undefined) return ''
     if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') return String(value)
@@ -626,6 +666,27 @@ function QuotationManagement() {
                 setShowModal(true)
               }}>Edit</button>
               <button className="save-btn" onClick={() => exportPDF(q)}>Export</button>
+              {q.managementApproval?.status === 'approved' && !hasRevisionFor[q._id] && (
+                <button className="assign-btn" onClick={() => {
+                  setRevisionModal({ open: true, quote: q, form: {
+                    companyInfo: q.companyInfo || defaultCompany,
+                    submittedTo: q.submittedTo || '',
+                    attention: q.attention || '',
+                    offerReference: q.offerReference || '',
+                    enquiryNumber: q.enquiryNumber || '',
+                    offerDate: q.offerDate ? q.offerDate.substring(0,10) : '',
+                    enquiryDate: q.enquiryDate ? q.enquiryDate.substring(0,10) : '',
+                    projectTitle: q.projectTitle || q.lead?.projectTitle || '',
+                    introductionText: q.introductionText || '',
+                    scopeOfWork: q.scopeOfWork?.length ? q.scopeOfWork : [{ description: '', quantity: '', unit: '', locationRemarks: '' }],
+                    priceSchedule: q.priceSchedule || { items: [], subTotal: 0, grandTotal: 0, currency: 'AED', taxDetails: { vatRate: 5, vatAmount: 0 } },
+                    ourViewpoints: q.ourViewpoints || '',
+                    exclusions: q.exclusions?.length ? q.exclusions : [''],
+                    paymentTerms: q.paymentTerms?.length ? q.paymentTerms : [{ milestoneDescription: '', amountPercent: ''}],
+                    deliveryCompletionWarrantyValidity: q.deliveryCompletionWarrantyValidity || { deliveryTimeline: '', warrantyPeriod: '', offerValidity: 30, authorizedSignatory: currentUser?.name || '' }
+                  } })
+                }}>Create Revision</button>
+              )}
               <button className="assign-btn" onClick={() => {
                 try {
                   localStorage.setItem('quotationId', q._id)
@@ -958,6 +1019,287 @@ function QuotationManagement() {
                 }}>Confirm</button>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {revisionModal.open && (
+        <div className="modal-overlay" onClick={() => setRevisionModal({ open: false, quote: null, form: null })}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>Create Revision</h2>
+              <button onClick={() => setRevisionModal({ open: false, quote: null, form: null })} className="close-btn">×</button>
+            </div>
+            {revisionModal.form && (
+              <div className="lead-form" style={{ maxHeight: '70vh', overflow: 'auto' }}>
+                <div className="form-section">
+                  <div className="section-header">
+                    <h3>Cover & Basic Details</h3>
+                  </div>
+                  <div className="form-group">
+                    <label>Submitted To (Client Company)</label>
+                    <input type="text" value={revisionModal.form.submittedTo} onChange={e => setRevisionModal({ ...revisionModal, form: { ...revisionModal.form, submittedTo: e.target.value } })} />
+                  </div>
+                  <div className="form-group">
+                    <label>Attention (Contact Person)</label>
+                    <input type="text" value={revisionModal.form.attention} onChange={e => setRevisionModal({ ...revisionModal, form: { ...revisionModal.form, attention: e.target.value } })} />
+                  </div>
+                  <div className="form-row">
+                    <div className="form-group" style={{ flex: 1 }}>
+                      <label>Offer Reference</label>
+                      <input type="text" value={revisionModal.form.offerReference} onChange={e => setRevisionModal({ ...revisionModal, form: { ...revisionModal.form, offerReference: e.target.value } })} />
+                    </div>
+                    <div className="form-group" style={{ flex: 1 }}>
+                      <label>Enquiry Number</label>
+                      <input type="text" value={revisionModal.form.enquiryNumber} onChange={e => setRevisionModal({ ...revisionModal, form: { ...revisionModal.form, enquiryNumber: e.target.value } })} />
+                    </div>
+                  </div>
+                  <div className="form-row">
+                    <div className="form-group" style={{ flex: 1 }}>
+                      <label>Offer Date</label>
+                      <input type="date" value={revisionModal.form.offerDate} onChange={e => setRevisionModal({ ...revisionModal, form: { ...revisionModal.form, offerDate: e.target.value } })} />
+                    </div>
+                    <div className="form-group" style={{ flex: 1 }}>
+                      <label>Enquiry Date</label>
+                      <input type="date" value={revisionModal.form.enquiryDate} onChange={e => setRevisionModal({ ...revisionModal, form: { ...revisionModal.form, enquiryDate: e.target.value } })} />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="form-section">
+                  <div className="section-header">
+                    <h3>Project Details</h3>
+                  </div>
+                  <div className="form-group">
+                    <label>Project Title</label>
+                    <input type="text" value={revisionModal.form.projectTitle} onChange={e => setRevisionModal({ ...revisionModal, form: { ...revisionModal.form, projectTitle: e.target.value } })} />
+                  </div>
+                  <div className="form-group">
+                    <label>Introduction</label>
+                    <textarea value={revisionModal.form.introductionText} onChange={e => setRevisionModal({ ...revisionModal, form: { ...revisionModal.form, introductionText: e.target.value } })} />
+                  </div>
+                </div>
+
+                <div className="form-section">
+                  <div className="section-header">
+                    <h3>Scope of Work</h3>
+                  </div>
+                  {revisionModal.form.scopeOfWork.map((s, i) => (
+                    <div key={i} className="item-card">
+                      <div className="item-header">
+                        <span>Item {i + 1}</span>
+                        <button type="button" className="cancel-btn" onClick={() => setRevisionModal({ ...revisionModal, form: { ...revisionModal.form, scopeOfWork: revisionModal.form.scopeOfWork.filter((_, idx) => idx !== i) } })}>Remove</button>
+                      </div>
+                      <div className="form-row">
+                        <div className="form-group" style={{ flex: 3 }}>
+                          <label>Description</label>
+                          <textarea value={s.description} onChange={e => setRevisionModal({ ...revisionModal, form: { ...revisionModal.form, scopeOfWork: revisionModal.form.scopeOfWork.map((x, idx) => idx === i ? { ...x, description: e.target.value } : x) } })} />
+                        </div>
+                        <div className="form-group" style={{ flex: 1 }}>
+                          <label>Qty</label>
+                          <input type="number" value={s.quantity} onChange={e => setRevisionModal({ ...revisionModal, form: { ...revisionModal.form, scopeOfWork: revisionModal.form.scopeOfWork.map((x, idx) => idx === i ? { ...x, quantity: e.target.value } : x) } })} />
+                        </div>
+                        <div className="form-group" style={{ flex: 1 }}>
+                          <label>Unit</label>
+                          <input type="text" value={s.unit} onChange={e => setRevisionModal({ ...revisionModal, form: { ...revisionModal.form, scopeOfWork: revisionModal.form.scopeOfWork.map((x, idx) => idx === i ? { ...x, unit: e.target.value } : x) } })} />
+                        </div>
+                        <div className="form-group" style={{ flex: 2 }}>
+                          <label>Location/Remarks</label>
+                          <input type="text" value={s.locationRemarks} onChange={e => setRevisionModal({ ...revisionModal, form: { ...revisionModal.form, scopeOfWork: revisionModal.form.scopeOfWork.map((x, idx) => idx === i ? { ...x, locationRemarks: e.target.value } : x) } })} />
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                  <div className="section-actions">
+                    <button type="button" className="link-btn" onClick={() => setRevisionModal({ ...revisionModal, form: { ...revisionModal.form, scopeOfWork: [...revisionModal.form.scopeOfWork, { description: '', quantity: '', unit: '', locationRemarks: '' }] } })}>+ Add Scope Item</button>
+                  </div>
+                </div>
+
+                <div className="form-section">
+                  <div className="section-header">
+                    <h3>Price Schedule</h3>
+                  </div>
+                  <div className="form-row">
+                    <div className="form-group" style={{ flex: 1 }}>
+                      <label>Currency</label>
+                      <input type="text" value={revisionModal.form.priceSchedule.currency} onChange={e => setRevisionModal({ ...revisionModal, form: { ...revisionModal.form, priceSchedule: { ...revisionModal.form.priceSchedule, currency: e.target.value } } })} />
+                    </div>
+                    <div className="form-group" style={{ flex: 1 }}>
+                      <label>VAT %</label>
+                      <input type="number" value={revisionModal.form.priceSchedule.taxDetails.vatRate} onChange={e => {
+                        const items = revisionModal.form.priceSchedule.items
+                        const sub = items.reduce((sum, it) => sum + (Number(it.quantity || 0) * Number(it.unitRate || 0)), 0)
+                        const vat = sub * (Number(e.target.value || 0) / 100)
+                        const grand = sub + vat
+                        setRevisionModal({ ...revisionModal, form: { ...revisionModal.form, priceSchedule: { ...revisionModal.form.priceSchedule, subTotal: Number(sub.toFixed(2)), grandTotal: Number(grand.toFixed(2)), taxDetails: { ...revisionModal.form.priceSchedule.taxDetails, vatRate: e.target.value, vatAmount: Number(vat.toFixed(2)) } } } })
+                      }} />
+                    </div>
+                  </div>
+                  {revisionModal.form.priceSchedule.items.map((it, i) => (
+                    <div key={i} className="item-card">
+                      <div className="item-header">
+                        <span>Item {i + 1}</span>
+                        <button type="button" className="cancel-btn" onClick={() => {
+                          const items = revisionModal.form.priceSchedule.items.filter((_, idx) => idx !== i)
+                          const sub = items.reduce((sum, it) => sum + (Number(it.quantity || 0) * Number(it.unitRate || 0)), 0)
+                          const vat = sub * (Number(revisionModal.form.priceSchedule.taxDetails.vatRate || 0) / 100)
+                          const grand = sub + vat
+                          setRevisionModal({ ...revisionModal, form: { ...revisionModal.form, priceSchedule: { ...revisionModal.form.priceSchedule, items, subTotal: Number(sub.toFixed(2)), grandTotal: Number(grand.toFixed(2)), taxDetails: { ...revisionModal.form.priceSchedule.taxDetails, vatAmount: Number(vat.toFixed(2)) } } } })
+                        }}>Remove</button>
+                      </div>
+                      <div className="form-row">
+                        <div className="form-group" style={{ flex: 3 }}>
+                          <label>Description</label>
+                          <input type="text" value={it.description} onChange={e => {
+                            const items = revisionModal.form.priceSchedule.items.map((x, idx) => idx === i ? { ...x, description: e.target.value } : x)
+                            setRevisionModal({ ...revisionModal, form: { ...revisionModal.form, priceSchedule: { ...revisionModal.form.priceSchedule, items } } })
+                          }} />
+                        </div>
+                        <div className="form-group" style={{ flex: 1 }}>
+                          <label>Qty</label>
+                          <input type="number" value={it.quantity} onChange={e => {
+                            const items = revisionModal.form.priceSchedule.items.map((x, idx) => idx === i ? { ...x, quantity: e.target.value, totalAmount: Number((Number(e.target.value || 0) * Number(x.unitRate || 0)).toFixed(2)) } : x)
+                            const sub = items.reduce((sum, it) => sum + (Number(it.quantity || 0) * Number(it.unitRate || 0)), 0)
+                            const vat = sub * (Number(revisionModal.form.priceSchedule.taxDetails.vatRate || 0) / 100)
+                            const grand = sub + vat
+                            setRevisionModal({ ...revisionModal, form: { ...revisionModal.form, priceSchedule: { ...revisionModal.form.priceSchedule, items, subTotal: Number(sub.toFixed(2)), grandTotal: Number(grand.toFixed(2)), taxDetails: { ...revisionModal.form.priceSchedule.taxDetails, vatAmount: Number(vat.toFixed(2)) } } } })
+                          }} />
+                        </div>
+                        <div className="form-group" style={{ flex: 1 }}>
+                          <label>Unit</label>
+                          <input type="text" value={it.unit} onChange={e => {
+                            const items = revisionModal.form.priceSchedule.items.map((x, idx) => idx === i ? { ...x, unit: e.target.value } : x)
+                            setRevisionModal({ ...revisionModal, form: { ...revisionModal.form, priceSchedule: { ...revisionModal.form.priceSchedule, items } } })
+                          }} />
+                        </div>
+                        <div className="form-group" style={{ flex: 1 }}>
+                          <label>Unit Rate</label>
+                          <input type="number" value={it.unitRate} onChange={e => {
+                            const items = revisionModal.form.priceSchedule.items.map((x, idx) => idx === i ? { ...x, unitRate: e.target.value, totalAmount: Number((Number(x.quantity || 0) * Number(e.target.value || 0)).toFixed(2)) } : x)
+                            const sub = items.reduce((sum, it) => sum + (Number(it.quantity || 0) * Number(it.unitRate || 0)), 0)
+                            const vat = sub * (Number(revisionModal.form.priceSchedule.taxDetails.vatRate || 0) / 100)
+                            const grand = sub + vat
+                            setRevisionModal({ ...revisionModal, form: { ...revisionModal.form, priceSchedule: { ...revisionModal.form.priceSchedule, items, subTotal: Number(sub.toFixed(2)), grandTotal: Number(grand.toFixed(2)), taxDetails: { ...revisionModal.form.priceSchedule.taxDetails, vatAmount: Number(vat.toFixed(2)) } } } })
+                          }} />
+                        </div>
+                        <div className="form-group" style={{ flex: 1 }}>
+                          <label>Amount</label>
+                          <input type="number" value={Number(it.totalAmount || 0)} readOnly />
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                  <div className="section-actions">
+                    <button type="button" className="link-btn" onClick={() => setRevisionModal({ ...revisionModal, form: { ...revisionModal.form, priceSchedule: { ...revisionModal.form.priceSchedule, items: [...revisionModal.form.priceSchedule.items, { description: '', quantity: 0, unit: '', unitRate: 0, totalAmount: 0 }] } } })}>+ Add Item</button>
+                  </div>
+
+                  <div className="totals-card">
+                    <div className="form-row">
+                      <div className="form-group" style={{ flex: 1 }}>
+                        <label>Sub Total</label>
+                        <input type="number" readOnly value={Number(revisionModal.form.priceSchedule.subTotal || 0)} />
+                      </div>
+                      <div className="form-group" style={{ flex: 1 }}>
+                        <label>VAT Amount</label>
+                        <input type="number" readOnly value={Number(revisionModal.form.priceSchedule.taxDetails.vatAmount || 0)} />
+                      </div>
+                      <div className="form-group" style={{ flex: 1 }}>
+                        <label>Grand Total</label>
+                        <input type="number" readOnly value={Number(revisionModal.form.priceSchedule.grandTotal || 0)} />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="form-section">
+                  <div className="section-header">
+                    <h3>Our Viewpoints / Special Terms</h3>
+                  </div>
+                  <div className="form-group">
+                    <label>Our Viewpoints / Special Terms</label>
+                    <textarea value={revisionModal.form.ourViewpoints} onChange={e => setRevisionModal({ ...revisionModal, form: { ...revisionModal.form, ourViewpoints: e.target.value } })} />
+                  </div>
+                </div>
+
+                <div className="form-section">
+                  <div className="section-header">
+                    <h3>Exclusions</h3>
+                  </div>
+                  {revisionModal.form.exclusions.map((ex, i) => (
+                    <div key={i} className="item-card">
+                      <div className="item-header">
+                        <span>Item {i + 1}</span>
+                        <button type="button" className="cancel-btn" onClick={() => setRevisionModal({ ...revisionModal, form: { ...revisionModal.form, exclusions: revisionModal.form.exclusions.filter((_, idx) => idx !== i) } })}>Remove</button>
+                      </div>
+                      <div className="form-row">
+                        <div className="form-group" style={{ flex: 1 }}>
+                          <input type="text" value={ex} onChange={e => setRevisionModal({ ...revisionModal, form: { ...revisionModal.form, exclusions: revisionModal.form.exclusions.map((x, idx) => idx === i ? e.target.value : x) } })} />
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                  <div className="section-actions">
+                    <button type="button" className="link-btn" onClick={() => setRevisionModal({ ...revisionModal, form: { ...revisionModal.form, exclusions: [...revisionModal.form.exclusions, ''] } })}>+ Add Exclusion</button>
+                  </div>
+                </div>
+
+                <div className="form-section">
+                  <div className="section-header">
+                    <h3>Payment Terms</h3>
+                  </div>
+                  {revisionModal.form.paymentTerms.map((p, i) => (
+                    <div key={i} className="item-card">
+                      <div className="item-header">
+                        <span>Term {i + 1}</span>
+                        <button type="button" className="cancel-btn" onClick={() => setRevisionModal({ ...revisionModal, form: { ...revisionModal.form, paymentTerms: revisionModal.form.paymentTerms.filter((_, idx) => idx !== i) } })}>Remove</button>
+                      </div>
+                      <div className="form-row">
+                        <div className="form-group" style={{ flex: 3 }}>
+                          <label>Milestone</label>
+                          <input type="text" value={p.milestoneDescription} onChange={e => setRevisionModal({ ...revisionModal, form: { ...revisionModal.form, paymentTerms: revisionModal.form.paymentTerms.map((x, idx) => idx === i ? { ...x, milestoneDescription: e.target.value } : x) } })} />
+                        </div>
+                        <div className="form-group" style={{ flex: 1 }}>
+                          <label>Amount %</label>
+                          <input type="number" value={p.amountPercent} onChange={e => setRevisionModal({ ...revisionModal, form: { ...revisionModal.form, paymentTerms: revisionModal.form.paymentTerms.map((x, idx) => idx === i ? { ...x, amountPercent: e.target.value } : x) } })} />
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                  <div className="section-actions">
+                    <button type="button" className="link-btn" onClick={() => setRevisionModal({ ...revisionModal, form: { ...revisionModal.form, paymentTerms: [...revisionModal.form.paymentTerms, { milestoneDescription: '', amountPercent: '' }] } })}>+ Add Payment Term</button>
+                  </div>
+                </div>
+
+                <div className="form-section">
+                  <div className="section-header">
+                    <h3>Delivery, Completion, Warranty & Validity</h3>
+                  </div>
+                  <div className="form-group">
+                    <label>Delivery / Completion Timeline</label>
+                    <input type="text" value={revisionModal.form.deliveryCompletionWarrantyValidity.deliveryTimeline} onChange={e => setRevisionModal({ ...revisionModal, form: { ...revisionModal.form, deliveryCompletionWarrantyValidity: { ...revisionModal.form.deliveryCompletionWarrantyValidity, deliveryTimeline: e.target.value } } })} />
+                  </div>
+                  <div className="form-row">
+                    <div className="form-group" style={{ flex: 1 }}>
+                      <label>Warranty Period</label>
+                      <input type="text" value={revisionModal.form.deliveryCompletionWarrantyValidity.warrantyPeriod} onChange={e => setRevisionModal({ ...revisionModal, form: { ...revisionModal.form, deliveryCompletionWarrantyValidity: { ...revisionModal.form.deliveryCompletionWarrantyValidity, warrantyPeriod: e.target.value } } })} />
+                    </div>
+                    <div className="form-group" style={{ flex: 1 }}>
+                      <label>Offer Validity (Days)</label>
+                      <input type="number" value={revisionModal.form.deliveryCompletionWarrantyValidity.offerValidity} onChange={e => setRevisionModal({ ...revisionModal, form: { ...revisionModal.form, deliveryCompletionWarrantyValidity: { ...revisionModal.form.deliveryCompletionWarrantyValidity, offerValidity: e.target.value } } })} />
+                    </div>
+                  </div>
+                  <div className="form-group">
+                    <label>Authorized Signatory</label>
+                    <input type="text" value={revisionModal.form.deliveryCompletionWarrantyValidity.authorizedSignatory} onChange={e => setRevisionModal({ ...revisionModal, form: { ...revisionModal.form, deliveryCompletionWarrantyValidity: { ...revisionModal.form.deliveryCompletionWarrantyValidity, authorizedSignatory: e.target.value } } })} />
+                  </div>
+                </div>
+
+                <div className="form-actions">
+                  <button type="button" className="cancel-btn" onClick={() => setRevisionModal({ open: false, quote: null, form: null })}>Cancel</button>
+                  <button type="button" className="save-btn" disabled={!hasRevisionChanges(revisionModal.quote, revisionModal.form)} onClick={() => createRevision(revisionModal.quote)}>Confirm Revision</button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}
