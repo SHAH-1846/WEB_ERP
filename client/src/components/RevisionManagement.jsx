@@ -13,6 +13,8 @@ function RevisionManagement() {
   const [profileUser, setProfileUser] = useState(null)
   const [notify, setNotify] = useState({ open: false, title: '', message: '' })
   const [confirmDelete, setConfirmDelete] = useState({ open: false, revision: null })
+  const [approvalsView, setApprovalsView] = useState(null)
+  const [approvalModal, setApprovalModal] = useState({ open: false, revision: null, action: null, note: '' })
 
   const defaultCompany = useMemo(() => ({
     logo,
@@ -33,6 +35,27 @@ function RevisionManagement() {
       const res = await axios.get('http://localhost:5000/api/revisions', { headers: { Authorization: `Bearer ${token}` } })
       setRevisions(res.data)
     } catch {}
+  }
+
+  const approveRevision = async (rev, status, note) => {
+    try {
+      const token = localStorage.getItem('token')
+      await axios.patch(`http://localhost:5000/api/revisions/${rev._id}/approve`, { status, note }, { headers: { Authorization: `Bearer ${token}` } })
+      await fetchRevisions()
+    } catch (e) {
+      setNotify({ open: true, title: 'Approval Failed', message: e.response?.data?.message || 'We could not update approval. Please try again.' })
+    }
+  }
+
+  const sendForApproval = async (rev) => {
+    try {
+      const token = localStorage.getItem('token')
+      await axios.patch(`http://localhost:5000/api/revisions/${rev._id}/approve`, { status: 'pending' }, { headers: { Authorization: `Bearer ${token}` } })
+      await fetchRevisions()
+      setNotify({ open: true, title: 'Request Sent', message: 'Approval request has been sent successfully.' })
+    } catch (e) {
+      setNotify({ open: true, title: 'Send Failed', message: e.response?.data?.message || 'We could not send for approval. Please try again.' })
+    }
   }
 
   const ensurePdfMake = async () => {
@@ -414,7 +437,21 @@ function RevisionManagement() {
                             localStorage.setItem('revisionId', r._id)
                             window.location.href = '/revision-detail'
                           }}>View Details</button>
-                          {currentUser?.roles?.includes('estimation_engineer') && (
+                          {r.managementApproval?.status === 'pending' ? (
+                            <span className="status-badge blue">Approval Pending</span>
+                          ) : (
+                            (r.managementApproval?.status !== 'approved' && (currentUser?.roles?.includes('estimation_engineer') || r.createdBy?._id === currentUser?.id)) && (
+                              <button className="save-btn" onClick={() => sendForApproval(r)}>Send for Approval</button>
+                            )
+                          )}
+                          <button className="link-btn" onClick={() => setApprovalsView(r)}>View Approvals/Rejections</button>
+                          {(currentUser?.roles?.includes('manager') || currentUser?.roles?.includes('admin')) && r.managementApproval?.status === 'pending' && (
+                            <>
+                              <button className="approve-btn" onClick={() => setApprovalModal({ open: true, revision: r, action: 'approved', note: '' })}>Approve</button>
+                              <button className="reject-btn" onClick={() => setApprovalModal({ open: true, revision: r, action: 'rejected', note: '' })}>Reject</button>
+                            </>
+                          )}
+                          {currentUser?.roles?.includes('estimation_engineer') && r.managementApproval?.status !== 'approved' && (
                             <button className="reject-btn" onClick={() => setConfirmDelete({ open: true, revision: r })}>Delete Revision</button>
                           )}
                         </div>
@@ -773,6 +810,123 @@ function RevisionManagement() {
               <div className="form-group">
                 <label>Email</label>
                 <input type="text" value={profileUser?.email || ''} readOnly />
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {approvalsView && (
+        <div className="modal-overlay history" onClick={() => setApprovalsView(null)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>Approvals & Rejections</h2>
+              <button onClick={() => setApprovalsView(null)} className="close-btn">×</button>
+            </div>
+            <div className="lead-form" style={{ maxHeight: '65vh', overflow: 'auto' }}>
+              {(() => {
+                const rev = approvalsView
+                const rawLogs = Array.isArray(rev.managementApproval?.logs) ? rev.managementApproval.logs.slice().sort((a, b) => new Date(a.at || 0) - new Date(b.at || 0)) : []
+                const cycles = []
+                let current = null
+                for (const entry of rawLogs) {
+                  if (entry.status === 'pending') {
+                    if (current) cycles.push(current)
+                    current = {
+                      requestedAt: entry.at,
+                      requestedBy: entry.requestedBy,
+                      requestNote: entry.note,
+                      decidedAt: null,
+                      decidedBy: null,
+                      decisionNote: null,
+                      decisionStatus: 'pending'
+                    }
+                  } else if (entry.status === 'approved' || entry.status === 'rejected') {
+                    if (!current) {
+                      current = { requestedAt: null, requestedBy: null, requestNote: null, decidedAt: null, decidedBy: null, decisionNote: null, decisionStatus: null }
+                    }
+                    if (!current.decidedAt) {
+                      current.decidedAt = entry.at
+                      current.decidedBy = entry.decidedBy
+                      current.decisionNote = entry.note
+                      current.decisionStatus = entry.status
+                      cycles.push(current)
+                      current = null
+                    } else {
+                      cycles.push({ requestedAt: null, requestedBy: null, requestNote: null, decidedAt: entry.at, decidedBy: entry.decidedBy, decisionNote: entry.note, decisionStatus: entry.status })
+                    }
+                  }
+                }
+                if (current) cycles.push(current)
+
+                if (cycles.length === 0 && (rev.managementApproval?.requestedBy || rev.managementApproval?.approvedBy)) {
+                  cycles.push({
+                    requestedAt: rev.updatedAt || rev.createdAt,
+                    requestedBy: rev.managementApproval?.requestedBy,
+                    requestNote: rev.managementApproval?.comments,
+                    decidedAt: rev.managementApproval?.approvedAt,
+                    decidedBy: rev.managementApproval?.approvedBy,
+                    decisionNote: rev.managementApproval?.comments,
+                    decisionStatus: rev.managementApproval?.status
+                  })
+                }
+
+                if (cycles.length === 0) return <p>No approval records.</p>
+
+                return (
+                  <div>
+                    {cycles.map((c, idx) => (
+                      <div key={idx} className="edit-item" style={{ marginTop: idx === 0 ? 0 : 12 }}>
+                        <div className="edit-header">
+                          <span>Approval Cycle {idx + 1} — {c.decisionStatus ? c.decisionStatus.toUpperCase() : 'PENDING'}</span>
+                        </div>
+                        <div style={{ whiteSpace: 'pre-wrap' }}>
+                          <div><strong>Requested:</strong> {c.requestedAt ? new Date(c.requestedAt).toLocaleString() : '—'} {c.requestedBy?.name && (<>
+                            by {c.requestedBy?._id === currentUser?.id ? 'YOU' : c.requestedBy.name}
+                            {c.requestedBy?._id && c.requestedBy._id !== currentUser?.id && (
+                              <button className="link-btn" onClick={() => setProfileUser(c.requestedBy)} style={{ marginLeft: 6 }}>View Profile</button>
+                            )}
+                          </>)}
+                          </div>
+                          {c.requestNote && <div><strong>Request note:</strong> {c.requestNote}</div>}
+                          <div style={{ marginTop: 6 }}><strong>Decision:</strong> {c.decidedAt ? new Date(c.decidedAt).toLocaleString() : '—'} {c.decidedBy?.name && (<>
+                            by {c.decidedBy?._id === currentUser?.id ? 'YOU' : c.decidedBy.name}
+                            {c.decidedBy?._id && c.decidedBy._id !== currentUser?.id && (
+                              <button className="link-btn" onClick={() => setProfileUser(c.decidedBy)} style={{ marginLeft: 6 }}>View Profile</button>
+                            )}
+                          </>)} {c.decisionStatus && <span style={{ marginLeft: 6, textTransform: 'uppercase' }}>({c.decisionStatus})</span>}
+                          </div>
+                          {c.decisionNote && <div><strong>Decision note:</strong> {c.decisionNote}</div>}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )
+              })()}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {approvalModal.open && (
+        <div className="modal-overlay" onClick={() => setApprovalModal({ open: false, revision: null, action: null, note: '' })}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>{approvalModal.action === 'approved' ? 'Approve Revision' : 'Reject Revision'}</h2>
+              <button onClick={() => setApprovalModal({ open: false, revision: null, action: null, note: '' })} className="close-btn">×</button>
+            </div>
+            <div className="lead-form">
+              <div className="form-group">
+                <label>Note</label>
+                <textarea value={approvalModal.note} onChange={e => setApprovalModal({ ...approvalModal, note: e.target.value })} />
+              </div>
+              <div className="form-actions">
+                <button type="button" className="cancel-btn" onClick={() => setApprovalModal({ open: false, revision: null, action: null, note: '' })}>Cancel</button>
+                <button type="button" className="save-btn" onClick={async () => {
+                  if (!approvalModal.revision || !approvalModal.action) return
+                  await approveRevision(approvalModal.revision, approvalModal.action, approvalModal.note)
+                  setApprovalModal({ open: false, revision: null, action: null, note: '' })
+                }}>Confirm</button>
               </div>
             </div>
           </div>

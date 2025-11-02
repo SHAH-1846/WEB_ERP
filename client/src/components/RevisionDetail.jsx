@@ -13,6 +13,8 @@ function RevisionDetail() {
   const [showHistory, setShowHistory] = useState(false)
   const [profileUser, setProfileUser] = useState(null)
   const [notify, setNotify] = useState({ open: false, title: '', message: '' })
+  const [approvalModal, setApprovalModal] = useState({ open: false, action: null, note: '' })
+  const [showApprovals, setShowApprovals] = useState(false)
 
   useEffect(() => {
     async function load() {
@@ -322,6 +324,42 @@ function RevisionDetail() {
     }
   }
 
+  const approveRevision = async (status, note) => {
+    try {
+      if (!revision) return
+      const token = localStorage.getItem('token')
+      await fetch(`http://localhost:5000/api/revisions/${revision._id}/approve`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ status, note })
+      })
+      const res = await fetch(`http://localhost:5000/api/revisions/${revision._id}`, { headers: { Authorization: `Bearer ${token}` } })
+      const updated = await res.json()
+      setRevision(updated)
+      setApprovalModal({ open: false, action: null, note: '' })
+    } catch (e) {
+      setNotify({ open: true, title: 'Approval Failed', message: 'We could not update approval. Please try again.' })
+    }
+  }
+
+  const sendForApproval = async () => {
+    try {
+      if (!revision) return
+      const token = localStorage.getItem('token')
+      await fetch(`http://localhost:5000/api/revisions/${revision._id}/approve`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ status: 'pending' })
+      })
+      const res = await fetch(`http://localhost:5000/api/revisions/${revision._id}`, { headers: { Authorization: `Bearer ${token}` } })
+      const updated = await res.json()
+      setRevision(updated)
+      setNotify({ open: true, title: 'Request Sent', message: 'Approval request has been sent successfully.' })
+    } catch (e) {
+      setNotify({ open: true, title: 'Send Failed', message: 'We could not send for approval. Please try again.' })
+    }
+  }
+
   if (!revision) return (
     <div className="lead-management" style={{ padding: 24 }}>
       <h2>Revision Details</h2>
@@ -330,6 +368,7 @@ function RevisionDetail() {
   )
 
   const currency = revision.priceSchedule?.currency || 'AED'
+  const approvalStatus = revision.managementApproval?.status
 
   return (
     <div className="lead-detail">
@@ -381,6 +420,20 @@ function RevisionDetail() {
               } catch { setNotify({ open: true, title: 'Open Lead Failed', message: 'We could not open the linked lead. Please try again.' }) }
             }}>View Lead</button>
           )}
+          {approvalStatus === 'pending' ? (
+            <span className="status-badge blue">Approval Pending</span>
+          ) : (
+            (approvalStatus !== 'approved' && (currentUser?.roles?.includes('estimation_engineer') || revision?.createdBy?._id === currentUser?.id)) && (
+              <button className="save-btn" onClick={sendForApproval}>Send for Approval</button>
+            )
+          )}
+          {(currentUser?.roles?.includes('manager') || currentUser?.roles?.includes('admin')) && approvalStatus === 'pending' && (
+            <>
+              <button className="approve-btn" onClick={() => setApprovalModal({ open: true, action: 'approved', note: '' })}>Approve</button>
+              <button className="reject-btn" onClick={() => setApprovalModal({ open: true, action: 'rejected', note: '' })}>Reject</button>
+            </>
+          )}
+          <button className="link-btn" onClick={() => setShowApprovals(!showApprovals)}>{showApprovals ? 'Hide Approvals/Rejections' : 'View Approvals/Rejections'}</button>
         </div>
       </div>
 
@@ -582,6 +635,91 @@ function RevisionDetail() {
               ))}
             </div>
           )}
+        </div>
+      )}
+
+      {showApprovals && (
+        <div className="ld-card ld-section">
+          <h3>Approvals & Rejections</h3>
+          {(() => {
+            const rev = revision
+            const rawLogs = Array.isArray(rev.managementApproval?.logs) ? rev.managementApproval.logs.slice().sort((a, b) => new Date(a.at || 0) - new Date(b.at || 0)) : []
+            const cycles = []
+            let current = null
+            for (const entry of rawLogs) {
+              if (entry.status === 'pending') {
+                if (current) cycles.push(current)
+                current = {
+                  requestedAt: entry.at,
+                  requestedBy: entry.requestedBy,
+                  requestNote: entry.note,
+                  decidedAt: null,
+                  decidedBy: null,
+                  decisionNote: null,
+                  decisionStatus: 'pending'
+                }
+              } else if (entry.status === 'approved' || entry.status === 'rejected') {
+                if (!current) {
+                  current = { requestedAt: null, requestedBy: null, requestNote: null, decidedAt: null, decidedBy: null, decisionNote: null, decisionStatus: null }
+                }
+                if (!current.decidedAt) {
+                  current.decidedAt = entry.at
+                  current.decidedBy = entry.decidedBy
+                  current.decisionNote = entry.note
+                  current.decisionStatus = entry.status
+                  cycles.push(current)
+                  current = null
+                } else {
+                  cycles.push({ requestedAt: null, requestedBy: null, requestNote: null, decidedAt: entry.at, decidedBy: entry.decidedBy, decisionNote: entry.note, decisionStatus: entry.status })
+                }
+              }
+            }
+            if (current) cycles.push(current)
+
+            if (cycles.length === 0 && (rev.managementApproval?.requestedBy || rev.managementApproval?.approvedBy)) {
+              cycles.push({
+                requestedAt: rev.updatedAt || rev.createdAt,
+                requestedBy: rev.managementApproval?.requestedBy,
+                requestNote: rev.managementApproval?.comments,
+                decidedAt: rev.managementApproval?.approvedAt,
+                decidedBy: rev.managementApproval?.approvedBy,
+                decisionNote: rev.managementApproval?.comments,
+                decisionStatus: rev.managementApproval?.status
+              })
+            }
+
+            if (cycles.length === 0) return <p>No approval records.</p>
+
+            return (
+              <div className="edits-list" style={{ marginTop: 8 }}>
+                {cycles.map((c, idx) => (
+                  <div key={idx} className="edit-item">
+                    <div className="edit-header">
+                      <span>Approval Cycle {idx + 1} — {c.decisionStatus ? c.decisionStatus.toUpperCase() : 'PENDING'}</span>
+                    </div>
+                    <div style={{ whiteSpace: 'pre-wrap' }}>
+                      <div><strong>Requested:</strong> {c.requestedAt ? new Date(c.requestedAt).toLocaleString() : '—'} {c.requestedBy?.name && (<>
+                        by {c.requestedBy?._id === currentUser?.id ? 'YOU' : c.requestedBy.name}
+                        {c.requestedBy?._id && c.requestedBy._id !== currentUser?.id && (
+                          <button className="link-btn" onClick={() => setProfileUser(c.requestedBy)} style={{ marginLeft: 6 }}>View Profile</button>
+                        )}
+                      </>)}
+                      </div>
+                      {c.requestNote && <div><strong>Request note:</strong> {c.requestNote}</div>}
+                      <div style={{ marginTop: 6 }}><strong>Decision:</strong> {c.decidedAt ? new Date(c.decidedAt).toLocaleString() : '—'} {c.decidedBy?.name && (<>
+                        by {c.decidedBy?._id === currentUser?.id ? 'YOU' : c.decidedBy.name}
+                        {c.decidedBy?._id && c.decidedBy._id !== currentUser?.id && (
+                          <button className="link-btn" onClick={() => setProfileUser(c.decidedBy)} style={{ marginLeft: 6 }}>View Profile</button>
+                        )}
+                      </>)} {c.decisionStatus && <span style={{ marginLeft: 6, textTransform: 'uppercase' }}>({c.decisionStatus})</span>}
+                      </div>
+                      {c.decisionNote && <div><strong>Decision note:</strong> {c.decisionNote}</div>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )
+          })()}
         </div>
       )}
 
@@ -877,6 +1015,30 @@ function RevisionDetail() {
                 </div>
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {approvalModal.open && (
+        <div className="modal-overlay" onClick={() => setApprovalModal({ open: false, action: null, note: '' })}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>{approvalModal.action === 'approved' ? 'Approve Revision' : 'Reject Revision'}</h2>
+              <button onClick={() => setApprovalModal({ open: false, action: null, note: '' })} className="close-btn">×</button>
+            </div>
+            <div className="lead-form">
+              <div className="form-group">
+                <label>Note</label>
+                <textarea value={approvalModal.note} onChange={e => setApprovalModal({ ...approvalModal, note: e.target.value })} />
+              </div>
+              <div className="form-actions">
+                <button type="button" className="cancel-btn" onClick={() => setApprovalModal({ open: false, action: null, note: '' })}>Cancel</button>
+                <button type="button" className="save-btn" onClick={async () => {
+                  if (!approvalModal.action) return
+                  await approveRevision(approvalModal.action, approvalModal.note)
+                }}>Confirm</button>
+              </div>
+            </div>
           </div>
         </div>
       )}

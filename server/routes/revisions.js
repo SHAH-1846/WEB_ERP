@@ -134,6 +134,65 @@ router.put('/:id', auth, async (req, res) => {
   }
 });
 
+// Management approval for revisions
+router.patch('/:id/approve', auth, async (req, res) => {
+  try {
+    const { status } = req.body;
+    const note = req.body.note ?? req.body.comments;
+    if (!['pending', 'approved', 'rejected'].includes(status)) {
+      return res.status(400).json({ message: 'Invalid status' });
+    }
+
+    const r = await Revision.findById(req.params.id);
+    if (!r) return res.status(404).json({ message: 'Revision not found' });
+
+    const roles = req.user.roles || [];
+    const isCreator = r.createdBy?.toString?.() === req.user.userId;
+
+    if (status === 'pending') {
+      if (!(isCreator || roles.includes('estimation_engineer'))) {
+        return res.status(403).json({ message: 'Not authorized to request approval' });
+      }
+      const prev = r.managementApproval || {};
+      r.managementApproval = {
+        ...prev,
+        status: 'pending',
+        requestedBy: req.user.userId,
+        approvedBy: undefined,
+        approvedAt: undefined,
+        comments: note || prev.comments
+      };
+      r.managementApproval.logs = Array.isArray(prev.logs) ? prev.logs : [];
+      r.managementApproval.logs.push({ status: 'pending', requestedBy: req.user.userId, note });
+    } else {
+      if (!(roles.includes('manager') || roles.includes('admin'))) {
+        return res.status(403).json({ message: 'Not authorized to approve/reject' });
+      }
+      const prev = r.managementApproval || {};
+      r.managementApproval = {
+        ...prev,
+        status,
+        approvedBy: req.user.userId,
+        approvedAt: new Date(),
+        comments: note || prev.comments,
+        requestedBy: prev.requestedBy
+      };
+      r.managementApproval.logs = Array.isArray(prev.logs) ? prev.logs : [];
+      r.managementApproval.logs.push({ status, decidedBy: req.user.userId, note });
+    }
+
+    await r.save();
+    await r.populate('managementApproval.requestedBy', 'name email');
+    await r.populate('managementApproval.approvedBy', 'name email');
+    await r.populate('managementApproval.logs.requestedBy', 'name email');
+    await r.populate('managementApproval.logs.decidedBy', 'name email');
+
+    res.json(r);
+  } catch (e) {
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
 // Create a revision from an approved quotation
 router.post('/', auth, async (req, res) => {
   try {
@@ -239,6 +298,9 @@ router.delete('/:id', auth, async (req, res) => {
     }
     const rev = await Revision.findById(req.params.id);
     if (!rev) return res.status(404).json({ message: 'Revision not found' });
+    if (rev?.managementApproval?.status === 'approved') {
+      return res.status(400).json({ message: 'Cannot delete: revision is approved' });
+    }
     const children = await Revision.countDocuments({ parentRevision: rev._id });
     if (children > 0) return res.status(400).json({ message: 'Cannot delete: subsequent revisions depend on this revision' });
     await Revision.deleteOne({ _id: rev._id });
