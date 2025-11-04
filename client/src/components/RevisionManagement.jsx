@@ -9,12 +9,13 @@ function RevisionManagement() {
   const [myOnly, setMyOnly] = useState(false)
   const [search, setSearch] = useState('')
   const [sortKey, setSortKey] = useState('createdAt_desc')
-  const [editModal, setEditModal] = useState({ open: false, revision: null, form: null })
+  const [editModal, setEditModal] = useState({ open: false, revision: null, form: null, mode: 'edit' })
   const [profileUser, setProfileUser] = useState(null)
   const [notify, setNotify] = useState({ open: false, title: '', message: '' })
   const [confirmDelete, setConfirmDelete] = useState({ open: false, revision: null })
   const [approvalsView, setApprovalsView] = useState(null)
   const [approvalModal, setApprovalModal] = useState({ open: false, revision: null, action: null, note: '' })
+  const [createProjectModal, setCreateProjectModal] = useState({ open: false, revision: null, form: { name: '', locationDetails: '', workingHours: '', manpowerCount: '', assignedProjectEngineerId: '' }, engineers: [], ack: false })
 
   const defaultCompany = useMemo(() => ({
     logo,
@@ -415,7 +416,7 @@ function RevisionManagement() {
                         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
                           <button className="save-btn" onClick={() => exportPDF(r)}>Export</button>
                           {(currentUser?.roles?.includes('estimation_engineer') || currentUser?.roles?.includes('manager') || currentUser?.roles?.includes('admin') || r.createdBy?._id === currentUser?.id) && (
-                            <button className="assign-btn" onClick={() => setEditModal({ open: true, revision: r, form: {
+                            <button className="assign-btn" onClick={() => setEditModal({ open: true, revision: r, mode: 'edit', form: {
                               companyInfo: r.companyInfo || {},
                               submittedTo: r.submittedTo || '',
                               attention: r.attention || '',
@@ -440,9 +441,89 @@ function RevisionManagement() {
                           {r.managementApproval?.status === 'pending' ? (
                             <span className="status-badge blue">Approval Pending</span>
                           ) : (
-                            (r.managementApproval?.status !== 'approved' && (currentUser?.roles?.includes('estimation_engineer') || r.createdBy?._id === currentUser?.id)) && (
-                              <button className="save-btn" onClick={() => sendForApproval(r)}>Send for Approval</button>
-                            )
+                            <>
+                              {(r.managementApproval?.status !== 'approved' && (currentUser?.roles?.includes('estimation_engineer') || r.createdBy?._id === currentUser?.id)) && (
+                                <button className="save-btn" onClick={() => sendForApproval(r)}>Send for Approval</button>
+                              )}
+                              {r.managementApproval?.status === 'approved' && (
+                                <>
+                                  <button className="save-btn" onClick={async () => {
+                                    // Block if project already exists
+                                    try {
+                                      const token = localStorage.getItem('token')
+                                      await axios.get(`http://localhost:5000/api/projects/by-revision/${r._id}`, { headers: { Authorization: `Bearer ${token}` } })
+                                      setNotify({ open: true, title: 'Not Allowed', message: 'A project already exists for this revision.' })
+                                      return
+                                    } catch {}
+                                    const hasChild = revisions.some(x => (x.parentRevision?._id || x.parentRevision) === r._id)
+                                    if (hasChild) {
+                                      setNotify({ open: true, title: 'Not Allowed', message: 'A child revision already exists for this revision.' })
+                                      return
+                                    }
+                                    setEditModal({ open: true, revision: r, mode: 'create', form: {
+                                    companyInfo: r.companyInfo || {},
+                                    submittedTo: r.submittedTo || '',
+                                    attention: r.attention || '',
+                                    offerReference: r.offerReference || '',
+                                    enquiryNumber: r.enquiryNumber || '',
+                                    offerDate: r.offerDate ? String(r.offerDate).slice(0,10) : '',
+                                    enquiryDate: r.enquiryDate ? String(r.enquiryDate).slice(0,10) : '',
+                                    projectTitle: r.projectTitle || r.lead?.projectTitle || '',
+                                    introductionText: r.introductionText || '',
+                                    scopeOfWork: r.scopeOfWork || [],
+                                    priceSchedule: r.priceSchedule || { items: [], subTotal: 0, grandTotal: 0, currency: r.priceSchedule?.currency || 'AED', taxDetails: { vatRate: 5, vatAmount: 0 } },
+                                    ourViewpoints: r.ourViewpoints || '',
+                                    exclusions: r.exclusions || [],
+                                    paymentTerms: r.paymentTerms || [],
+                                    deliveryCompletionWarrantyValidity: r.deliveryCompletionWarrantyValidity || { deliveryTimeline: '', warrantyPeriod: '', offerValidity: 30, authorizedSignatory: currentUser?.name || '' }
+                                  } })
+                                  }}>Create Another Revision</button>
+                                  <button className="assign-btn" onClick={async () => {
+                                    try {
+                                      const token = localStorage.getItem('token')
+                                      // Block if project already exists for this revision
+                                      try {
+                                        await axios.get(`http://localhost:5000/api/projects/by-revision/${r._id}`, { headers: { Authorization: `Bearer ${token}` } })
+                                        setNotify({ open: true, title: 'Not Allowed', message: 'A project already exists for this revision.' })
+                                        return
+                                      } catch {}
+
+                                      // Enforce last approved child rule in UI as well
+                                      const hasChild = revisions.some(x => (x.parentRevision?._id || x.parentRevision) === r._id)
+                                      if (hasChild) {
+                                        setNotify({ open: true, title: 'Not Allowed', message: 'Project can only be created from the last approved child revision.' })
+                                        return
+                                      }
+                                      // find latest approved in this quotation group
+                                      const groupItems = group?.items || []
+                                      const approved = groupItems.filter(x => x.managementApproval?.status === 'approved')
+                                      const latest = approved.slice().sort((a,b) => (b.revisionNumber||0)-(a.revisionNumber||0))[0]
+                                      if (latest && latest._id !== r._id) {
+                                        setNotify({ open: true, title: 'Not Allowed', message: `Only the latest approved revision (#${latest.revisionNumber}) can be used to create a project.` })
+                                        return
+                                      }
+
+                                      // Load project engineers
+                                      let engineers = []
+                                      try {
+                                        const resEng = await axios.get('http://localhost:5000/api/projects/project-engineers', { headers: { Authorization: `Bearer ${token}` } })
+                                        engineers = Array.isArray(resEng.data) ? resEng.data : []
+                                      } catch {}
+
+                                      setCreateProjectModal({ open: true, revision: r, engineers, ack: false, form: {
+                                        name: r.projectTitle || r.lead?.projectTitle || 'Project',
+                                        locationDetails: r.lead?.locationDetails || '',
+                                        workingHours: r.lead?.workingHours || '',
+                                        manpowerCount: r.lead?.manpowerCount || '',
+                                        assignedProjectEngineerId: ''
+                                      } })
+                                    } catch (e) {
+                                      setNotify({ open: true, title: 'Create Project Failed', message: e.response?.data?.message || 'We could not open the Create Project form. Please try again.' })
+                                    }
+                                  }}>Create Project</button>
+                                </>
+                              )}
+                            </>
                           )}
                           <button className="link-btn" onClick={() => setApprovalsView(r)}>View Approvals/Rejections</button>
                           {(currentUser?.roles?.includes('manager') || currentUser?.roles?.includes('admin')) && r.managementApproval?.status === 'pending' && (
@@ -780,15 +861,23 @@ function RevisionManagement() {
                 </div>
 
                 <div className="form-actions">
-                  <button type="button" className="cancel-btn" onClick={() => setEditModal({ open: false, revision: null, form: null })}>Cancel</button>
+                  <button type="button" className="cancel-btn" onClick={() => setEditModal({ open: false, revision: null, form: null, mode: 'edit' })}>Cancel</button>
                   <button type="button" className="save-btn" onClick={async () => {
                     try {
                       const token = localStorage.getItem('token')
-                      await axios.put(`http://localhost:5000/api/revisions/${editModal.revision._id}`, editModal.form, { headers: { Authorization: `Bearer ${token}` } })
+                      if (editModal.mode === 'create') {
+                        await axios.post(`http://localhost:5000/api/revisions`, { sourceRevisionId: editModal.revision._id, data: editModal.form }, { headers: { Authorization: `Bearer ${token}` } })
+                        setNotify({ open: true, title: 'Revision Created', message: 'New revision created successfully.' })
+                      } else {
+                        await axios.put(`http://localhost:5000/api/revisions/${editModal.revision._id}`, editModal.form, { headers: { Authorization: `Bearer ${token}` } })
+                        setNotify({ open: true, title: 'Saved', message: 'Revision updated successfully.' })
+                      }
                       await fetchRevisions()
-                      setEditModal({ open: false, revision: null, form: null })
-                    } catch (e) { alert(e.response?.data?.message || 'Failed to save revision') }
-                  }}>Save Changes</button>
+                      setEditModal({ open: false, revision: null, form: null, mode: 'edit' })
+                    } catch (e) {
+                      setNotify({ open: true, title: 'Save Failed', message: e.response?.data?.message || 'Failed to save revision' })
+                    }
+                  }}>{editModal.mode === 'create' ? 'Create Revision' : 'Save Changes'}</button>
                 </div>
               </div>
             )}
@@ -927,6 +1016,91 @@ function RevisionManagement() {
                   await approveRevision(approvalModal.revision, approvalModal.action, approvalModal.note)
                   setApprovalModal({ open: false, revision: null, action: null, note: '' })
                 }}>Confirm</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {createProjectModal.open && createProjectModal.revision && (
+        <div className="modal-overlay" onClick={() => setCreateProjectModal({ open: false, revision: null, form: { name: '', locationDetails: '', workingHours: '', manpowerCount: '', assignedProjectEngineerId: '' }, engineers: [], ack: false })}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>Create Project</h2>
+              <button onClick={() => setCreateProjectModal({ open: false, revision: null, form: { name: '', locationDetails: '', workingHours: '', manpowerCount: '', assignedProjectEngineerId: '' }, engineers: [], ack: false })} className="close-btn">×</button>
+            </div>
+            <div className="lead-form">
+              {currentUser?.roles?.includes('estimation_engineer') && (
+                <div className="edit-item" style={{ background: '#FEF3C7', border: '1px solid #F59E0B', padding: 14, marginBottom: 14, color: '#7C2D12' }}>
+                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+                    <span aria-hidden="true" style={{ fontSize: 20, lineHeight: '20px', marginTop: 2 }}>⚠️</span>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontWeight: 700, marginBottom: 4 }}>Warning</div>
+                      <div style={{ lineHeight: 1.4 }}>This action cannot be undone. Only managers can delete projects once created.</div>
+                    </div>
+                  </div>
+                </div>
+              )}
+              <div className="form-group">
+                <label>Project Name</label>
+                <input type="text" value={createProjectModal.form.name} onChange={e => setCreateProjectModal({ ...createProjectModal, form: { ...createProjectModal.form, name: e.target.value } })} />
+              </div>
+              <div className="form-group">
+                <label>Location Details</label>
+                <input type="text" value={createProjectModal.form.locationDetails} onChange={e => setCreateProjectModal({ ...createProjectModal, form: { ...createProjectModal.form, locationDetails: e.target.value } })} />
+              </div>
+              <div className="form-row">
+                <div className="form-group" style={{ flex: 1 }}>
+                  <label>Working Hours</label>
+                  <input type="text" value={createProjectModal.form.workingHours} onChange={e => setCreateProjectModal({ ...createProjectModal, form: { ...createProjectModal.form, workingHours: e.target.value } })} />
+                </div>
+                <div className="form-group" style={{ flex: 1 }}>
+                  <label>Manpower Count</label>
+                  <input type="number" value={createProjectModal.form.manpowerCount} onChange={e => setCreateProjectModal({ ...createProjectModal, form: { ...createProjectModal.form, manpowerCount: Number(e.target.value || 0) } })} />
+                </div>
+              </div>
+              <div className="form-group">
+                <label>Assign Project Engineer</label>
+                <select value={createProjectModal.form.assignedProjectEngineerId} onChange={e => setCreateProjectModal({ ...createProjectModal, form: { ...createProjectModal.form, assignedProjectEngineerId: e.target.value } })}>
+                  <option value="">-- Select --</option>
+                  {createProjectModal.engineers.map(u => (
+                    <option key={u._id} value={u._id}>{u.name} ({u.email})</option>
+                  ))}
+                </select>
+              </div>
+              {createProjectModal.form.assignedProjectEngineerId && (
+                <div className="form-group">
+                  <button type="button" className="link-btn" onClick={() => {
+                    const u = createProjectModal.engineers.find(x => String(x._id) === String(createProjectModal.form.assignedProjectEngineerId))
+                    if (u) setProfileUser(u)
+                  }}>View Profile</button>
+                </div>
+              )}
+              {currentUser?.roles?.includes('estimation_engineer') && (
+                <div className="form-group" style={{ marginTop: 6 }}>
+                  <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start', padding: 12, border: '1px solid var(--border)', borderRadius: 8, background: 'var(--bg)' }}>
+                    <input id="ack-project-create" type="checkbox" style={{ marginTop: 2 }} checked={createProjectModal.ack} onChange={e => setCreateProjectModal({ ...createProjectModal, ack: e.target.checked })} />
+                    <label htmlFor="ack-project-create" style={{ color: 'var(--text)', cursor: 'pointer' }}>
+                      I understand this action cannot be undone and requires management involvement to reverse.
+                    </label>
+                  </div>
+                </div>
+              )}
+              <div className="form-actions">
+                <button type="button" className="cancel-btn" onClick={() => setCreateProjectModal({ open: false, revision: null, form: { name: '', locationDetails: '', workingHours: '', manpowerCount: '', assignedProjectEngineerId: '' }, engineers: [], ack: false })}>Cancel</button>
+                <button type="button" className="save-btn" disabled={currentUser?.roles?.includes('estimation_engineer') && !createProjectModal.ack} onClick={async () => {
+                  try {
+                    const token = localStorage.getItem('token')
+                    // final guard on server side too
+                    const body = { ...createProjectModal.form }
+                    await axios.post(`http://localhost:5000/api/projects/from-revision/${createProjectModal.revision._id}`, body, { headers: { Authorization: `Bearer ${token}` } })
+                    setCreateProjectModal({ open: false, revision: null, form: { name: '', locationDetails: '', workingHours: '', manpowerCount: '', assignedProjectEngineerId: '' }, engineers: [], ack: false })
+                    setNotify({ open: true, title: 'Project Created', message: 'Project created from approved revision. Redirecting to Projects...' })
+                    setTimeout(() => { window.location.href = '/projects' }, 800)
+                  } catch (e) {
+                    setNotify({ open: true, title: 'Create Project Failed', message: e.response?.data?.message || 'We could not create the project. Please try again.' })
+                  }
+                }}>Create Project</button>
               </div>
             </div>
           </div>

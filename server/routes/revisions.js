@@ -210,6 +210,13 @@ router.post('/', auth, async (req, res) => {
     }
 
     const parentQuotationId = sourceRevisionId ? sourceDoc.parentQuotation : sourceDoc._id;
+    // If creating from a revision, block if a child revision already exists
+    if (sourceRevisionId) {
+      const childCount = await Revision.countDocuments({ parentRevision: sourceRevisionId });
+      if (childCount > 0) {
+        return res.status(400).json({ message: 'A child revision already exists for this revision.' });
+      }
+    }
     const existingCount = await Revision.countDocuments({ parentQuotation: parentQuotationId });
     const revisionNumber = existingCount + 1;
     if (sourceQuotationId && existingCount > 0) {

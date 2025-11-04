@@ -7,6 +7,7 @@ import Dashboard from './components/Dashboard'
 import LeadDetail from './components/LeadDetail'
 import QuotationDetail from './components/QuotationDetail'
 import RevisionDetail from './components/RevisionDetail'
+import ProjectDetail from './components/ProjectDetail'
 import { initTheme, setTheme } from './utils/theme'
 
 function Login() {
@@ -225,6 +226,11 @@ function App() {
         <Route path="/revision-detail" element={
           <ProtectedRoute>
             <RevisionDetail />
+          </ProtectedRoute>
+        } />
+        <Route path="/project-detail" element={
+          <ProtectedRoute>
+            <ProjectDetail />
           </ProtectedRoute>
         } />
       </Routes>

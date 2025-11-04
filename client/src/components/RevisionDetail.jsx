@@ -380,6 +380,19 @@ function RevisionDetail() {
           <span className="ld-subtitle">Parent Offer Ref: {revision.parentQuotation?.offerReference || 'N/A'}</span>
         </div>
         <div className="ld-sticky-actions">
+          <button className="link-btn" onClick={async () => {
+            try {
+              const token = localStorage.getItem('token')
+              const res = await fetch(`http://localhost:5000/api/projects/by-revision/${revision._id}`, { headers: { Authorization: `Bearer ${token}` } })
+              if (res.ok) {
+                const pj = await res.json()
+                try { localStorage.setItem('projectsFocusId', pj._id) } catch {}
+                window.location.href = '/projects'
+              } else {
+                setNotify({ open: true, title: 'No Project', message: 'No project exists for this revision.' })
+              }
+            } catch { setNotify({ open: true, title: 'Open Project Failed', message: 'We could not open the linked project.' }) }
+          }}>View Project</button>
           <button className="save-btn" onClick={exportPDF}>Export</button>
           {(currentUser?.roles?.includes('estimation_engineer') || revision?.createdBy?._id === currentUser?.id) && (
             <button className="assign-btn" onClick={() => setEditModal({ open: true, form: {

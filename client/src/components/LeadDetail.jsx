@@ -343,6 +343,9 @@ ${visit.actionItems ? 'Recommended follow‑up: ' + visit.actionItems : 'Continu
               Submit for Approval
             </button>
           )}
+          {lead.projectId && (
+            <button className="link-btn" onClick={() => { try { localStorage.setItem('projectsFocusId', lead.projectId) } catch {}; window.location.href = '/projects' }}>View Project</button>
+          )}
           {lead.edits?.length > 0 && (
             <button className="link-btn" onClick={() => setShowLeadHistory(!showLeadHistory)}>
               {showLeadHistory ? 'Hide Lead Edit History' : 'View Lead Edit History'}

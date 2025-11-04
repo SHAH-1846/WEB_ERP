@@ -537,6 +537,22 @@ function QuotationDetail() {
             ) : null
           ) : null}
           <button className="save-btn" onClick={() => exportPDF(quotation)}>Export</button>
+          <button className="link-btn" onClick={async () => {
+            try {
+              const token = localStorage.getItem('token')
+              // find latest approved revision for this quotation
+              const revRes = await fetch(`http://localhost:5000/api/revisions?parentQuotation=${quotation._id}`, { headers: { Authorization: `Bearer ${token}` } })
+              const revs = await revRes.json()
+              const approved = (Array.isArray(revs) ? revs : []).filter(r => r.managementApproval?.status === 'approved')
+              const latest = approved.slice().sort((a,b) => (b.revisionNumber||0)-(a.revisionNumber||0))[0]
+              if (!latest) { setNotify({ open: true, title: 'No Project', message: 'No approved revision found for project linking.' }); return }
+              const pjRes = await fetch(`http://localhost:5000/api/projects/by-revision/${latest._id}`, { headers: { Authorization: `Bearer ${token}` } })
+              if (!pjRes.ok) { setNotify({ open: true, title: 'No Project', message: 'No project exists for the latest approved revision.' }); return }
+              const pj = await pjRes.json()
+              try { localStorage.setItem('projectsFocusId', pj._id) } catch {}
+              window.location.href = '/projects'
+            } catch { setNotify({ open: true, title: 'Open Project Failed', message: 'We could not open the linked project.' }) }
+          }}>View Project</button>
           {approvalStatus === 'approved' && !hasRevisions && (
             <button className="assign-btn" onClick={() => setRevisionModal({ open: true, form: {
               companyInfo: quotation.companyInfo || {},
