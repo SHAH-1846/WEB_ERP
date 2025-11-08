@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import axios from 'axios'
+import { api } from '../lib/api'
 import './UserManagement.css'
 
 // Will be fetched from server
@@ -43,10 +43,7 @@ function UserManagement() {
   }, [])
   const fetchRoles = async () => {
     try {
-      const token = localStorage.getItem('token')
-      const response = await axios.get('http://localhost:5000/api/roles', {
-        headers: { Authorization: `Bearer ${token}` }
-      })
+      const response = await api.get('/api/roles')
       setAllRoles(response.data)
     } catch (error) {
       // keep fallback
@@ -56,10 +53,7 @@ function UserManagement() {
 
   const fetchUsers = async () => {
     try {
-      const token = localStorage.getItem('token')
-      const response = await axios.get('http://localhost:5000/api/users', {
-        headers: { Authorization: `Bearer ${token}` }
-      })
+      const response = await api.get('/api/users')
       setUsers(response.data)
     } catch (error) {
       console.error('Error fetching users:', error)
@@ -81,13 +75,9 @@ function UserManagement() {
         roles: formData.roles
       }
       if (editingUser) {
-        await axios.put(`http://localhost:5000/api/users/${editingUser._id}`, payload, {
-          headers: { Authorization: `Bearer ${token}` }
-        })
+        await api.put(`/api/users/${editingUser._id}`, payload)
       } else {
-        await axios.post('http://localhost:5000/api/users', payload, {
-          headers: { Authorization: `Bearer ${token}` }
-        })
+        await api.post('/api/users', payload)
       }
       
       fetchUsers()
@@ -112,10 +102,7 @@ function UserManagement() {
     if (!confirm('Are you sure you want to delete this user?')) return
     
     try {
-      const token = localStorage.getItem('token')
-      await axios.delete(`http://localhost:5000/api/users/${userId}`, {
-        headers: { Authorization: `Bearer ${token}` }
-      })
+      await api.delete(`/api/users/${userId}`)
       fetchUsers()
     } catch (error) {
       setNotify({ open: true, title: 'Delete Failed', message: 'We could not delete the user. Please try again.' })

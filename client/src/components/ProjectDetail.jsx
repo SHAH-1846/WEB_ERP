@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import axios from 'axios'
+import { api } from '../lib/api'
 import './LeadManagement.css'
 
 function ProjectDetail() {
@@ -37,27 +37,26 @@ function ProjectDetail() {
   useEffect(() => {
     ;(async () => {
       try {
-        const token = localStorage.getItem('token')
         const focus = localStorage.getItem('projectsFocusId') || localStorage.getItem('projectId')
         if (!focus) return
-        const res = await axios.get(`http://localhost:5000/api/projects/${focus}`, { headers: { Authorization: `Bearer ${token}` } })
+        const res = await api.get(`/api/projects/${focus}`)
         const pj = res.data
         setProject(pj)
         if (pj.leadId?._id) {
-          const resLead = await axios.get(`http://localhost:5000/api/leads/${pj.leadId._id}`, { headers: { Authorization: `Bearer ${token}` } })
+          const resLead = await api.get(`/api/leads/${pj.leadId._id}`)
           setLead(resLead.data)
         }
         if (pj.sourceQuotation?._id) {
-          const resQ = await axios.get(`http://localhost:5000/api/quotations/${pj.sourceQuotation._id}`, { headers: { Authorization: `Bearer ${token}` } })
+          const resQ = await api.get(`/api/quotations/${pj.sourceQuotation._id}`)
           setQuotation(resQ.data)
         }
         if (pj.sourceRevision?.parentQuotation) {
-          const resR = await axios.get(`http://localhost:5000/api/revisions?parentQuotation=${pj.sourceRevision.parentQuotation}`, { headers: { Authorization: `Bearer ${token}` } })
+          const resR = await api.get(`/api/revisions?parentQuotation=${pj.sourceRevision.parentQuotation}`)
           setRevisions(Array.isArray(resR.data) ? resR.data : [])
         }
         // Preload project engineers for name mapping and profile view
         try {
-          const resEng = await axios.get('http://localhost:5000/api/projects/project-engineers', { headers: { Authorization: `Bearer ${token}` } })
+          const resEng = await api.get('/api/projects/project-engineers')
           setProjectEngineers(Array.isArray(resEng.data) ? resEng.data : [])
         } catch {}
       } catch (e) {}
@@ -72,7 +71,7 @@ function ProjectDetail() {
       // Fetch site visits
       let siteVisits = []
       try {
-        const resVisits = await axios.get(`http://localhost:5000/api/site-visits/project/${project._id}`, { headers: { Authorization: `Bearer ${token}` } })
+        const resVisits = await api.get(`/api/site-visits/project/${project._id}`)
         siteVisits = Array.isArray(resVisits.data) ? resVisits.data : []
       } catch {}
 
@@ -547,7 +546,7 @@ function ProjectDetail() {
           <button className="assign-btn" onClick={async () => {
             try {
               const token = localStorage.getItem('token')
-              const resEng = await axios.get('http://localhost:5000/api/projects/project-engineers', { headers: { Authorization: `Bearer ${token}` } })
+              const resEng = await api.get('/api/projects/project-engineers')
               setProjectEngineers(Array.isArray(resEng.data) ? resEng.data : [])
             } catch {}
             setEditModal({ open: true, form: { name: project.name || '', locationDetails: project.locationDetails || '', workingHours: project.workingHours || '', manpowerCount: project.manpowerCount || '', status: project.status || 'active', assignedProjectEngineer: project.assignedProjectEngineer?._id || '' } })
@@ -765,8 +764,8 @@ function ProjectDetail() {
                 <button type="button" className="save-btn" onClick={async () => {
                   try {
                     const token = localStorage.getItem('token')
-                    await axios.put(`http://localhost:5000/api/projects/${project._id}`, editModal.form, { headers: { Authorization: `Bearer ${token}` } })
-                    const res = await axios.get(`http://localhost:5000/api/projects/${project._id}`, { headers: { Authorization: `Bearer ${token}` } })
+                    await api.put(`/api/projects/${project._id}`, editModal.form)
+                    const res = await api.get(`/api/projects/${project._id}`)
                     setProject(res.data)
                     setEditModal({ open: false, form: { name: '', locationDetails: '', workingHours: '', manpowerCount: '', status: 'active' } })
                     setNotify({ open: true, title: 'Saved', message: 'Project updated successfully.' })

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import './LeadManagement.css'
 import './LeadDetail.css'
 import { setTheme } from '../utils/theme'
+import { apiFetch } from '../lib/api'
 import logo from '../assets/logo/WBES_Logo.png'
 
 function LeadDetail() {
@@ -194,14 +195,13 @@ ${visit.actionItems ? 'Recommended follow‑up: ' + visit.actionItems : 'Continu
         }
         let id = localStorage.getItem('leadId') || storedLead?._id
         if (id) {
-          const token = localStorage.getItem('token')
-          const leadRes = await fetch(`http://localhost:5000/api/leads/${id}`, { headers: { Authorization: `Bearer ${token}` }})
+          const leadRes = await apiFetch(`/api/leads/${id}`)
           const leadData = await leadRes.json()
-          const visitsRes = await fetch(`http://localhost:5000/api/leads/${id}/site-visits`, { headers: { Authorization: `Bearer ${token}` }})
+          const visitsRes = await apiFetch(`/api/leads/${id}/site-visits`)
           const visitsData = await visitsRes.json()
           setLead({ ...leadData, siteVisits: visitsData })
           try {
-            const qRes = await fetch('http://localhost:5000/api/quotations', { headers: { Authorization: `Bearer ${token}` }})
+            const qRes = await apiFetch('/api/quotations')
             const allQ = await qRes.json()
             const list = Array.isArray(allQ) ? allQ.filter(q => {
               const qLeadId = typeof q.lead === 'object' ? q.lead?._id : q.lead
@@ -280,19 +280,15 @@ ${visit.actionItems ? 'Recommended follow‑up: ' + visit.actionItems : 'Continu
               onClick={async () => {
                 if (!confirm('Delete this lead?')) return
                 try {
-                  const token = localStorage.getItem('token')
                   // Ensure no site visits
-                  const resVisits = await fetch(`http://localhost:5000/api/leads/${lead._id}/site-visits`, {
-                    headers: { Authorization: `Bearer ${token}` }
-                  })
+                  const resVisits = await apiFetch(`/api/leads/${lead._id}/site-visits`)
                   const visits = await resVisits.json()
                   if (Array.isArray(visits) && visits.length > 0) {
                     setNotify({ open: true, title: 'Delete Blocked', message: 'Cannot delete lead with existing site visits.' })
                     return
                   }
-                  const res = await fetch(`http://localhost:5000/api/leads/${lead._id}`, {
-                    method: 'DELETE',
-                    headers: { Authorization: `Bearer ${token}` }
+                  const res = await apiFetch(`/api/leads/${lead._id}`, {
+                    method: 'DELETE'
                   })
                   if (!res.ok) {
                     const err = await res.json().catch(() => ({}))
@@ -313,20 +309,16 @@ ${visit.actionItems ? 'Recommended follow‑up: ' + visit.actionItems : 'Continu
               className="save-btn"
               onClick={async () => {
                 try {
-                  const token = localStorage.getItem('token')
                   // If estimation engineer, ensure at least one site visit exists
-                  const resVisits = await fetch(`http://localhost:5000/api/leads/${lead._id}/site-visits`, {
-                    headers: { Authorization: `Bearer ${token}` }
-                  })
+                  const resVisits = await apiFetch(`/api/leads/${lead._id}/site-visits`)
                   const visits = await resVisits.json()
                   if (!Array.isArray(visits) || visits.length === 0) {
                     setNotify({ open: true, title: 'Add Site Visit', message: 'Please add a site visit before submitting for approval.' })
                     return
                   }
 
-                  const res = await fetch(`http://localhost:5000/api/leads/${lead._id}/submit`, {
-                    method: 'PATCH',
-                    headers: { Authorization: `Bearer ${token}` }
+                  const res = await apiFetch(`/api/leads/${lead._id}/submit`, {
+                    method: 'PATCH'
                   })
                   if (!res.ok) {
                     const err = await res.json().catch(() => ({}))
@@ -612,13 +604,8 @@ ${visit.actionItems ? 'Recommended follow‑up: ' + visit.actionItems : 'Continu
               onSubmit={async (e) => {
                 e.preventDefault()
                 try {
-                  const token = localStorage.getItem('token')
-                  const res = await fetch(`http://localhost:5000/api/leads/${lead._id}`, {
+                  const res = await apiFetch(`/api/leads/${lead._id}`, {
                     method: 'PUT',
-                    headers: {
-                      'Content-Type': 'application/json',
-                      Authorization: `Bearer ${token}`
-                    },
                     body: JSON.stringify(leadEditData)
                   })
                   if (!res.ok) {
@@ -678,13 +665,8 @@ ${visit.actionItems ? 'Recommended follow‑up: ' + visit.actionItems : 'Continu
               onSubmit={async (e) => {
                 e.preventDefault()
                 try {
-                  const token = localStorage.getItem('token')
-                  const res = await fetch(`http://localhost:5000/api/leads/${lead._id}/site-visits/${editVisit._id}` , {
+                  const res = await apiFetch(`/api/leads/${lead._id}/site-visits/${editVisit._id}`, {
                     method: 'PUT',
-                    headers: {
-                      'Content-Type': 'application/json',
-                      Authorization: `Bearer ${token}`
-                    },
                     body: JSON.stringify(visitEditData)
                   })
                   if (!res.ok) throw new Error('Failed')
@@ -760,13 +742,8 @@ ${visit.actionItems ? 'Recommended follow‑up: ' + visit.actionItems : 'Continu
               onSubmit={async (e) => {
                 e.preventDefault()
                 try {
-                  const token = localStorage.getItem('token')
-                  const res = await fetch(`http://localhost:5000/api/leads/${lead._id}/site-visits`, {
+                  const res = await apiFetch(`/api/leads/${lead._id}/site-visits`, {
                     method: 'POST',
-                    headers: {
-                      'Content-Type': 'application/json',
-                      Authorization: `Bearer ${token}`
-                    },
                     body: JSON.stringify(newVisitData)
                   })
                   if (!res.ok) {
@@ -774,7 +751,7 @@ ${visit.actionItems ? 'Recommended follow‑up: ' + visit.actionItems : 'Continu
                     throw new Error(err.message || 'Error creating site visit')
                   }
                   // Refresh visits list to include createdBy populated
-                  const visitsRes = await fetch(`http://localhost:5000/api/leads/${lead._id}/site-visits`, { headers: { Authorization: `Bearer ${token}` }})
+                  const visitsRes = await apiFetch(`/api/leads/${lead._id}/site-visits`)
                   const visits = await visitsRes.json()
                   setLead(prev => ({ ...prev, siteVisits: visits }))
                   setNewVisitOpen(false)

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import axios from 'axios'
+import { api } from '../lib/api'
 import './LeadManagement.css'
 import logo from '../assets/logo/WBES_Logo.png'
 
@@ -64,19 +64,17 @@ function QuotationManagement() {
 
   const fetchLeads = async () => {
     try {
-      const token = localStorage.getItem('token')
-      const res = await axios.get('http://localhost:5000/api/leads', { headers: { Authorization: `Bearer ${token}` } })
+      const res = await api.get('/api/leads')
       setLeads(res.data)
     } catch {}
   }
 
   const fetchQuotations = async () => {
     try {
-      const token = localStorage.getItem('token')
-      const res = await axios.get('http://localhost:5000/api/quotations', { headers: { Authorization: `Bearer ${token}` } })
+      const res = await api.get('/api/quotations')
       setQuotations(res.data)
       try {
-        const revRes = await axios.get('http://localhost:5000/api/revisions', { headers: { Authorization: `Bearer ${token}` } })
+        const revRes = await api.get('/api/revisions')
         const map = {}
         ;(revRes.data || []).forEach(r => { map[r.parentQuotation] = true })
         setHasRevisionFor(map)
@@ -146,7 +144,6 @@ function QuotationManagement() {
   const handleSave = async (e) => {
     e.preventDefault()
     try {
-      const token = localStorage.getItem('token')
       const payload = { ...form }
       // ensure totals
       const totals = recalcTotals(payload.priceSchedule.items, payload.priceSchedule.taxDetails.vatRate)
@@ -154,9 +151,9 @@ function QuotationManagement() {
       payload.priceSchedule.taxDetails.vatAmount = totals.vatAmount
       payload.priceSchedule.grandTotal = totals.grandTotal
       if (editing) {
-        await axios.put(`http://localhost:5000/api/quotations/${editing._id}`, payload, { headers: { Authorization: `Bearer ${token}` } })
+        await api.put(`/api/quotations/${editing._id}`, payload)
       } else {
-        await axios.post('http://localhost:5000/api/quotations', payload, { headers: { Authorization: `Bearer ${token}` } })
+        await api.post('/api/quotations', payload)
       }
       await fetchQuotations()
       setShowModal(false)
@@ -167,8 +164,7 @@ function QuotationManagement() {
 
   const approveQuotation = async (q, status, note) => {
     try {
-      const token = localStorage.getItem('token')
-      await axios.patch(`http://localhost:5000/api/quotations/${q._id}/approve`, { status, note }, { headers: { Authorization: `Bearer ${token}` } })
+      await api.patch(`/api/quotations/${q._id}/approve`, { status, note })
       await fetchQuotations()
     } catch (e) {
       setNotify({ open: true, title: 'Approval Failed', message: e.response?.data?.message || 'We could not update approval. Please try again.' })
@@ -177,8 +173,7 @@ function QuotationManagement() {
 
   const sendForApproval = async (q) => {
     try {
-      const token = localStorage.getItem('token')
-      await axios.patch(`http://localhost:5000/api/quotations/${q._id}/approve`, { status: 'pending' }, { headers: { Authorization: `Bearer ${token}` } })
+      await api.patch(`/api/quotations/${q._id}/approve`, { status: 'pending' })
       await fetchQuotations()
       setNotify({ open: true, title: 'Request Sent', message: 'Approval request has been sent successfully.' })
     } catch (e) {
@@ -197,7 +192,7 @@ function QuotationManagement() {
         if (JSON.stringify(original?.[f] ?? null) !== JSON.stringify(payload?.[f] ?? null)) { changed = true; break }
       }
       if (!changed) { setNotify({ open: true, title: 'No Changes', message: 'No changes detected. Please modify data before creating a revision.' }); return }
-      await axios.post('http://localhost:5000/api/revisions', { sourceQuotationId: q._id, data: payload }, { headers: { Authorization: `Bearer ${token}` } })
+      await api.post('/api/revisions', { sourceQuotationId: q._id, data: payload })
       setNotify({ open: true, title: 'Revision Created', message: 'The revision was created successfully.' })
       setRevisionModal({ open: false, quote: null, form: null })
       setHasRevisionFor({ ...hasRevisionFor, [q._id]: true })
@@ -217,12 +212,11 @@ function QuotationManagement() {
       let leadFull = q.lead || null
       let siteVisits = []
       try {
-        const token = localStorage.getItem('token')
         const leadId = typeof q.lead === 'object' ? q.lead?._id : q.lead
         if (leadId) {
-          const resLead = await axios.get(`http://localhost:5000/api/leads/${leadId}`, { headers: { Authorization: `Bearer ${token}` } })
+          const resLead = await api.get(`/api/leads/${leadId}`)
           leadFull = resLead.data
-          const resVisits = await axios.get(`http://localhost:5000/api/leads/${leadId}/site-visits`, { headers: { Authorization: `Bearer ${token}` } })
+          const resVisits = await api.get(`/api/leads/${leadId}/site-visits`)
           siteVisits = Array.isArray(resVisits.data) ? resVisits.data : []
         }
       } catch {}
@@ -716,9 +710,8 @@ function QuotationManagement() {
               {q.lead?._id && (
                 <button className="link-btn" onClick={async () => {
                   try {
-                    const token = localStorage.getItem('token')
-                    const res = await axios.get(`http://localhost:5000/api/leads/${q.lead._id}`, { headers: { Authorization: `Bearer ${token}` } })
-                    const visitsRes = await axios.get(`http://localhost:5000/api/leads/${q.lead._id}/site-visits`, { headers: { Authorization: `Bearer ${token}` } })
+                    const res = await api.get(`/api/leads/${q.lead._id}`)
+                    const visitsRes = await api.get(`/api/leads/${q.lead._id}/site-visits`)
                     const detail = { ...res.data, siteVisits: visitsRes.data }
                     localStorage.setItem('leadDetail', JSON.stringify(detail))
                     localStorage.setItem('leadId', q.lead._id)
