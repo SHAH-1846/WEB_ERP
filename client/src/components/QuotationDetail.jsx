@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { apiFetch } from '../lib/api'
 import './LeadManagement.css'
 import './LeadDetail.css'
 import logo from '../assets/logo/WBES_Logo.png'
@@ -341,12 +342,11 @@ function QuotationDetail() {
   const approveQuotation = async (status, note) => {
     try {
       const token = localStorage.getItem('token')
-      await fetch(`http://localhost:5000/api/quotations/${quotation._id}/approve`, {
+      await apiFetch(`/api/quotations/${quotation._id}/approve`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ status, note })
       })
-      const res = await fetch(`http://localhost:5000/api/quotations/${quotation._id}`, { headers: { Authorization: `Bearer ${token}` } })
+      const res = await apiFetch(`/api/quotations/${quotation._id}`)
       const updated = await res.json()
       setQuotation(updated)
       setApprovalModal({ open: false, action: null, note: '' })
@@ -358,12 +358,11 @@ function QuotationDetail() {
   const sendForApproval = async () => {
     try {
       const token = localStorage.getItem('token')
-      await fetch(`http://localhost:5000/api/quotations/${quotation._id}/approve`, {
+      await apiFetch(`/api/quotations/${quotation._id}/approve`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ status: 'pending' })
       })
-      const res = await fetch(`http://localhost:5000/api/quotations/${quotation._id}`, { headers: { Authorization: `Bearer ${token}` } })
+      const res = await apiFetch(`/api/quotations/${quotation._id}`)
       const updated = await res.json()
       setQuotation(updated)
       setNotify({ open: true, title: 'Request Sent', message: 'Approval request has been sent successfully.' })
@@ -383,9 +382,8 @@ function QuotationDetail() {
         if (JSON.stringify(original?.[f] ?? null) !== JSON.stringify(payload?.[f] ?? null)) { changed = true; break }
       }
       if (!changed) { setNotify({ open: true, title: 'No Changes', message: 'No changes detected. Please modify data before creating a revision.' }); return }
-      await fetch('http://localhost:5000/api/revisions', {
+      await apiFetch('/api/revisions', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ sourceQuotationId: quotation._id, data: payload })
       })
       setNotify({ open: true, title: 'Revision Created', message: 'The revision was created successfully.' })
@@ -471,19 +469,19 @@ function QuotationDetail() {
         const stored = localStorage.getItem('quotationDetail')
         if (stored) initial = JSON.parse(stored)
         if (qid) {
-          const res = await fetch(`http://localhost:5000/api/quotations/${qid}`, { headers: { Authorization: `Bearer ${token}` } })
+          const res = await apiFetch(`/api/quotations/${qid}`)
           const q = await res.json()
           setQuotation(q)
           const leadId = typeof q.lead === 'object' ? q.lead?._id : q.lead
           if (leadId) {
-            const resLead = await fetch(`http://localhost:5000/api/leads/${leadId}`, { headers: { Authorization: `Bearer ${token}` } })
+            const resLead = await apiFetch(`/api/leads/${leadId}`)
             const leadData = await resLead.json()
-            const visitsRes = await fetch(`http://localhost:5000/api/leads/${leadId}/site-visits`, { headers: { Authorization: `Bearer ${token}` } })
+            const visitsRes = await apiFetch(`/api/leads/${leadId}/site-visits`)
             const visits = await visitsRes.json()
             setLead({ ...leadData, siteVisits: visits })
           }
           try {
-            const revRes = await fetch(`http://localhost:5000/api/revisions?parentQuotation=${qid}`, { headers: { Authorization: `Bearer ${token}` } })
+            const revRes = await apiFetch(`/api/revisions?parentQuotation=${qid}`)
             const revs = await revRes.json()
             setHasRevisions(Array.isArray(revs) && revs.length > 0)
           } catch {}
@@ -491,14 +489,14 @@ function QuotationDetail() {
           setQuotation(initial)
           const leadId = typeof initial.lead === 'object' ? initial.lead?._id : initial.lead
           if (leadId) {
-            const resLead = await fetch(`http://localhost:5000/api/leads/${leadId}`, { headers: { Authorization: `Bearer ${token}` } })
+            const resLead = await apiFetch(`/api/leads/${leadId}`)
             const leadData = await resLead.json()
-            const visitsRes = await fetch(`http://localhost:5000/api/leads/${leadId}/site-visits`, { headers: { Authorization: `Bearer ${token}` } })
+            const visitsRes = await apiFetch(`/api/leads/${leadId}/site-visits`)
             const visits = await visitsRes.json()
             setLead({ ...leadData, siteVisits: visits })
           }
           try {
-            const revRes = await fetch(`http://localhost:5000/api/revisions?parentQuotation=${initial._id || localStorage.getItem('quotationId')}`, { headers: { Authorization: `Bearer ${token}` } })
+            const revRes = await apiFetch(`/api/revisions?parentQuotation=${initial._id || localStorage.getItem('quotationId')}`)
             const revs = await revRes.json()
             setHasRevisions(Array.isArray(revs) && revs.length > 0)
           } catch {}
@@ -541,12 +539,12 @@ function QuotationDetail() {
             try {
               const token = localStorage.getItem('token')
               // find latest approved revision for this quotation
-              const revRes = await fetch(`http://localhost:5000/api/revisions?parentQuotation=${quotation._id}`, { headers: { Authorization: `Bearer ${token}` } })
+              const revRes = await apiFetch(`/api/revisions?parentQuotation=${quotation._id}`)
               const revs = await revRes.json()
               const approved = (Array.isArray(revs) ? revs : []).filter(r => r.managementApproval?.status === 'approved')
               const latest = approved.slice().sort((a,b) => (b.revisionNumber||0)-(a.revisionNumber||0))[0]
               if (!latest) { setNotify({ open: true, title: 'No Project', message: 'No approved revision found for project linking.' }); return }
-              const pjRes = await fetch(`http://localhost:5000/api/projects/by-revision/${latest._id}`, { headers: { Authorization: `Bearer ${token}` } })
+              const pjRes = await apiFetch(`/api/projects/by-revision/${latest._id}`)
               if (!pjRes.ok) { setNotify({ open: true, title: 'No Project', message: 'No project exists for the latest approved revision.' }); return }
               const pj = await pjRes.json()
               try { localStorage.setItem('projectsFocusId', pj._id) } catch {}
@@ -579,9 +577,9 @@ function QuotationDetail() {
             <button className="link-btn" onClick={async () => {
               try {
                 const token = localStorage.getItem('token')
-                const res = await fetch(`http://localhost:5000/api/leads/${quotation.lead._id}`, { headers: { Authorization: `Bearer ${token}` } })
+                const res = await apiFetch(`/api/leads/${quotation.lead._id}`)
                 const leadData = await res.json()
-                const visitsRes = await fetch(`http://localhost:5000/api/leads/${quotation.lead._id}/site-visits`, { headers: { Authorization: `Bearer ${token}` } })
+                const visitsRes = await apiFetch(`/api/leads/${quotation.lead._id}/site-visits`)
                 const visits = await visitsRes.json()
                 localStorage.setItem('leadDetail', JSON.stringify({ ...leadData, siteVisits: visits }))
                 localStorage.setItem('leadId', quotation.lead._id)

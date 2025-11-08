@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom'
-import axios from 'axios'
+import { api } from './lib/api'
 import './App.css'
 import logo from './assets/logo/WBES_Logo.png'
 import Dashboard from './components/Dashboard'
@@ -43,7 +43,7 @@ function Login() {
     setError('')
     
     try {
-      const response = await axios.post('http://localhost:5000/api/auth/login', {
+      const response = await api.post('/api/auth/login', {
         email,
         password
       })

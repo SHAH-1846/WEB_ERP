@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import axios from 'axios'
+import { api } from '../lib/api'
 import './LeadManagement.css'
 
 function LeadManagement() {
@@ -41,10 +41,7 @@ function LeadManagement() {
 
   const fetchLeads = async () => {
     try {
-      const token = localStorage.getItem('token')
-      const response = await axios.get('http://localhost:5000/api/leads', {
-        headers: { Authorization: `Bearer ${token}` }
-      })
+      const response = await api.get('/api/leads')
       setLeads(response.data)
     } catch (error) {
       console.error('Error fetching leads:', error)
@@ -54,15 +51,10 @@ function LeadManagement() {
   const handleSubmit = async (e) => {
     e.preventDefault()
     try {
-      const token = localStorage.getItem('token')
       if (editingLead) {
-        await axios.put(`http://localhost:5000/api/leads/${editingLead._id}`, formData, {
-          headers: { Authorization: `Bearer ${token}` }
-        })
+        await api.put(`/api/leads/${editingLead._id}`, formData)
       } else {
-        await axios.post('http://localhost:5000/api/leads', formData, {
-          headers: { Authorization: `Bearer ${token}` }
-        })
+        await api.post('/api/leads', formData)
       }
       fetchLeads()
       setShowModal(false)
@@ -77,10 +69,7 @@ function LeadManagement() {
 
   const convertToProject = async (leadId) => {
     try {
-      const token = localStorage.getItem('token')
-      await axios.post(`http://localhost:5000/api/leads/${leadId}/convert`, {}, {
-        headers: { Authorization: `Bearer ${token}` }
-      })
+      await api.post(`/api/leads/${leadId}/convert`, {})
       fetchLeads()
       setNotify({ open: true, title: 'Converted', message: 'Lead converted to project successfully.' })
     } catch (error) {
@@ -104,10 +93,7 @@ function LeadManagement() {
   const handleDeleteLead = async (leadId) => {
     if (!confirm('Delete this lead?')) return
     try {
-      const token = localStorage.getItem('token')
-      await axios.delete(`http://localhost:5000/api/leads/${leadId}`, {
-        headers: { Authorization: `Bearer ${token}` }
-      })
+      await api.delete(`/api/leads/${leadId}`)
       fetchLeads()
     } catch (error) {
       setNotify({ open: true, title: 'Delete Failed', message: error.response?.data?.message || 'We could not delete this lead. Please try again.' })
@@ -208,9 +194,9 @@ function LeadManagement() {
                   // open detail view in a new window for now
                   const token = localStorage.getItem('token')
                   try {
-                    const res = await axios.get(`http://localhost:5000/api/leads/${lead._id}`, { headers: { Authorization: `Bearer ${token}` } })
+                    const res = await api.get(`/api/leads/${lead._id}`)
                     const data = res.data
-                    const visitsRes = await axios.get(`http://localhost:5000/api/leads/${lead._id}/site-visits`, { headers: { Authorization: `Bearer ${token}` } })
+                    const visitsRes = await api.get(`/api/leads/${lead._id}/site-visits`)
                     const visits = visitsRes.data
                     const detail = { ...data, siteVisits: visits }
                     localStorage.setItem('leadDetail', JSON.stringify(detail))
@@ -227,8 +213,7 @@ function LeadManagement() {
                 className="link-btn"
                 onClick={async () => {
                   try {
-                    const token = localStorage.getItem('token')
-                    const qRes = await axios.get('http://localhost:5000/api/quotations', { headers: { Authorization: `Bearer ${token}` } })
+                    const qRes = await api.get('/api/quotations')
                     const allQ = Array.isArray(qRes.data) ? qRes.data : []
                     const list = allQ.filter(q => {
                       const qLeadId = typeof q.lead === 'object' ? q.lead?._id : q.lead
@@ -369,10 +354,7 @@ function LeadManagement() {
             <form onSubmit={async (e) => {
               e.preventDefault()
               try {
-                const token = localStorage.getItem('token')
-                await axios.post(`http://localhost:5000/api/leads/${editingLead._id}/site-visits`, visitData, {
-                  headers: { Authorization: `Bearer ${token}` }
-                })
+                await api.post(`/api/leads/${editingLead._id}/site-visits`, visitData)
                 setShowVisitModal(false)
                 setVisitData({ visitAt: '', siteLocation: '', engineerName: '', workProgressSummary: '', safetyObservations: '', qualityMaterialCheck: '', issuesFound: '', actionItems: '', weatherConditions: '', description: '' })
                 setNotify({ open: true, title: 'Saved', message: 'Site visit saved successfully.' })

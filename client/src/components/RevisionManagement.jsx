@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import axios from 'axios'
+import { api } from '../lib/api'
 import './LeadManagement.css'
 import logo from '../assets/logo/WBES_Logo.png'
 
@@ -33,7 +33,7 @@ function RevisionManagement() {
   const fetchRevisions = async () => {
     try {
       const token = localStorage.getItem('token')
-      const res = await axios.get('http://localhost:5000/api/revisions', { headers: { Authorization: `Bearer ${token}` } })
+      const res = await api.get('/api/revisions')
       setRevisions(res.data)
     } catch {}
   }
@@ -41,7 +41,7 @@ function RevisionManagement() {
   const approveRevision = async (rev, status, note) => {
     try {
       const token = localStorage.getItem('token')
-      await axios.patch(`http://localhost:5000/api/revisions/${rev._id}/approve`, { status, note }, { headers: { Authorization: `Bearer ${token}` } })
+      await api.patch(`/api/revisions/${rev._id}/approve`, { status, note })
       await fetchRevisions()
     } catch (e) {
       setNotify({ open: true, title: 'Approval Failed', message: e.response?.data?.message || 'We could not update approval. Please try again.' })
@@ -51,7 +51,7 @@ function RevisionManagement() {
   const sendForApproval = async (rev) => {
     try {
       const token = localStorage.getItem('token')
-      await axios.patch(`http://localhost:5000/api/revisions/${rev._id}/approve`, { status: 'pending' }, { headers: { Authorization: `Bearer ${token}` } })
+      await api.patch(`/api/revisions/${rev._id}/approve`, { status: 'pending' })
       await fetchRevisions()
       setNotify({ open: true, title: 'Request Sent', message: 'Approval request has been sent successfully.' })
     } catch (e) {
@@ -100,9 +100,9 @@ function RevisionManagement() {
         const token = localStorage.getItem('token')
         const leadId = typeof q.lead === 'object' ? q.lead?._id : q.lead
         if (leadId) {
-          const resLead = await axios.get(`http://localhost:5000/api/leads/${leadId}`, { headers: { Authorization: `Bearer ${token}` } })
+          const resLead = await api.get(`/api/leads/${leadId}`)
           leadFull = resLead.data
-          const resVisits = await axios.get(`http://localhost:5000/api/leads/${leadId}/site-visits`, { headers: { Authorization: `Bearer ${token}` } })
+          const resVisits = await api.get(`/api/leads/${leadId}/site-visits`)
           siteVisits = Array.isArray(resVisits.data) ? resVisits.data : []
         }
       } catch {}
@@ -451,7 +451,7 @@ function RevisionManagement() {
                                     // Block if project already exists
                                     try {
                                       const token = localStorage.getItem('token')
-                                      await axios.get(`http://localhost:5000/api/projects/by-revision/${r._id}`, { headers: { Authorization: `Bearer ${token}` } })
+                                      await api.get(`/api/projects/by-revision/${r._id}`)
                                       setNotify({ open: true, title: 'Not Allowed', message: 'A project already exists for this revision.' })
                                       return
                                     } catch {}
@@ -483,7 +483,7 @@ function RevisionManagement() {
                                       const token = localStorage.getItem('token')
                                       // Block if project already exists for this revision
                                       try {
-                                        await axios.get(`http://localhost:5000/api/projects/by-revision/${r._id}`, { headers: { Authorization: `Bearer ${token}` } })
+                                        await api.get(`/api/projects/by-revision/${r._id}`)
                                         setNotify({ open: true, title: 'Not Allowed', message: 'A project already exists for this revision.' })
                                         return
                                       } catch {}
@@ -506,7 +506,7 @@ function RevisionManagement() {
                                       // Load project engineers
                                       let engineers = []
                                       try {
-                                        const resEng = await axios.get('http://localhost:5000/api/projects/project-engineers', { headers: { Authorization: `Bearer ${token}` } })
+                                        const resEng = await api.get('/api/projects/project-engineers')
                                         engineers = Array.isArray(resEng.data) ? resEng.data : []
                                       } catch {}
 
@@ -866,10 +866,10 @@ function RevisionManagement() {
                     try {
                       const token = localStorage.getItem('token')
                       if (editModal.mode === 'create') {
-                        await axios.post(`http://localhost:5000/api/revisions`, { sourceRevisionId: editModal.revision._id, data: editModal.form }, { headers: { Authorization: `Bearer ${token}` } })
+                        await api.post(`/api/revisions`, { sourceRevisionId: editModal.revision._id, data: editModal.form })
                         setNotify({ open: true, title: 'Revision Created', message: 'New revision created successfully.' })
                       } else {
-                        await axios.put(`http://localhost:5000/api/revisions/${editModal.revision._id}`, editModal.form, { headers: { Authorization: `Bearer ${token}` } })
+                        await api.put(`/api/revisions/${editModal.revision._id}`, editModal.form)
                         setNotify({ open: true, title: 'Saved', message: 'Revision updated successfully.' })
                       }
                       await fetchRevisions()
@@ -1093,7 +1093,7 @@ function RevisionManagement() {
                     const token = localStorage.getItem('token')
                     // final guard on server side too
                     const body = { ...createProjectModal.form }
-                    await axios.post(`http://localhost:5000/api/projects/from-revision/${createProjectModal.revision._id}`, body, { headers: { Authorization: `Bearer ${token}` } })
+                    await api.post(`/api/projects/from-revision/${createProjectModal.revision._id}`, body)
                     setCreateProjectModal({ open: false, revision: null, form: { name: '', locationDetails: '', workingHours: '', manpowerCount: '', assignedProjectEngineerId: '' }, engineers: [], ack: false })
                     setNotify({ open: true, title: 'Project Created', message: 'Project created from approved revision. Redirecting to Projects...' })
                     setTimeout(() => { window.location.href = '/projects' }, 800)
@@ -1121,7 +1121,7 @@ function RevisionManagement() {
                 <button type="button" className="reject-btn" onClick={async () => {
                   try {
                     const token = localStorage.getItem('token')
-                    await axios.delete(`http://localhost:5000/api/revisions/${confirmDelete.revision._id}`, { headers: { Authorization: `Bearer ${token}` } })
+                    await api.delete(`/api/revisions/${confirmDelete.revision._id}`)
                     setConfirmDelete({ open: false, revision: null })
                     setNotify({ open: true, title: 'Revision Deleted', message: 'The revision was deleted successfully.' })
                     await fetchRevisions()
