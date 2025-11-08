@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import axios from 'axios'
+import { api, apiFetch } from '../lib/api'
 import './LeadManagement.css'
 import './LeadDetail.css'
 import logo from '../assets/logo/WBES_Logo.png'
@@ -22,7 +22,7 @@ function RevisionDetail() {
         const token = localStorage.getItem('token')
         const rid = localStorage.getItem('revisionId')
         if (!rid) return
-        const res = await fetch(`http://localhost:5000/api/revisions/${rid}`, { headers: { Authorization: `Bearer ${token}` } })
+        const res = await apiFetch(`/api/revisions/${rid}`)
         const rev = await res.json()
         setRevision(rev)
       } catch {}
@@ -72,9 +72,9 @@ function RevisionDetail() {
         const token = localStorage.getItem('token')
         const leadId = typeof revision.lead === 'object' ? revision.lead?._id : revision.lead
         if (leadId) {
-          const resLead = await axios.get(`http://localhost:5000/api/leads/${leadId}`, { headers: { Authorization: `Bearer ${token}` } })
+          const resLead = await api.get(`/api/leads/${leadId}`)
           leadFull = resLead.data
-          const resVisits = await axios.get(`http://localhost:5000/api/leads/${leadId}/site-visits`, { headers: { Authorization: `Bearer ${token}` } })
+          const resVisits = await api.get(`/api/leads/${leadId}/site-visits`)
           siteVisits = Array.isArray(resVisits.data) ? resVisits.data : []
         }
       } catch {}
@@ -328,12 +328,11 @@ function RevisionDetail() {
     try {
       if (!revision) return
       const token = localStorage.getItem('token')
-      await fetch(`http://localhost:5000/api/revisions/${revision._id}/approve`, {
+      await apiFetch(`/api/revisions/${revision._id}/approve`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ status, note })
       })
-      const res = await fetch(`http://localhost:5000/api/revisions/${revision._id}`, { headers: { Authorization: `Bearer ${token}` } })
+      const res = await apiFetch(`/api/revisions/${revision._id}`)
       const updated = await res.json()
       setRevision(updated)
       setApprovalModal({ open: false, action: null, note: '' })
@@ -346,12 +345,11 @@ function RevisionDetail() {
     try {
       if (!revision) return
       const token = localStorage.getItem('token')
-      await fetch(`http://localhost:5000/api/revisions/${revision._id}/approve`, {
+      await apiFetch(`/api/revisions/${revision._id}/approve`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ status: 'pending' })
       })
-      const res = await fetch(`http://localhost:5000/api/revisions/${revision._id}`, { headers: { Authorization: `Bearer ${token}` } })
+      const res = await apiFetch(`/api/revisions/${revision._id}`)
       const updated = await res.json()
       setRevision(updated)
       setNotify({ open: true, title: 'Request Sent', message: 'Approval request has been sent successfully.' })
@@ -383,7 +381,7 @@ function RevisionDetail() {
           <button className="link-btn" onClick={async () => {
             try {
               const token = localStorage.getItem('token')
-              const res = await fetch(`http://localhost:5000/api/projects/by-revision/${revision._id}`, { headers: { Authorization: `Bearer ${token}` } })
+              const res = await apiFetch(`/api/projects/by-revision/${revision._id}`)
               if (res.ok) {
                 const pj = await res.json()
                 try { localStorage.setItem('projectsFocusId', pj._id) } catch {}
@@ -423,9 +421,9 @@ function RevisionDetail() {
             <button className="link-btn" onClick={async () => {
               try {
                 const token = localStorage.getItem('token')
-                const res = await fetch(`http://localhost:5000/api/leads/${revision.lead._id}`, { headers: { Authorization: `Bearer ${token}` } })
+                const res = await apiFetch(`/api/leads/${revision.lead._id}`)
                 const leadData = await res.json()
-                const visitsRes = await fetch(`http://localhost:5000/api/leads/${revision.lead._id}/site-visits`, { headers: { Authorization: `Bearer ${token}` } })
+                const visitsRes = await apiFetch(`/api/leads/${revision.lead._id}/site-visits`)
                 const visits = await visitsRes.json()
                 localStorage.setItem('leadDetail', JSON.stringify({ ...leadData, siteVisits: visits }))
                 localStorage.setItem('leadId', revision.lead._id)
@@ -1012,12 +1010,11 @@ function RevisionDetail() {
                   <button type="button" className="save-btn" onClick={async () => {
                     try {
                       const token = localStorage.getItem('token')
-                      await fetch(`http://localhost:5000/api/revisions/${revision._id}`, {
+                      await apiFetch(`/api/revisions/${revision._id}`, {
                         method: 'PUT',
-                        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
                         body: JSON.stringify(editModal.form)
                       })
-                      const res = await fetch(`http://localhost:5000/api/revisions/${revision._id}`, { headers: { Authorization: `Bearer ${token}` } })
+                      const res = await apiFetch(`/api/revisions/${revision._id}`)
                       const updated = await res.json()
                       setRevision(updated)
                       setEditModal({ open: false, form: null })

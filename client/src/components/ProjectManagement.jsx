@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import axios from 'axios'
+import { api } from '../lib/api'
 import './ProjectManagement.css'
 
 function ProjectManagement() {
@@ -62,25 +62,25 @@ function ProjectManagement() {
       let allRevisions = []
       let leadFull = null
       try {
-        const resVisits = await axios.get(`http://localhost:5000/api/site-visits/project/${project._id}`, { headers: { Authorization: `Bearer ${token}` } })
+        const resVisits = await api.get(`/api/site-visits/project/${project._id}`)
         siteVisits = Array.isArray(resVisits.data) ? resVisits.data : []
       } catch {}
       try {
         const leadId = typeof project.leadId === 'object' ? project.leadId?._id : project.leadId
         if (leadId) {
-          const leadRes = await axios.get(`http://localhost:5000/api/leads/${leadId}`, { headers: { Authorization: `Bearer ${token}` } })
+          const leadRes = await api.get(`/api/leads/${leadId}`)
           leadFull = leadRes.data
         }
       } catch {}
       try {
         if (project.sourceQuotation?._id) {
-          const qRes = await axios.get(`http://localhost:5000/api/quotations/${project.sourceQuotation._id}`, { headers: { Authorization: `Bearer ${token}` } })
+          const qRes = await api.get(`/api/quotations/${project.sourceQuotation._id}`)
           quotation = qRes.data
         }
       } catch {}
       try {
         if (project.sourceRevision?.parentQuotation) {
-          const revRes = await axios.get(`http://localhost:5000/api/revisions?parentQuotation=${project.sourceRevision.parentQuotation}`, { headers: { Authorization: `Bearer ${token}` } })
+          const revRes = await api.get(`/api/revisions?parentQuotation=${project.sourceRevision.parentQuotation}`)
           allRevisions = Array.isArray(revRes.data) ? revRes.data : []
         }
       } catch {}
@@ -543,7 +543,7 @@ function ProjectManagement() {
     ;(async () => {
       try {
         const token = localStorage.getItem('token')
-        const resEng = await axios.get('http://localhost:5000/api/projects/project-engineers', { headers: { Authorization: `Bearer ${token}` } })
+        const resEng = await api.get('/api/projects/project-engineers')
         setProjectEngineers(Array.isArray(resEng.data) ? resEng.data : [])
       } catch {}
     })()
@@ -552,9 +552,7 @@ function ProjectManagement() {
   const fetchProjects = async () => {
     try {
       const token = localStorage.getItem('token')
-      const response = await axios.get('http://localhost:5000/api/projects', {
-        headers: { Authorization: `Bearer ${token}` }
-      })
+      const response = await api.get('/api/projects')
       setProjects(response.data)
     } catch (error) {
       console.error('Error fetching projects:', error)
@@ -564,9 +562,7 @@ function ProjectManagement() {
   const fetchSiteEngineers = async () => {
     try {
       const token = localStorage.getItem('token')
-      const response = await axios.get('http://localhost:5000/api/users', {
-        headers: { Authorization: `Bearer ${token}` }
-      })
+      const response = await api.get('/api/users')
       const engineers = response.data.filter(user => user.roles?.includes('site_engineer'))
       setSiteEngineers(engineers)
     } catch (error) {
@@ -578,10 +574,7 @@ function ProjectManagement() {
     e.preventDefault()
     try {
       const token = localStorage.getItem('token')
-      await axios.patch(`http://localhost:5000/api/projects/${selectedProject._id}/assign-engineer`, 
-        assignData, {
-        headers: { Authorization: `Bearer ${token}` }
-      })
+      await api.patch(`/api/projects/${selectedProject._id}/assign-engineer`, assignData)
       fetchProjects()
       setShowAssignModal(false)
       setAssignData({ siteEngineerId: '' })
@@ -594,10 +587,7 @@ function ProjectManagement() {
     e.preventDefault()
     try {
       const token = localStorage.getItem('token')
-      await axios.post(`http://localhost:5000/api/projects/${selectedProject._id}/revisions`, 
-        revisionData, {
-        headers: { Authorization: `Bearer ${token}` }
-      })
+      await api.post(`/api/projects/${selectedProject._id}/revisions`, revisionData)
       fetchProjects()
       setShowRevisionModal(false)
       setRevisionData({ type: 'price', description: '' })
@@ -609,10 +599,8 @@ function ProjectManagement() {
   const approveRevision = async (projectId, revisionId, status) => {
     try {
       const token = localStorage.getItem('token')
-      await axios.patch(`http://localhost:5000/api/projects/${projectId}/revisions/${revisionId}/approve`, {
+      await api.patch(`/api/projects/${projectId}/revisions/${revisionId}/approve`, {
         status, comments: ''
-      }, {
-        headers: { Authorization: `Bearer ${token}` }
       })
       fetchProjects()
     } catch (error) {
@@ -709,7 +697,7 @@ function ProjectManagement() {
                 ;(async () => {
                   try {
                     const token = localStorage.getItem('token')
-                    const resEng = await axios.get('http://localhost:5000/api/projects/project-engineers', { headers: { Authorization: `Bearer ${token}` } })
+                    const resEng = await api.get('/api/projects/project-engineers')
                     setProjectEngineers(Array.isArray(resEng.data) ? resEng.data : [])
                   } catch {}
                 })()
@@ -785,11 +773,9 @@ function ProjectManagement() {
                 e.preventDefault()
                 try {
                   const token = localStorage.getItem('token')
-                  await axios.post('http://localhost:5000/api/site-visits', {
+                  await api.post('/api/site-visits', {
                     projectId: selectedProject._id,
                     ...visitData
-                  }, {
-                    headers: { Authorization: `Bearer ${token}` }
                   })
                   setShowVisitModal(false)
                   setVisitData({ visitAt: '', siteLocation: '', engineerName: '', workProgressSummary: '', safetyObservations: '', qualityMaterialCheck: '', issuesFound: '', actionItems: '', weatherConditions: '', description: '' })
@@ -866,7 +852,7 @@ function ProjectManagement() {
                 <button type="button" className="reject-btn" onClick={async () => {
                   try {
                     const token = localStorage.getItem('token')
-                    await axios.delete(`http://localhost:5000/api/projects/${deleteModal.project._id}`, { headers: { Authorization: `Bearer ${token}` } })
+                    await api.delete(`/api/projects/${deleteModal.project._id}`)
                     setDeleteModal({ open: false, project: null })
                     setNotify({ open: true, title: 'Deleted', message: 'Project deleted successfully.' })
                     fetchProjects()
@@ -936,7 +922,7 @@ function ProjectManagement() {
                 <button type="button" className="save-btn" onClick={async () => {
                   try {
                     const token = localStorage.getItem('token')
-                    await axios.put(`http://localhost:5000/api/projects/${selectedProject._id}`, editProjectModal.form, { headers: { Authorization: `Bearer ${token}` } })
+                    await api.put(`/api/projects/${selectedProject._id}`, editProjectModal.form)
                     setEditProjectModal({ open: false, form: { name: '', locationDetails: '', workingHours: '', manpowerCount: '', status: 'active' } })
                     await fetchProjects()
                     setNotify({ open: true, title: 'Saved', message: 'Project updated successfully.' })
