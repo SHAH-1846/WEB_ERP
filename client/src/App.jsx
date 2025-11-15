@@ -8,6 +8,7 @@ import LeadDetail from './components/LeadDetail'
 import QuotationDetail from './components/QuotationDetail'
 import RevisionDetail from './components/RevisionDetail'
 import ProjectDetail from './components/ProjectDetail'
+import QuotationModal from './components/QuotationModal'
 import { initTheme, setTheme } from './utils/theme'
 
 function Login() {
@@ -231,6 +232,11 @@ function App() {
         <Route path="/project-detail" element={
           <ProtectedRoute>
             <ProjectDetail />
+          </ProtectedRoute>
+        } />
+        <Route path="/leads/create-quotation/:leadId" element={
+          <ProtectedRoute>
+            <QuotationModal />
           </ProtectedRoute>
         } />
       </Routes>

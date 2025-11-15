@@ -1,11 +1,12 @@
 import { useState, useEffect } from 'react'
-import { useLocation, useNavigate, NavLink } from 'react-router-dom'
+import { useLocation, useNavigate, NavLink, Routes, Route, useParams } from 'react-router-dom'
 import './Dashboard.css'
 import UserManagement from './UserManagement'
 import LeadManagement from './LeadManagement'
 import ProjectManagement from './ProjectManagement'
 import QuotationManagement from './QuotationManagement'
 import RevisionManagement from './RevisionManagement'
+import QuotationModal from './QuotationModal'
 import { initTheme, setTheme } from '../utils/theme'
 
 function Dashboard() {
@@ -19,6 +20,13 @@ function Dashboard() {
   })
   const location = useLocation()
   const navigate = useNavigate()
+  
+  // Check if we're on a modal route with background location
+  const isModalRoute = location.pathname.includes('/create-quotation/')
+  const backgroundLocation = location.state?.backgroundLocation
+  
+  // Use background location for main content when modal is open, otherwise use current location
+  const mainContentLocation = backgroundLocation || location
   const [activeTab, setActiveTab] = useState('dashboard')
   const [stats, setStats] = useState({
     totalUsers: 1247,
@@ -30,11 +38,36 @@ function Dashboard() {
   useEffect(() => {
     const userData = JSON.parse(localStorage.getItem('user'))
     setUser(userData)
-    const path = location.pathname.replace('/', '') || 'dashboard'
-    if (['dashboard','users','leads','projects','quotations','revisions'].includes(path)) {
-      setActiveTab(path)
+    
+    // When modal route is active, use backgroundLocation to determine activeTab
+    // This ensures the Leads list stays visible behind the modal
+    if (isModalRoute && backgroundLocation) {
+      const pathSegments = backgroundLocation.pathname.split('/').filter(Boolean)
+      const basePath = pathSegments[0] || 'dashboard'
+      if (['dashboard','users','leads','projects','quotations','revisions'].includes(basePath)) {
+        setActiveTab(basePath)
+      }
+    } else if (isModalRoute && !backgroundLocation) {
+      // Fallback: if modal route but no backgroundLocation, try to extract from current path
+      // This handles cases where backgroundLocation might not be set
+      if (location.pathname.includes('/leads/create-quotation/')) {
+        setActiveTab('leads')
+      } else {
+        const pathSegments = location.pathname.split('/').filter(Boolean)
+        const basePath = pathSegments[0] || 'dashboard'
+        if (['dashboard','users','leads','projects','quotations','revisions'].includes(basePath)) {
+          setActiveTab(basePath)
+        }
+      }
+    } else {
+      // Normal navigation - use current pathname
+      const pathSegments = location.pathname.split('/').filter(Boolean)
+      const basePath = pathSegments[0] || 'dashboard'
+      if (['dashboard','users','leads','projects','quotations','revisions'].includes(basePath)) {
+        setActiveTab(basePath)
+      }
     }
-  }, [location.pathname])
+  }, [location.pathname, backgroundLocation, isModalRoute])
 
   useEffect(() => {
     setTheme(isDark)
@@ -272,6 +305,13 @@ function Dashboard() {
           {activeTab === 'revisions' && <RevisionManagement />}
         </div>
       </div>
+      
+      {/* Modal Routes - render on top of main content when background location exists */}
+      {isModalRoute && (
+        <Routes location={location}>
+          <Route path="/leads/create-quotation/:leadId" element={<QuotationModal />} />
+        </Routes>
+      )}
     </div>
   )
 }

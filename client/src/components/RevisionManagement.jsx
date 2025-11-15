@@ -6,7 +6,9 @@ import logo from '../assets/logo/WBES_Logo.png'
 function RevisionManagement() {
   const [currentUser, setCurrentUser] = useState(null)
   const [revisions, setRevisions] = useState([])
+  const [quotations, setQuotations] = useState([])
   const [myOnly, setMyOnly] = useState(false)
+  const [selectedApprovedQuotationFilter, setSelectedApprovedQuotationFilter] = useState('')
   const [search, setSearch] = useState('')
   const [sortKey, setSortKey] = useState('createdAt_desc')
   const [editModal, setEditModal] = useState({ open: false, revision: null, form: null, mode: 'edit' })
@@ -16,6 +18,12 @@ function RevisionManagement() {
   const [approvalsView, setApprovalsView] = useState(null)
   const [approvalModal, setApprovalModal] = useState({ open: false, revision: null, action: null, note: '' })
   const [createProjectModal, setCreateProjectModal] = useState({ open: false, revision: null, form: { name: '', locationDetails: '', workingHours: '', manpowerCount: '', assignedProjectEngineerId: '' }, engineers: [], ack: false })
+  const [viewMode, setViewMode] = useState(() => {
+    const saved = localStorage.getItem('revisionViewMode')
+    return saved === 'table' ? 'table' : 'card' // default to 'card' if not set
+  })
+  const [currentPage, setCurrentPage] = useState(1)
+  const [itemsPerPage, setItemsPerPage] = useState(10)
 
   const defaultCompany = useMemo(() => ({
     logo,
@@ -28,13 +36,28 @@ function RevisionManagement() {
   useEffect(() => {
     setCurrentUser(JSON.parse(localStorage.getItem('user')) || null)
     void fetchRevisions()
+    void fetchQuotations()
   }, [])
+
+  // Persist view mode to localStorage whenever it changes
+  useEffect(() => {
+    localStorage.setItem('revisionViewMode', viewMode)
+  }, [viewMode])
 
   const fetchRevisions = async () => {
     try {
       const token = localStorage.getItem('token')
       const res = await api.get('/api/revisions')
       setRevisions(res.data)
+    } catch {}
+  }
+
+  const fetchQuotations = async () => {
+    try {
+      const res = await api.get('/api/quotations')
+      // Filter to only approved quotations for the filter dropdown
+      const approved = Array.isArray(res.data) ? res.data.filter(q => q.managementApproval?.status === 'approved') : []
+      setQuotations(approved)
     } catch {}
   }
 
@@ -324,16 +347,33 @@ function RevisionManagement() {
     }
   }
 
-  const filtered = revisions.filter(r => {
-    if (!search.trim()) return true
-    const term = search.toLowerCase()
-    return (
-      (r.projectTitle || '').toLowerCase().includes(term) ||
-      (r.parentQuotation?.offerReference || '').toLowerCase().includes(term) ||
-      (r.lead?.customerName || '').toLowerCase().includes(term)
-    )
+  // Filter and sort revisions
+  const filteredRevisions = revisions.filter(r => {
+    // Apply "My Revisions" filter
+    if (myOnly && r.createdBy?._id !== currentUser?.id) return false
+    
+    // Apply "Approved Quotation" filter
+    if (selectedApprovedQuotationFilter) {
+      const rParentId = typeof r.parentQuotation === 'object' ? r.parentQuotation?._id : r.parentQuotation
+      if (rParentId !== selectedApprovedQuotationFilter) return false
+    }
+    
+    // Apply search filter
+    if (search.trim()) {
+      const term = search.toLowerCase()
+      const matches = (
+        (r.projectTitle || '').toLowerCase().includes(term) ||
+        (r.offerReference || '').toLowerCase().includes(term) ||
+        (r.lead?.customerName || '').toLowerCase().includes(term) ||
+        (r.parentQuotation?.offerReference || '').toLowerCase().includes(term)
+      )
+      if (!matches) return false
+    }
+    
+    return true
   })
-  const sorted = filtered.slice().sort((a, b) => {
+
+  const sortedRevisions = filteredRevisions.slice().sort((a, b) => {
     switch (sortKey) {
       case 'createdAt_asc': return new Date(a.createdAt) - new Date(b.createdAt)
       case 'rev_asc': return (a.revisionNumber||0) - (b.revisionNumber||0)
@@ -342,253 +382,447 @@ function RevisionManagement() {
       default: return new Date(b.createdAt) - new Date(a.createdAt)
     }
   })
-  const byParent = sorted.reduce((acc, r) => {
-    const key = r.parentQuotation?._id || r.parentQuotation
-    if (!acc[key]) acc[key] = { parent: r.parentQuotation, items: [] }
-    acc[key].items.push(r)
-    return acc
-  }, {})
+
+  // Pagination calculations
+  const totalPages = Math.ceil(sortedRevisions.length / itemsPerPage)
+  const startIndex = (currentPage - 1) * itemsPerPage
+  const endIndex = startIndex + itemsPerPage
+  const paginatedRevisions = sortedRevisions.slice(startIndex, endIndex)
+
+  // Reset to page 1 when filters change
+  useEffect(() => {
+    setCurrentPage(1)
+  }, [myOnly, selectedApprovedQuotationFilter, search, sortKey])
+
+  // Helper function to render revision actions
+  const renderRevisionActions = (r) => (
+    <div className="lead-actions">
+      <button className="save-btn" onClick={() => exportPDF(r)}>Export</button>
+      {(currentUser?.roles?.includes('estimation_engineer') || currentUser?.roles?.includes('manager') || currentUser?.roles?.includes('admin') || r.createdBy?._id === currentUser?.id) && (
+        <button className="assign-btn" onClick={() => setEditModal({ open: true, revision: r, mode: 'edit', form: {
+          companyInfo: r.companyInfo || {},
+          submittedTo: r.submittedTo || '',
+          attention: r.attention || '',
+          offerReference: r.offerReference || '',
+          enquiryNumber: r.enquiryNumber || '',
+          offerDate: r.offerDate ? String(r.offerDate).slice(0,10) : '',
+          enquiryDate: r.enquiryDate ? String(r.enquiryDate).slice(0,10) : '',
+          projectTitle: r.projectTitle || r.lead?.projectTitle || '',
+          introductionText: r.introductionText || '',
+          scopeOfWork: r.scopeOfWork || [],
+          priceSchedule: r.priceSchedule || { items: [], subTotal: 0, grandTotal: 0, currency: r.priceSchedule?.currency || 'AED', taxDetails: { vatRate: 5, vatAmount: 0 } },
+          ourViewpoints: r.ourViewpoints || '',
+          exclusions: r.exclusions || [],
+          paymentTerms: r.paymentTerms || [],
+          deliveryCompletionWarrantyValidity: r.deliveryCompletionWarrantyValidity || { deliveryTimeline: '', warrantyPeriod: '', offerValidity: 30, authorizedSignatory: currentUser?.name || '' }
+        } })}>Edit</button>
+      )}
+      <button className="assign-btn" onClick={() => {
+        localStorage.setItem('revisionId', r._id)
+        window.location.href = '/revision-detail'
+      }}>View Details</button>
+      {r.managementApproval?.status === 'pending' ? (
+        <span className="status-badge blue">Approval Pending</span>
+      ) : (
+        <>
+          {(r.managementApproval?.status !== 'approved' && (currentUser?.roles?.includes('estimation_engineer') || r.createdBy?._id === currentUser?.id)) && (
+            <button className="save-btn" onClick={() => sendForApproval(r)}>Send for Approval</button>
+          )}
+          {r.managementApproval?.status === 'approved' && (
+            <>
+              <button className="save-btn" onClick={async () => {
+                try {
+                  await api.get(`/api/projects/by-revision/${r._id}`)
+                  setNotify({ open: true, title: 'Not Allowed', message: 'A project already exists for this revision.' })
+                  return
+                } catch {}
+                const hasChild = revisions.some(x => (x.parentRevision?._id || x.parentRevision) === r._id)
+                if (hasChild) {
+                  setNotify({ open: true, title: 'Not Allowed', message: 'A child revision already exists for this revision.' })
+                  return
+                }
+                setEditModal({ open: true, revision: r, mode: 'create', form: {
+                  companyInfo: r.companyInfo || {},
+                  submittedTo: r.submittedTo || '',
+                  attention: r.attention || '',
+                  offerReference: r.offerReference || '',
+                  enquiryNumber: r.enquiryNumber || '',
+                  offerDate: r.offerDate ? String(r.offerDate).slice(0,10) : '',
+                  enquiryDate: r.enquiryDate ? String(r.enquiryDate).slice(0,10) : '',
+                  projectTitle: r.projectTitle || r.lead?.projectTitle || '',
+                  introductionText: r.introductionText || '',
+                  scopeOfWork: r.scopeOfWork || [],
+                  priceSchedule: r.priceSchedule || { items: [], subTotal: 0, grandTotal: 0, currency: r.priceSchedule?.currency || 'AED', taxDetails: { vatRate: 5, vatAmount: 0 } },
+                  ourViewpoints: r.ourViewpoints || '',
+                  exclusions: r.exclusions || [],
+                  paymentTerms: r.paymentTerms || [],
+                  deliveryCompletionWarrantyValidity: r.deliveryCompletionWarrantyValidity || { deliveryTimeline: '', warrantyPeriod: '', offerValidity: 30, authorizedSignatory: currentUser?.name || '' }
+                } })
+              }}>Create Another Revision</button>
+              <button className="assign-btn" onClick={async () => {
+                try {
+                  await api.get(`/api/projects/by-revision/${r._id}`)
+                  setNotify({ open: true, title: 'Not Allowed', message: 'A project already exists for this revision.' })
+                  return
+                } catch {}
+                const hasChild = revisions.some(x => (x.parentRevision?._id || x.parentRevision) === r._id)
+                if (hasChild) {
+                  setNotify({ open: true, title: 'Not Allowed', message: 'Project can only be created from the last approved child revision.' })
+                  return
+                }
+                const parentId = typeof r.parentQuotation === 'object' ? r.parentQuotation?._id : r.parentQuotation
+                const groupItems = revisions.filter(x => {
+                  const xParentId = typeof x.parentQuotation === 'object' ? x.parentQuotation?._id : x.parentQuotation
+                  return xParentId === parentId
+                })
+                const approved = groupItems.filter(x => x.managementApproval?.status === 'approved')
+                const latest = approved.slice().sort((a,b) => (b.revisionNumber||0)-(a.revisionNumber||0))[0]
+                if (latest && latest._id !== r._id) {
+                  setNotify({ open: true, title: 'Not Allowed', message: `Only the latest approved revision (#${latest.revisionNumber}) can be used to create a project.` })
+                  return
+                }
+                let engineers = []
+                try {
+                  const resEng = await api.get('/api/projects/project-engineers')
+                  engineers = Array.isArray(resEng.data) ? resEng.data : []
+                } catch {}
+                setCreateProjectModal({ open: true, revision: r, engineers, ack: false, form: {
+                  name: r.projectTitle || r.lead?.projectTitle || 'Project',
+                  locationDetails: r.lead?.locationDetails || '',
+                  workingHours: r.lead?.workingHours || '',
+                  manpowerCount: r.lead?.manpowerCount || '',
+                  assignedProjectEngineerId: ''
+                } })
+              }}>Create Project</button>
+            </>
+          )}
+        </>
+      )}
+      <button className="link-btn" onClick={() => setApprovalsView(r)}>View Approvals/Rejections</button>
+      {(currentUser?.roles?.includes('manager') || currentUser?.roles?.includes('admin')) && r.managementApproval?.status === 'pending' && (
+        <>
+          <button className="approve-btn" onClick={() => setApprovalModal({ open: true, revision: r, action: 'approved', note: '' })}>Approve</button>
+          <button className="reject-btn" onClick={() => setApprovalModal({ open: true, revision: r, action: 'rejected', note: '' })}>Reject</button>
+        </>
+      )}
+      {currentUser?.roles?.includes('estimation_engineer') && r.managementApproval?.status !== 'approved' && (
+        <button className="reject-btn" onClick={() => setConfirmDelete({ open: true, revision: r })}>Delete Revision</button>
+      )}
+    </div>
+  )
+
+  const totalRevisions = revisions.length
+  const displayedRevisions = filteredRevisions.length
 
   return (
     <div className="lead-management">
       <div className="header">
-        <h1>Revisions Management</h1>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <h1>Revisions Management</h1>
+          <span style={{ 
+            padding: '4px 12px', 
+            borderRadius: '12px', 
+            background: 'var(--bg)', 
+            color: 'var(--text-muted)', 
+            fontSize: '14px', 
+            fontWeight: 600,
+            border: '1px solid var(--border)'
+          }}>
+            {(myOnly || selectedApprovedQuotationFilter || search) ? `${displayedRevisions} of ${totalRevisions}` : totalRevisions} {totalRevisions === 1 ? 'Revision' : 'Revisions'}
+          </span>
+        </div>
         <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
           <label style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
             <input type="checkbox" checked={myOnly} onChange={() => setMyOnly(!myOnly)} />
             My Revisions
           </label>
-          <input placeholder="Search..." value={search} onChange={e => setSearch(e.target.value)} />
-          <select value={sortKey} onChange={e => setSortKey(e.target.value)}>
+          <select
+            value={selectedApprovedQuotationFilter}
+            onChange={(e) => setSelectedApprovedQuotationFilter(e.target.value)}
+            style={{
+              padding: '6px 12px',
+              border: '1px solid var(--border)',
+              borderRadius: '8px',
+              background: 'var(--card)',
+              color: 'var(--text)',
+              fontSize: '14px',
+              cursor: 'pointer',
+              maxWidth: '250px',
+              width: '250px'
+            }}
+          >
+            <option value="">All Approved Quotations</option>
+            {quotations.map(q => (
+              <option key={q._id} value={q._id}>
+                {q.projectTitle || q.lead?.projectTitle || 'Quotation'} - {q.offerReference || 'N/A'}
+              </option>
+            ))}
+          </select>
+          <input 
+            placeholder="Search..." 
+            value={search} 
+            onChange={e => setSearch(e.target.value)}
+            style={{
+              padding: '6px 12px',
+              border: '1px solid var(--border)',
+              borderRadius: '8px',
+              background: 'var(--card)',
+              color: 'var(--text)',
+              fontSize: '14px',
+              minWidth: '200px'
+            }}
+          />
+          <select 
+            value={sortKey} 
+            onChange={e => setSortKey(e.target.value)}
+            style={{
+              padding: '6px 12px',
+              border: '1px solid var(--border)',
+              borderRadius: '8px',
+              background: 'var(--card)',
+              color: 'var(--text)',
+              fontSize: '14px',
+              cursor: 'pointer'
+            }}
+          >
             <option value="createdAt_desc">Newest</option>
             <option value="createdAt_asc">Oldest</option>
             <option value="rev_desc">Revision # desc</option>
             <option value="rev_asc">Revision # asc</option>
           </select>
+          <div style={{ display: 'flex', gap: '4px', alignItems: 'center', border: '1px solid var(--border)', borderRadius: '8px', padding: '2px' }}>
+            <button
+              onClick={() => setViewMode('card')}
+              style={{
+                padding: '6px 12px',
+                border: 'none',
+                borderRadius: '6px',
+                background: viewMode === 'card' ? 'var(--primary)' : 'transparent',
+                color: viewMode === 'card' ? 'white' : 'var(--text)',
+                cursor: 'pointer',
+                fontSize: '14px',
+                fontWeight: 600,
+                transition: 'all 0.2s ease'
+              }}
+            >
+              Card
+            </button>
+            <button
+              onClick={() => setViewMode('table')}
+              style={{
+                padding: '6px 12px',
+                border: 'none',
+                borderRadius: '6px',
+                background: viewMode === 'table' ? 'var(--primary)' : 'transparent',
+                color: viewMode === 'table' ? 'white' : 'var(--text)',
+                cursor: 'pointer',
+                fontSize: '14px',
+                fontWeight: 600,
+                transition: 'all 0.2s ease'
+              }}
+            >
+              Table
+            </button>
+          </div>
         </div>
       </div>
 
-      <div className="leads-grid">
-        {Object.values(byParent).map((group, gi) => (
-          <div key={(group.parent?._id || group.parent) + '_' + gi} className="lead-card" style={{ width: '100%', gridColumn: '1 / -1' }}>
-            <div className="lead-header" style={{ justifyContent: 'space-between' }}>
-              <h3>Revisions</h3>
-              <button className="link-btn" onClick={() => {
-                const qid = group.parent?._id || group.parent
-                if (qid) {
-                  localStorage.setItem('quotationId', qid)
-                  window.location.href = '/quotation-detail'
-                }
-              }}>View Approved Quotation</button>
+      {viewMode === 'card' ? (
+        <div className="leads-grid">
+          {paginatedRevisions.map(r => (
+            <div key={r._id} className="lead-card">
+              <div className="lead-header">
+                <h3>Revision #{r.revisionNumber || 'N/A'}</h3>
+                {r.managementApproval?.status && (
+                  <span className={`status-badge ${r.managementApproval.status === 'approved' ? 'green' : (r.managementApproval.status === 'rejected' ? 'red' : 'blue')}`}>
+                    {r.managementApproval.status === 'pending' ? 'Approval Pending' : r.managementApproval.status}
+                  </span>
+                )}
+              </div>
+              <div className="lead-details">
+                <p><strong>Project:</strong> {r.projectTitle || r.lead?.projectTitle || 'N/A'}</p>
+                <p><strong>Customer:</strong> {r.lead?.customerName || 'N/A'}</p>
+                <p><strong>Offer Ref:</strong> {r.offerReference || 'N/A'}</p>
+                <p><strong>Parent Quotation:</strong> {typeof r.parentQuotation === 'object' ? (r.parentQuotation?.offerReference || 'N/A') : 'N/A'}</p>
+                <p><strong>Grand Total:</strong> {(r.priceSchedule?.currency || 'AED')} {Number(r.priceSchedule?.grandTotal || 0).toFixed(2)}</p>
+                <p><strong>Created by:</strong> {r.createdBy?._id === currentUser?.id ? 'You' : (r.createdBy?.name || 'N/A')}</p>
+                {r.createdBy?._id !== currentUser?.id && r.createdBy && (
+                  <button className="link-btn" onClick={() => setProfileUser(r.createdBy)}>
+                    View Profile
+                  </button>
+                )}
+              </div>
+              {renderRevisionActions(r)}
             </div>
-            <div className="table" style={{ marginTop: 8, overflowX: 'auto' }}>
-              <table style={{ width: '100%', minWidth: 1200 }}>
-                <thead>
-                  <tr>
-                    <th>Revision #</th>
-                    <th>Project</th>
-                    <th>Offer Ref</th>
-                    <th>Customer</th>
-                    <th>Grand Total</th>
-                    <th>Created By</th>
-                    <th>Actions</th>
-                    <th>Differences</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {group.items
-                    .filter(r => !myOnly || r.createdBy?._id === currentUser?.id)
-                    .sort((a,b)=> (a.revisionNumber||0)-(b.revisionNumber||0))
-                    .map(r => (
-                    <tr key={r._id}>
-                      <td data-label="Revision #">{r.revisionNumber}</td>
-                      <td data-label="Project">{r.projectTitle || r.lead?.projectTitle || 'Revision'}</td>
-                      <td data-label="Offer Ref">{r.offerReference || 'N/A'}</td>
-                      <td data-label="Customer">{r.lead?.customerName || 'N/A'}</td>
-                      <td data-label="Grand Total">{r.priceSchedule?.currency || 'AED'} {Number(r.priceSchedule?.grandTotal || 0).toFixed(2)}</td>
-                      <td data-label="Created By">
-                        {r.createdBy?._id === currentUser?.id ? 'You' : (r.createdBy?.name || 'N/A')}
-                        {r.createdBy?._id && r.createdBy._id !== currentUser?.id && (
-                          <button className="link-btn" onClick={() => setProfileUser(r.createdBy)} style={{ marginLeft: 6 }}>View Profile</button>
-                        )}
-                      </td>
-                      <td data-label="Actions">
-                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
-                          <button className="save-btn" onClick={() => exportPDF(r)}>Export</button>
-                          {(currentUser?.roles?.includes('estimation_engineer') || currentUser?.roles?.includes('manager') || currentUser?.roles?.includes('admin') || r.createdBy?._id === currentUser?.id) && (
-                            <button className="assign-btn" onClick={() => setEditModal({ open: true, revision: r, mode: 'edit', form: {
-                              companyInfo: r.companyInfo || {},
-                              submittedTo: r.submittedTo || '',
-                              attention: r.attention || '',
-                              offerReference: r.offerReference || '',
-                              enquiryNumber: r.enquiryNumber || '',
-                              offerDate: r.offerDate ? String(r.offerDate).slice(0,10) : '',
-                              enquiryDate: r.enquiryDate ? String(r.enquiryDate).slice(0,10) : '',
-                              projectTitle: r.projectTitle || r.lead?.projectTitle || '',
-                              introductionText: r.introductionText || '',
-                              scopeOfWork: r.scopeOfWork || [],
-                              priceSchedule: r.priceSchedule || { items: [], subTotal: 0, grandTotal: 0, currency: r.priceSchedule?.currency || 'AED', taxDetails: { vatRate: 5, vatAmount: 0 } },
-                              ourViewpoints: r.ourViewpoints || '',
-                              exclusions: r.exclusions || [],
-                              paymentTerms: r.paymentTerms || [],
-                              deliveryCompletionWarrantyValidity: r.deliveryCompletionWarrantyValidity || { deliveryTimeline: '', warrantyPeriod: '', offerValidity: 30, authorizedSignatory: currentUser?.name || '' }
-                            } })}>Edit</button>
-                          )}
-                          <button className="assign-btn" onClick={() => {
-                            localStorage.setItem('revisionId', r._id)
-                            window.location.href = '/revision-detail'
-                          }}>View Details</button>
-                          {r.managementApproval?.status === 'pending' ? (
-                            <span className="status-badge blue">Approval Pending</span>
-                          ) : (
-                            <>
-                              {(r.managementApproval?.status !== 'approved' && (currentUser?.roles?.includes('estimation_engineer') || r.createdBy?._id === currentUser?.id)) && (
-                                <button className="save-btn" onClick={() => sendForApproval(r)}>Send for Approval</button>
-                              )}
-                              {r.managementApproval?.status === 'approved' && (
-                                <>
-                                  <button className="save-btn" onClick={async () => {
-                                    // Block if project already exists
-                                    try {
-                                      const token = localStorage.getItem('token')
-                                      await api.get(`/api/projects/by-revision/${r._id}`)
-                                      setNotify({ open: true, title: 'Not Allowed', message: 'A project already exists for this revision.' })
-                                      return
-                                    } catch {}
-                                    const hasChild = revisions.some(x => (x.parentRevision?._id || x.parentRevision) === r._id)
-                                    if (hasChild) {
-                                      setNotify({ open: true, title: 'Not Allowed', message: 'A child revision already exists for this revision.' })
-                                      return
-                                    }
-                                    setEditModal({ open: true, revision: r, mode: 'create', form: {
-                                    companyInfo: r.companyInfo || {},
-                                    submittedTo: r.submittedTo || '',
-                                    attention: r.attention || '',
-                                    offerReference: r.offerReference || '',
-                                    enquiryNumber: r.enquiryNumber || '',
-                                    offerDate: r.offerDate ? String(r.offerDate).slice(0,10) : '',
-                                    enquiryDate: r.enquiryDate ? String(r.enquiryDate).slice(0,10) : '',
-                                    projectTitle: r.projectTitle || r.lead?.projectTitle || '',
-                                    introductionText: r.introductionText || '',
-                                    scopeOfWork: r.scopeOfWork || [],
-                                    priceSchedule: r.priceSchedule || { items: [], subTotal: 0, grandTotal: 0, currency: r.priceSchedule?.currency || 'AED', taxDetails: { vatRate: 5, vatAmount: 0 } },
-                                    ourViewpoints: r.ourViewpoints || '',
-                                    exclusions: r.exclusions || [],
-                                    paymentTerms: r.paymentTerms || [],
-                                    deliveryCompletionWarrantyValidity: r.deliveryCompletionWarrantyValidity || { deliveryTimeline: '', warrantyPeriod: '', offerValidity: 30, authorizedSignatory: currentUser?.name || '' }
-                                  } })
-                                  }}>Create Another Revision</button>
-                                  <button className="assign-btn" onClick={async () => {
-                                    try {
-                                      const token = localStorage.getItem('token')
-                                      // Block if project already exists for this revision
-                                      try {
-                                        await api.get(`/api/projects/by-revision/${r._id}`)
-                                        setNotify({ open: true, title: 'Not Allowed', message: 'A project already exists for this revision.' })
-                                        return
-                                      } catch {}
+          ))}
+        </div>
+      ) : (
+        <div className="table" style={{ marginTop: '24px' }}>
+          <table>
+            <thead>
+              <tr>
+                <th>Revision #</th>
+                <th>Project</th>
+                <th>Customer</th>
+                <th>Offer Ref</th>
+                <th>Parent Quotation</th>
+                <th>Grand Total</th>
+                <th>Status</th>
+                <th>Created By</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {paginatedRevisions.map(r => (
+                <tr key={r._id}>
+                  <td data-label="Revision #">{r.revisionNumber || 'N/A'}</td>
+                  <td data-label="Project">{r.projectTitle || r.lead?.projectTitle || 'Revision'}</td>
+                  <td data-label="Customer">{r.lead?.customerName || 'N/A'}</td>
+                  <td data-label="Offer Ref">{r.offerReference || 'N/A'}</td>
+                  <td data-label="Parent Quotation">
+                    {typeof r.parentQuotation === 'object' ? (r.parentQuotation?.offerReference || 'N/A') : 'N/A'}
+                    {typeof r.parentQuotation === 'object' && r.parentQuotation?._id && (
+                      <button className="link-btn" onClick={() => {
+                        localStorage.setItem('quotationId', r.parentQuotation._id)
+                        window.location.href = '/quotation-detail'
+                      }} style={{ marginLeft: '6px' }}>
+                        View
+                      </button>
+                    )}
+                  </td>
+                  <td data-label="Grand Total">{(r.priceSchedule?.currency || 'AED')} {Number(r.priceSchedule?.grandTotal || 0).toFixed(2)}</td>
+                  <td data-label="Status">
+                    <span className={`status-badge ${r.managementApproval?.status === 'approved' ? 'green' : (r.managementApproval?.status === 'rejected' ? 'red' : 'blue')}`}>
+                      {r.managementApproval?.status === 'pending' ? 'Approval Pending' : (r.managementApproval?.status || 'N/A')}
+                    </span>
+                  </td>
+                  <td data-label="Created By">
+                    {r.createdBy?._id === currentUser?.id ? 'You' : (r.createdBy?.name || 'N/A')}
+                    {r.createdBy?._id !== currentUser?.id && r.createdBy && (
+                      <button className="link-btn" onClick={() => setProfileUser(r.createdBy)} style={{ marginLeft: '6px' }}>
+                        View Profile
+                      </button>
+                    )}
+                  </td>
+                  <td data-label="Actions">
+                    {renderRevisionActions(r)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
 
-                                      // Enforce last approved child rule in UI as well
-                                      const hasChild = revisions.some(x => (x.parentRevision?._id || x.parentRevision) === r._id)
-                                      if (hasChild) {
-                                        setNotify({ open: true, title: 'Not Allowed', message: 'Project can only be created from the last approved child revision.' })
-                                        return
-                                      }
-                                      // find latest approved in this quotation group
-                                      const groupItems = group?.items || []
-                                      const approved = groupItems.filter(x => x.managementApproval?.status === 'approved')
-                                      const latest = approved.slice().sort((a,b) => (b.revisionNumber||0)-(a.revisionNumber||0))[0]
-                                      if (latest && latest._id !== r._id) {
-                                        setNotify({ open: true, title: 'Not Allowed', message: `Only the latest approved revision (#${latest.revisionNumber}) can be used to create a project.` })
-                                        return
-                                      }
-
-                                      // Load project engineers
-                                      let engineers = []
-                                      try {
-                                        const resEng = await api.get('/api/projects/project-engineers')
-                                        engineers = Array.isArray(resEng.data) ? resEng.data : []
-                                      } catch {}
-
-                                      setCreateProjectModal({ open: true, revision: r, engineers, ack: false, form: {
-                                        name: r.projectTitle || r.lead?.projectTitle || 'Project',
-                                        locationDetails: r.lead?.locationDetails || '',
-                                        workingHours: r.lead?.workingHours || '',
-                                        manpowerCount: r.lead?.manpowerCount || '',
-                                        assignedProjectEngineerId: ''
-                                      } })
-                                    } catch (e) {
-                                      setNotify({ open: true, title: 'Create Project Failed', message: e.response?.data?.message || 'We could not open the Create Project form. Please try again.' })
-                                    }
-                                  }}>Create Project</button>
-                                </>
-                              )}
-                            </>
-                          )}
-                          <button className="link-btn" onClick={() => setApprovalsView(r)}>View Approvals/Rejections</button>
-                          {(currentUser?.roles?.includes('manager') || currentUser?.roles?.includes('admin')) && r.managementApproval?.status === 'pending' && (
-                            <>
-                              <button className="approve-btn" onClick={() => setApprovalModal({ open: true, revision: r, action: 'approved', note: '' })}>Approve</button>
-                              <button className="reject-btn" onClick={() => setApprovalModal({ open: true, revision: r, action: 'rejected', note: '' })}>Reject</button>
-                            </>
-                          )}
-                          {currentUser?.roles?.includes('estimation_engineer') && r.managementApproval?.status !== 'approved' && (
-                            <button className="reject-btn" onClick={() => setConfirmDelete({ open: true, revision: r })}>Delete Revision</button>
-                          )}
-                        </div>
-                      </td>
-                      <td data-label="Differences">
-                        {Array.isArray(r.diffFromParent) && r.diffFromParent.length > 0 ? (
-                          <details>
-                            <summary>View</summary>
-                            <div style={{ marginTop: 6 }}>
-                              {r.diffFromParent.map((d, i) => (
-                                <div key={i} style={{ marginBottom: 8 }}>
-                                  <strong>{d.field}:</strong>
-                                  {d.field === 'deliveryCompletionWarrantyValidity' ? (
-                                    (() => {
-                                      const from = d.from || {}
-                                      const to = d.to || {}
-                                      const labels = {
-                                        deliveryTimeline: 'Delivery Timeline',
-                                        warrantyPeriod: 'Warranty Period',
-                                        offerValidity: 'Offer Validity (Days)',
-                                        authorizedSignatory: 'Authorized Signatory'
-                                      }
-                                      const keys = ['deliveryTimeline','warrantyPeriod','offerValidity','authorizedSignatory']
-                                      const items = keys.filter(k => String(from?.[k] ?? '') !== String(to?.[k] ?? ''))
-                                      if (items.length === 0) return <div style={{ marginTop: 4 }}>No changes</div>
-                                      return (
-                                        <ul style={{ marginTop: 4, paddingLeft: 16 }}>
-                                          {items.map((k, idx) => (
-                                            <li key={idx}>
-                                              {labels[k]}: {String(from?.[k] ?? '—')} → {String(to?.[k] ?? '—')}
-                                            </li>
-                                          ))}
-                                        </ul>
-                                      )
-                                    })()
-                                  ) : (
-                                    <div className="change-diff">
-                                      <pre className="change-block">{JSON.stringify(d.from, null, 2)}</pre>
-                                      <span>→</span>
-                                      <pre className="change-block">{JSON.stringify(d.to, null, 2)}</pre>
-                                    </div>
-                                  )}
-                                </div>
-                              ))}
-                            </div>
-                          </details>
-                        ) : '—'}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+      {/* Pagination Controls */}
+      {filteredRevisions.length > 0 && (
+        <div className="pagination-container" style={{ 
+          display: 'flex', 
+          justifyContent: 'space-between', 
+          alignItems: 'center', 
+          marginTop: '24px',
+          padding: '16px',
+          background: 'var(--card)',
+          borderRadius: '8px',
+          border: '1px solid var(--border)'
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '14px' }}>
+              Items per page:
+              <select
+                value={itemsPerPage}
+                onChange={(e) => {
+                  setItemsPerPage(Number(e.target.value))
+                  setCurrentPage(1)
+                }}
+                style={{
+                  padding: '4px 8px',
+                  border: '1px solid var(--border)',
+                  borderRadius: '6px',
+                  background: 'var(--bg)',
+                  color: 'var(--text)',
+                  fontSize: '14px',
+                  cursor: 'pointer'
+                }}
+              >
+                <option value={5}>5</option>
+                <option value={10}>10</option>
+                <option value={20}>20</option>
+                <option value={50}>50</option>
+              </select>
+            </label>
+            <span style={{ fontSize: '14px', color: 'var(--text-muted)' }}>
+              Showing {startIndex + 1} to {Math.min(endIndex, filteredRevisions.length)} of {filteredRevisions.length}
+            </span>
           </div>
-        ))}
-      </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <button
+              onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+              disabled={currentPage === 1}
+              style={{
+                padding: '6px 12px',
+                border: '1px solid var(--border)',
+                borderRadius: '6px',
+                background: currentPage === 1 ? 'var(--bg)' : 'var(--card)',
+                color: currentPage === 1 ? 'var(--text-muted)' : 'var(--text)',
+                cursor: currentPage === 1 ? 'not-allowed' : 'pointer',
+                fontSize: '14px',
+                opacity: currentPage === 1 ? 0.5 : 1
+              }}
+            >
+              Previous
+            </button>
+            <div style={{ display: 'flex', gap: '4px' }}>
+              {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+                let pageNum
+                if (totalPages <= 5) {
+                  pageNum = i + 1
+                } else if (currentPage <= 3) {
+                  pageNum = i + 1
+                } else if (currentPage >= totalPages - 2) {
+                  pageNum = totalPages - 4 + i
+                } else {
+                  pageNum = currentPage - 2 + i
+                }
+                return (
+                  <button
+                    key={pageNum}
+                    onClick={() => setCurrentPage(pageNum)}
+                    style={{
+                      padding: '6px 12px',
+                      border: '1px solid var(--border)',
+                      borderRadius: '6px',
+                      background: currentPage === pageNum ? 'var(--primary)' : 'var(--card)',
+                      color: currentPage === pageNum ? 'white' : 'var(--text)',
+                      cursor: 'pointer',
+                      fontSize: '14px',
+                      fontWeight: currentPage === pageNum ? 600 : 400
+                    }}
+                  >
+                    {pageNum}
+                  </button>
+                )
+              })}
+            </div>
+            <button
+              onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+              disabled={currentPage === totalPages}
+              style={{
+                padding: '6px 12px',
+                border: '1px solid var(--border)',
+                borderRadius: '6px',
+                background: currentPage === totalPages ? 'var(--bg)' : 'var(--card)',
+                color: currentPage === totalPages ? 'var(--text-muted)' : 'var(--text)',
+                cursor: currentPage === totalPages ? 'not-allowed' : 'pointer',
+                fontSize: '14px',
+                opacity: currentPage === totalPages ? 0.5 : 1
+              }}
+            >
+              Next
+            </button>
+          </div>
+        </div>
+      )}
       {editModal.open && (
         <div className="modal-overlay" onClick={() => setEditModal({ open: false, revision: null, form: null })}>
           <div className="modal" onClick={e => e.stopPropagation()}>

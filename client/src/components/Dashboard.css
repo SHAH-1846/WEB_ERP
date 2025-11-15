@@ -81,7 +81,7 @@
   flex-direction: column;
   position: fixed;
   height: 100vh;
-  z-index: 100;
+  z-index: var(--z-sidebar);
   animation: slideInLeft 0.5s ease;
   transition: width 0.25s ease;
 }

@@ -379,6 +379,10 @@ ${visit.actionItems ? 'Recommended follow‑up: ' + visit.actionItems : 'Continu
                   <td data-label="Value">{lead.scopeSummary || 'N/A'}</td>
                 </tr>
                 <tr>
+                  <td data-label="Field">Quotations</td>
+                  <td data-label="Value">{quotations.length || 0}</td>
+                </tr>
+                <tr>
                   <td data-label="Field">Created By</td>
                   <td data-label="Value">{lead.createdBy?.name || 'N/A'}</td>
                 </tr>

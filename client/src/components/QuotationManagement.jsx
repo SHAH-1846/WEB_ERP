@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import { api } from '../lib/api'
 import './LeadManagement.css'
+import { CreateQuotationModal } from './CreateQuotationModal'
+import '../design-system'
 import logo from '../assets/logo/WBES_Logo.png'
 
 function QuotationManagement() {
@@ -12,11 +14,25 @@ function QuotationManagement() {
   const [profileUser, setProfileUser] = useState(null)
   const [historyQuote, setHistoryQuote] = useState(null)
   const [myQuotationsOnly, setMyQuotationsOnly] = useState(false)
+  const [selectedLeadFilter, setSelectedLeadFilter] = useState('')
   const [approvalModal, setApprovalModal] = useState({ open: false, quote: null, action: null, note: '' })
   const [approvalsView, setApprovalsView] = useState(null)
   const [revisionModal, setRevisionModal] = useState({ open: false, quote: null, form: null })
   const [hasRevisionFor, setHasRevisionFor] = useState({})
   const [notify, setNotify] = useState({ open: false, title: '', message: '' })
+  const [showRevisionsModal, setShowRevisionsModal] = useState(false)
+  const [revisionsForQuotation, setRevisionsForQuotation] = useState([])
+  const [selectedQuotationForRevisions, setSelectedQuotationForRevisions] = useState(null)
+  const [viewMode, setViewMode] = useState(() => {
+    const saved = localStorage.getItem('quotationViewMode')
+    return saved === 'table' ? 'table' : 'card' // default to 'card' if not set
+  })
+  const [revisionCounts, setRevisionCounts] = useState({})
+  const [expandedRevisionRows, setExpandedRevisionRows] = useState({}) // Track which rows have expanded revisions
+  const [quotationRevisionsMap, setQuotationRevisionsMap] = useState({}) // Store revisions per quotation ID
+  const [currentPage, setCurrentPage] = useState(1)
+  const [itemsPerPage, setItemsPerPage] = useState(10)
+  const [search, setSearch] = useState('')
 
   const defaultCompany = useMemo(() => ({
     logo,
@@ -62,6 +78,14 @@ function QuotationManagement() {
     void fetchQuotations()
   }, [])
 
+  // Persist view mode to localStorage whenever it changes
+  useEffect(() => {
+    localStorage.setItem('quotationViewMode', viewMode)
+  }, [viewMode])
+
+  // Note: Legacy localStorage-based auto-open removed - now using route-based modal
+  // The CreateQuotationModal handles pre-selection via props
+
   const fetchLeads = async () => {
     try {
       const res = await api.get('/api/leads')
@@ -75,9 +99,18 @@ function QuotationManagement() {
       setQuotations(res.data)
       try {
         const revRes = await api.get('/api/revisions')
+        const revisions = Array.isArray(revRes.data) ? revRes.data : []
         const map = {}
-        ;(revRes.data || []).forEach(r => { map[r.parentQuotation] = true })
+        const counts = {}
+        revisions.forEach(r => {
+          const parentId = typeof r.parentQuotation === 'object' ? r.parentQuotation?._id : r.parentQuotation
+          if (parentId) {
+            map[parentId] = true
+            counts[parentId] = (counts[parentId] || 0) + 1
+          }
+        })
         setHasRevisionFor(map)
+        setRevisionCounts(counts)
       } catch {}
     } catch {}
   }
@@ -121,45 +154,18 @@ function QuotationManagement() {
 
   const openCreate = () => {
     setEditing(null)
-    setForm({
-      ...form,
-      lead: '',
-      companyInfo: defaultCompany,
-      offerDate: new Date().toISOString().slice(0,10),
-      enquiryDate: '',
-      projectTitle: '',
-      introductionText: '',
-      scopeOfWork: [{ description: '', quantity: '', unit: '', locationRemarks: '' }],
-      priceSchedule: {
-        items: [{ description: '', quantity: 0, unit: '', unitRate: 0, totalAmount: 0 }],
-        subTotal: 0, grandTotal: 0, currency: 'AED', taxDetails: { vatRate: 5, vatAmount: 0 }
-      },
-      exclusions: [''],
-      paymentTerms: [{ milestoneDescription: '', amountPercent: '' }],
-      deliveryCompletionWarrantyValidity: { deliveryTimeline: '', warrantyPeriod: '', offerValidity: 30, authorizedSignatory: currentUser?.name || '' }
-    })
     setShowModal(true)
   }
 
-  const handleSave = async (e) => {
-    e.preventDefault()
-    try {
-      const payload = { ...form }
-      // ensure totals
-      const totals = recalcTotals(payload.priceSchedule.items, payload.priceSchedule.taxDetails.vatRate)
-      payload.priceSchedule.subTotal = totals.subTotal
-      payload.priceSchedule.taxDetails.vatAmount = totals.vatAmount
-      payload.priceSchedule.grandTotal = totals.grandTotal
-      if (editing) {
-        await api.put(`/api/quotations/${editing._id}`, payload)
-      } else {
-        await api.post('/api/quotations', payload)
-      }
-      await fetchQuotations()
-      setShowModal(false)
-    } catch (err) {
-      setNotify({ open: true, title: 'Save Failed', message: err.response?.data?.message || 'We could not save this quotation. Please try again.' })
+  const handleSave = async (payload, editingQuote) => {
+    if (editingQuote) {
+      await api.put(`/api/quotations/${editingQuote._id}`, payload)
+    } else {
+      await api.post('/api/quotations', payload)
     }
+    await fetchQuotations()
+    setShowModal(false)
+    setEditing(null)
   }
 
   const approveQuotation = async (q, status, note) => {
@@ -589,152 +595,546 @@ function QuotationManagement() {
     setForm({ ...form, priceSchedule: { ...form.priceSchedule, items, subTotal: totals.subTotal, grandTotal: totals.grandTotal, taxDetails: { ...form.priceSchedule.taxDetails, vatAmount: totals.vatAmount } } })
   }
 
+  // Handler for View Revisions in table view (accordion)
+  const handleViewRevisionsTable = async (q) => {
+    const quotationId = q._id
+    const isExpanded = expandedRevisionRows[quotationId]
+    
+    if (isExpanded) {
+      // Collapse: remove from expanded rows
+      setExpandedRevisionRows(prev => {
+        const next = { ...prev }
+        delete next[quotationId]
+        return next
+      })
+    } else {
+      // Expand: fetch revisions if not already loaded
+      if (!quotationRevisionsMap[quotationId]) {
+        try {
+          const revRes = await api.get(`/api/revisions?parentQuotation=${quotationId}`)
+          const revisions = Array.isArray(revRes.data) ? revRes.data : []
+          setQuotationRevisionsMap(prev => ({ ...prev, [quotationId]: revisions }))
+        } catch (e) {
+          setNotify({ open: true, title: 'Load Failed', message: 'We could not load the revisions. Please try again.' })
+          return
+        }
+      }
+      setExpandedRevisionRows(prev => ({ ...prev, [quotationId]: true }))
+    }
+  }
+
+  // Helper function to render quotation actions (used in both card and table views)
+  const renderQuotationActions = (q, isTableView = false) => (
+    <div className="lead-actions">
+      <button className="assign-btn" onClick={() => {
+        setEditing(q)
+        setShowModal(true)
+      }}>Edit</button>
+      <button className="save-btn" onClick={() => exportPDF(q)}>Export</button>
+      {q.managementApproval?.status === 'approved' && !hasRevisionFor[q._id] && (
+        <button className="assign-btn" onClick={() => {
+          setRevisionModal({ open: true, quote: q, form: {
+            companyInfo: q.companyInfo || defaultCompany,
+            submittedTo: q.submittedTo || '',
+            attention: q.attention || '',
+            offerReference: q.offerReference || '',
+            enquiryNumber: q.enquiryNumber || '',
+            offerDate: q.offerDate ? q.offerDate.substring(0,10) : '',
+            enquiryDate: q.enquiryDate ? q.enquiryDate.substring(0,10) : '',
+            projectTitle: q.projectTitle || q.lead?.projectTitle || '',
+            introductionText: q.introductionText || '',
+            scopeOfWork: q.scopeOfWork?.length ? q.scopeOfWork : [{ description: '', quantity: '', unit: '', locationRemarks: '' }],
+            priceSchedule: q.priceSchedule || { items: [], subTotal: 0, grandTotal: 0, currency: 'AED', taxDetails: { vatRate: 5, vatAmount: 0 } },
+            ourViewpoints: q.ourViewpoints || '',
+            exclusions: q.exclusions?.length ? q.exclusions : [''],
+            paymentTerms: q.paymentTerms?.length ? q.paymentTerms : [{ milestoneDescription: '', amountPercent: ''}],
+            deliveryCompletionWarrantyValidity: q.deliveryCompletionWarrantyValidity || { deliveryTimeline: '', warrantyPeriod: '', offerValidity: 30, authorizedSignatory: currentUser?.name || '' }
+          } })
+        }}>Create Revision</button>
+      )}
+      <button className="assign-btn" onClick={() => {
+        try {
+          localStorage.setItem('quotationId', q._id)
+          localStorage.setItem('quotationDetail', JSON.stringify(q))
+          const leadId = typeof q.lead === 'object' ? q.lead?._id : q.lead
+          if (leadId) localStorage.setItem('leadId', leadId)
+          window.location.href = '/quotation-detail'
+        } catch {
+          window.location.href = '/quotation-detail'
+        }
+      }}>Detailed View</button>
+      {q.managementApproval?.status === 'pending' ? (
+        <span className="status-badge blue">Approval Pending</span>
+      ) : (
+        q.managementApproval?.status !== 'approved' && q.managementApproval?.status !== 'pending' && !(currentUser?.roles?.includes('manager') || currentUser?.roles?.includes('admin')) && (
+          <button className="save-btn" onClick={() => sendForApproval(q)}>Send for Approval</button>
+        )
+      )}
+      <button className="link-btn" onClick={() => setApprovalsView(q)}>View Approvals/Rejections</button>
+      {(currentUser?.roles?.includes('manager') || currentUser?.roles?.includes('admin')) && q.managementApproval?.status === 'pending' && (
+        <>
+          <button className="approve-btn" onClick={() => setApprovalModal({ open: true, quote: q, action: 'approved', note: '' })}>Approve</button>
+          <button className="reject-btn" onClick={() => setApprovalModal({ open: true, quote: q, action: 'rejected', note: '' })}>Reject</button>
+        </>
+      )}
+      {q.lead?._id && (
+        <button className="link-btn" onClick={async () => {
+          try {
+            const res = await api.get(`/api/leads/${q.lead._id}`)
+            const visitsRes = await api.get(`/api/leads/${q.lead._id}/site-visits`)
+            const detail = { ...res.data, siteVisits: visitsRes.data }
+            localStorage.setItem('leadDetail', JSON.stringify(detail))
+            localStorage.setItem('leadId', q.lead._id)
+            window.location.href = '/lead-detail'
+          } catch { setNotify({ open: true, title: 'Open Lead Failed', message: 'We could not open the linked lead. Please try again.' }) }
+        }}>View Lead</button>
+      )}
+      {q.edits?.length > 0 && (
+        <button className="link-btn" onClick={() => setHistoryQuote(q)}>View Edit History</button>
+      )}
+      <button
+        className="link-btn"
+        onClick={async () => {
+          if (isTableView) {
+            // Table view: use accordion
+            handleViewRevisionsTable(q)
+          } else {
+            // Card view: use modal
+            try {
+              const revRes = await api.get(`/api/revisions?parentQuotation=${q._id}`)
+              const revisions = Array.isArray(revRes.data) ? revRes.data : []
+              setRevisionsForQuotation(revisions)
+              setSelectedQuotationForRevisions(q)
+              setShowRevisionsModal(true)
+            } catch (e) {
+              setNotify({ open: true, title: 'Open Failed', message: 'We could not load the revisions. Please try again.' })
+            }
+          }
+        }}
+      >
+        View Revisions
+      </button>
+    </div>
+  )
+
+  // Calculate filtered quotations count
+  const filteredQuotations = quotations.filter(q => {
+    // Apply "My Quotations" filter
+    if (myQuotationsOnly && q.createdBy?._id !== currentUser?.id) return false
+    
+    // Apply Lead filter
+    if (selectedLeadFilter) {
+      const qLeadId = typeof q.lead === 'object' ? q.lead?._id : q.lead
+      if (qLeadId !== selectedLeadFilter) return false
+    }
+    
+    // Apply search filter
+    if (search.trim()) {
+      const term = search.toLowerCase()
+      const matches = (
+        (q.projectTitle || q.lead?.projectTitle || '').toLowerCase().includes(term) ||
+        (q.offerReference || '').toLowerCase().includes(term) ||
+        (q.enquiryNumber || q.lead?.enquiryNumber || '').toLowerCase().includes(term) ||
+        (q.lead?.customerName || '').toLowerCase().includes(term)
+      )
+      if (!matches) return false
+    }
+    
+    return true
+  })
+  const totalQuotations = quotations.length
+  const displayedQuotations = filteredQuotations.length
+
+  // Pagination calculations
+  const totalPages = Math.ceil(filteredQuotations.length / itemsPerPage)
+  const startIndex = (currentPage - 1) * itemsPerPage
+  const endIndex = startIndex + itemsPerPage
+  const paginatedQuotations = filteredQuotations.slice(startIndex, endIndex)
+
+  // Reset to page 1 when filters change
+  useEffect(() => {
+    setCurrentPage(1)
+  }, [myQuotationsOnly, selectedLeadFilter, search])
+
   return (
     <div className="lead-management">
       <div className="header">
-        <h1>Quotation Management</h1>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <h1>Quotation Management</h1>
+          <span style={{ 
+            padding: '4px 12px', 
+            borderRadius: '12px', 
+            background: 'var(--bg)', 
+            color: 'var(--text-muted)', 
+            fontSize: '14px', 
+            fontWeight: 600,
+            border: '1px solid var(--border)'
+          }}>
+            {(myQuotationsOnly || selectedLeadFilter || search) ? `${displayedQuotations} of ${totalQuotations}` : totalQuotations} {totalQuotations === 1 ? 'Quotation' : 'Quotations'}
+          </span>
+        </div>
         <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
           <label style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
             <input type="checkbox" checked={myQuotationsOnly} onChange={() => setMyQuotationsOnly(!myQuotationsOnly)} />
             My Quotations
           </label>
+          <input 
+            placeholder="Search..." 
+            value={search} 
+            onChange={e => setSearch(e.target.value)}
+            style={{
+              padding: '6px 12px',
+              border: '1px solid var(--border)',
+              borderRadius: '8px',
+              background: 'var(--card)',
+              color: 'var(--text)',
+              fontSize: '14px',
+              minWidth: '200px'
+            }}
+          />
+          <select
+            value={selectedLeadFilter}
+            onChange={(e) => setSelectedLeadFilter(e.target.value)}
+            style={{
+              padding: '6px 12px',
+              border: '1px solid var(--border)',
+              borderRadius: '8px',
+              background: 'var(--card)',
+              color: 'var(--text)',
+              fontSize: '14px',
+              cursor: 'pointer',
+              maxWidth: '250px',
+              width: '250px'
+            }}
+          >
+            <option value="">All Leads</option>
+            {leads.map(lead => (
+              <option key={lead._id} value={lead._id}>
+                {lead.projectTitle || lead.name || 'Untitled'} - {lead.customerName || 'N/A'}
+              </option>
+            ))}
+          </select>
+          <div style={{ display: 'flex', gap: '4px', alignItems: 'center', border: '1px solid var(--border)', borderRadius: '8px', padding: '2px' }}>
+            <button
+              onClick={() => setViewMode('card')}
+              style={{
+                padding: '6px 12px',
+                border: 'none',
+                borderRadius: '6px',
+                background: viewMode === 'card' ? 'var(--primary)' : 'transparent',
+                color: viewMode === 'card' ? 'white' : 'var(--text)',
+                cursor: 'pointer',
+                fontSize: '14px',
+                fontWeight: 600,
+                transition: 'all 0.2s ease'
+              }}
+            >
+              Card
+            </button>
+            <button
+              onClick={() => setViewMode('table')}
+              style={{
+                padding: '6px 12px',
+                border: 'none',
+                borderRadius: '6px',
+                background: viewMode === 'table' ? 'var(--primary)' : 'transparent',
+                color: viewMode === 'table' ? 'white' : 'var(--text)',
+                cursor: 'pointer',
+                fontSize: '14px',
+                fontWeight: 600,
+                transition: 'all 0.2s ease'
+              }}
+            >
+              Table
+            </button>
+          </div>
           {canCreate() && (
             <button className="add-btn" onClick={openCreate}>Create Quotation</button>
           )}
         </div>
       </div>
 
-      <div className="leads-grid">
-        {quotations.filter(q => !myQuotationsOnly || q.createdBy?._id === currentUser?.id).map(q => (
-          <div key={q._id} className="lead-card">
-            <div className="lead-header">
-              <h3>{q.projectTitle || q.lead?.projectTitle || 'Quotation'}</h3>
-              {q.managementApproval?.status && (
-                <span className={`status-badge ${q.managementApproval.status === 'approved' ? 'green' : (q.managementApproval.status === 'rejected' ? 'red' : 'blue')}`}>
-                  {q.managementApproval.status === 'pending' ? 'Approval Pending' : q.managementApproval.status}
-                </span>
-              )}
+      {viewMode === 'card' ? (
+        <div className="leads-grid">
+          {paginatedQuotations.map(q => (
+            <div key={q._id} className="lead-card">
+              <div className="lead-header">
+                <h3>{q.projectTitle || q.lead?.projectTitle || 'Quotation'}</h3>
+                {q.managementApproval?.status && (
+                  <span className={`status-badge ${q.managementApproval.status === 'approved' ? 'green' : (q.managementApproval.status === 'rejected' ? 'red' : 'blue')}`}>
+                    {q.managementApproval.status === 'pending' ? 'Approval Pending' : q.managementApproval.status}
+                  </span>
+                )}
+              </div>
+              <div className="lead-details">
+                <p><strong>Customer:</strong> {q.lead?.customerName || 'N/A'}</p>
+                <p><strong>Enquiry #:</strong> {q.enquiryNumber || q.lead?.enquiryNumber || 'N/A'}</p>
+                <p><strong>Offer Ref:</strong> {q.offerReference || 'N/A'}</p>
+                <p><strong>Grand Total:</strong> {q.priceSchedule?.currency || 'AED'} {Number(q.priceSchedule?.grandTotal || 0).toFixed(2)}</p>
+                <p><strong>Revisions:</strong> {revisionCounts[q._id] || 0}</p>
+                <p><strong>Created by:</strong> {q.createdBy?._id === currentUser?.id ? 'You' : (q.createdBy?.name || 'N/A')}</p>
+                {q.createdBy?._id !== currentUser?.id && q.createdBy && (
+                  <button className="link-btn" onClick={() => setProfileUser(q.createdBy)}>
+                    View Profile
+                  </button>
+                )}
+                {q.managementApproval?.requestedBy?.name && (
+                  <p><strong>Approval sent by:</strong> {q.managementApproval.requestedBy.name} {q.managementApproval.requestedBy?._id && (
+                    <button className="link-btn" onClick={() => setProfileUser(q.managementApproval.requestedBy)} style={{ marginLeft: 6 }}>View Profile</button>
+                  )}</p>
+                )}
+                {q.managementApproval?.approvedBy?.name && (
+                  <p><strong>Approved by:</strong> {q.managementApproval.approvedBy.name} {q.managementApproval.approvedBy?._id && (
+                    <button className="link-btn" onClick={() => setProfileUser(q.managementApproval.approvedBy)} style={{ marginLeft: 6 }}>View Profile</button>
+                  )}</p>
+                )}
+              </div>
+              {renderQuotationActions(q)}
             </div>
-            <div className="lead-details">
-              <p><strong>Customer:</strong> {q.lead?.customerName || 'N/A'}</p>
-              <p><strong>Enquiry #:</strong> {q.enquiryNumber || q.lead?.enquiryNumber || 'N/A'}</p>
-              <p><strong>Offer Ref:</strong> {q.offerReference || 'N/A'}</p>
-              <p><strong>Grand Total:</strong> {q.priceSchedule?.currency || 'AED'} {Number(q.priceSchedule?.grandTotal || 0).toFixed(2)}</p>
-              <p><strong>Created by:</strong> {q.createdBy?._id === currentUser?.id ? 'You' : (q.createdBy?.name || 'N/A')}</p>
-              {q.createdBy?._id !== currentUser?.id && q.createdBy && (
-                <button className="link-btn" onClick={() => setProfileUser(q.createdBy)}>
-                  View Profile
-                </button>
-              )}
-              {q.managementApproval?.requestedBy?.name && (
-                <p><strong>Approval sent by:</strong> {q.managementApproval.requestedBy.name} {q.managementApproval.requestedBy?._id && (
-                  <button className="link-btn" onClick={() => setProfileUser(q.managementApproval.requestedBy)} style={{ marginLeft: 6 }}>View Profile</button>
-                )}</p>
-              )}
-              {q.managementApproval?.approvedBy?.name && (
-                <p><strong>Approved by:</strong> {q.managementApproval.approvedBy.name} {q.managementApproval.approvedBy?._id && (
-                  <button className="link-btn" onClick={() => setProfileUser(q.managementApproval.approvedBy)} style={{ marginLeft: 6 }}>View Profile</button>
-                )}</p>
-              )}
-            </div>
-            <div className="lead-actions">
-              <button className="assign-btn" onClick={() => {
-                setEditing(q)
-                setForm({
-                  lead: q.lead?._id || q.lead,
-                  companyInfo: q.companyInfo || defaultCompany,
-                  submittedTo: q.submittedTo || '',
-                  attention: q.attention || '',
-                  offerReference: q.offerReference || '',
-                  enquiryNumber: q.enquiryNumber || '',
-                  offerDate: q.offerDate ? q.offerDate.substring(0,10) : '',
-                  enquiryDate: q.enquiryDate ? q.enquiryDate.substring(0,10) : '',
-                  projectTitle: q.projectTitle || q.lead?.projectTitle || '',
-                  introductionText: q.introductionText || '',
-                  scopeOfWork: q.scopeOfWork?.length ? q.scopeOfWork : [{ description: '', quantity: '', unit: '', locationRemarks: '' }],
-                  priceSchedule: q.priceSchedule || { items: [], subTotal: 0, grandTotal: 0, currency: 'AED', taxDetails: { vatRate: 5, vatAmount: 0 } },
-                  ourViewpoints: q.ourViewpoints || '',
-                  exclusions: q.exclusions?.length ? q.exclusions : [''],
-                  paymentTerms: q.paymentTerms?.length ? q.paymentTerms : [{ milestoneDescription: '', amountPercent: ''}],
-                  deliveryCompletionWarrantyValidity: q.deliveryCompletionWarrantyValidity || { deliveryTimeline: '', warrantyPeriod: '', offerValidity: 30, authorizedSignatory: currentUser?.name || '' }
-                })
-                setShowModal(true)
-              }}>Edit</button>
-              <button className="save-btn" onClick={() => exportPDF(q)}>Export</button>
-              {q.managementApproval?.status === 'approved' && !hasRevisionFor[q._id] && (
-                <button className="assign-btn" onClick={() => {
-                  setRevisionModal({ open: true, quote: q, form: {
-                    companyInfo: q.companyInfo || defaultCompany,
-                    submittedTo: q.submittedTo || '',
-                    attention: q.attention || '',
-                    offerReference: q.offerReference || '',
-                    enquiryNumber: q.enquiryNumber || '',
-                    offerDate: q.offerDate ? q.offerDate.substring(0,10) : '',
-                    enquiryDate: q.enquiryDate ? q.enquiryDate.substring(0,10) : '',
-                    projectTitle: q.projectTitle || q.lead?.projectTitle || '',
-                    introductionText: q.introductionText || '',
-                    scopeOfWork: q.scopeOfWork?.length ? q.scopeOfWork : [{ description: '', quantity: '', unit: '', locationRemarks: '' }],
-                    priceSchedule: q.priceSchedule || { items: [], subTotal: 0, grandTotal: 0, currency: 'AED', taxDetails: { vatRate: 5, vatAmount: 0 } },
-                    ourViewpoints: q.ourViewpoints || '',
-                    exclusions: q.exclusions?.length ? q.exclusions : [''],
-                    paymentTerms: q.paymentTerms?.length ? q.paymentTerms : [{ milestoneDescription: '', amountPercent: ''}],
-                    deliveryCompletionWarrantyValidity: q.deliveryCompletionWarrantyValidity || { deliveryTimeline: '', warrantyPeriod: '', offerValidity: 30, authorizedSignatory: currentUser?.name || '' }
-                  } })
-                }}>Create Revision</button>
-              )}
-              <button className="assign-btn" onClick={() => {
-                try {
-                  localStorage.setItem('quotationId', q._id)
-                  localStorage.setItem('quotationDetail', JSON.stringify(q))
-                  const leadId = typeof q.lead === 'object' ? q.lead?._id : q.lead
-                  if (leadId) localStorage.setItem('leadId', leadId)
-                  window.location.href = '/quotation-detail'
-                } catch {
-                  window.location.href = '/quotation-detail'
-                }
-              }}>Detailed View</button>
-              {q.managementApproval?.status === 'pending' ? (
-                <span className="status-badge blue">Approval Pending</span>
-              ) : (
-                q.managementApproval?.status !== 'approved' && q.managementApproval?.status !== 'pending' && !(currentUser?.roles?.includes('manager') || currentUser?.roles?.includes('admin')) && (
-                  <button className="save-btn" onClick={() => sendForApproval(q)}>Send for Approval</button>
+          ))}
+        </div>
+      ) : (
+        <div className="table" style={{ marginTop: '24px' }}>
+          <table>
+            <thead>
+              <tr>
+                <th>Project Title</th>
+                <th>Customer</th>
+                <th>Enquiry #</th>
+                <th>Offer Ref</th>
+                <th>Offer Date</th>
+                <th>Grand Total</th>
+                <th>Status</th>
+                <th>Revisions</th>
+                <th>Created By</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {paginatedQuotations.map(q => {
+                const isExpanded = expandedRevisionRows[q._id]
+                const revisions = quotationRevisionsMap[q._id] || []
+                return (
+                  <>
+                    <tr key={q._id}>
+                      <td data-label="Project Title">{q.projectTitle || q.lead?.projectTitle || 'Quotation'}</td>
+                      <td data-label="Customer">{q.lead?.customerName || 'N/A'}</td>
+                      <td data-label="Enquiry #">{q.enquiryNumber || q.lead?.enquiryNumber || 'N/A'}</td>
+                      <td data-label="Offer Ref">{q.offerReference || 'N/A'}</td>
+                      <td data-label="Offer Date">{q.offerDate ? new Date(q.offerDate).toLocaleDateString() : 'N/A'}</td>
+                      <td data-label="Grand Total">{(q.priceSchedule?.currency || 'AED')} {Number(q.priceSchedule?.grandTotal || 0).toFixed(2)}</td>
+                      <td data-label="Status">
+                        <span className={`status-badge ${q.managementApproval?.status === 'approved' ? 'green' : (q.managementApproval?.status === 'rejected' ? 'red' : 'blue')}`}>
+                          {q.managementApproval?.status === 'pending' ? 'Approval Pending' : (q.managementApproval?.status || 'N/A')}
+                        </span>
+                      </td>
+                      <td data-label="Revisions">{revisionCounts[q._id] || 0}</td>
+                      <td data-label="Created By">
+                        {q.createdBy?._id === currentUser?.id ? 'You' : (q.createdBy?.name || 'N/A')}
+                        {q.createdBy?._id !== currentUser?.id && q.createdBy && (
+                          <button className="link-btn" onClick={() => setProfileUser(q.createdBy)} style={{ marginLeft: '6px' }}>
+                            View Profile
+                          </button>
+                        )}
+                      </td>
+                      <td data-label="Actions">
+                        {renderQuotationActions(q, true)}
+                      </td>
+                    </tr>
+                    {isExpanded && (
+                      <tr key={`${q._id}-revisions`} className="history-row accordion-row">
+                        <td colSpan={10} style={{ padding: '0' }}>
+                          <div className="history-panel accordion-content" style={{ padding: '16px' }}>
+                            <h4 style={{ marginTop: '0', marginBottom: '12px', fontSize: '16px', fontWeight: 600 }}>Revisions ({(quotationRevisionsMap[q._id] || []).length})</h4>
+                            {(quotationRevisionsMap[q._id] || []).length === 0 ? (
+                              <p style={{ margin: 0, color: 'var(--text-muted)' }}>No revisions found for this quotation.</p>
+                            ) : (
+                              <div className="table">
+                                <table>
+                                  <thead>
+                                    <tr>
+                                      <th>Revision #</th>
+                                      <th>Offer Ref</th>
+                                      <th>Offer Date</th>
+                                      <th>Grand Total</th>
+                                      <th>Status</th>
+                                      <th>Created By</th>
+                                      <th>Actions</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {(quotationRevisionsMap[q._id] || []).map((r) => (
+                                      <tr key={r._id}>
+                                        <td data-label="Revision #">{r.revisionNumber || 'N/A'}</td>
+                                        <td data-label="Offer Ref">{r.offerReference || 'N/A'}</td>
+                                        <td data-label="Offer Date">{r.offerDate ? new Date(r.offerDate).toLocaleDateString() : 'N/A'}</td>
+                                        <td data-label="Grand Total">{(r.priceSchedule?.currency || 'AED')} {Number(r.priceSchedule?.grandTotal || 0).toFixed(2)}</td>
+                                        <td data-label="Status">{r.managementApproval?.status || 'pending'}</td>
+                                        <td data-label="Created By">{r.createdBy?._id === currentUser?.id ? 'You' : (r.createdBy?.name || 'N/A')}</td>
+                                        <td data-label="Actions">
+                                          <button
+                                            className="save-btn"
+                                            onClick={() => {
+                                              try {
+                                                localStorage.setItem('revisionId', r._id)
+                                                localStorage.setItem('revisionDetail', JSON.stringify(r))
+                                                const leadId = typeof r.lead === 'object' ? r.lead?._id : r.lead
+                                                if (leadId) localStorage.setItem('leadId', leadId)
+                                              } catch {}
+                                              window.location.href = '/revision-detail'
+                                            }}
+                                          >
+                                            View
+                                          </button>
+                                        </td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </div>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                  </>
                 )
-              )}
-              <button className="link-btn" onClick={() => setApprovalsView(q)}>View Approvals/Rejections</button>
-              {(currentUser?.roles?.includes('manager') || currentUser?.roles?.includes('admin')) && q.managementApproval?.status === 'pending' && (
-                <>
-                  <button className="approve-btn" onClick={() => setApprovalModal({ open: true, quote: q, action: 'approved', note: '' })}>Approve</button>
-                  <button className="reject-btn" onClick={() => setApprovalModal({ open: true, quote: q, action: 'rejected', note: '' })}>Reject</button>
-                </>
-              )}
-              {q.lead?._id && (
-                <button className="link-btn" onClick={async () => {
-                  try {
-                    const res = await api.get(`/api/leads/${q.lead._id}`)
-                    const visitsRes = await api.get(`/api/leads/${q.lead._id}/site-visits`)
-                    const detail = { ...res.data, siteVisits: visitsRes.data }
-                    localStorage.setItem('leadDetail', JSON.stringify(detail))
-                    localStorage.setItem('leadId', q.lead._id)
-                    window.location.href = '/lead-detail'
-                  } catch { setNotify({ open: true, title: 'Open Lead Failed', message: 'We could not open the linked lead. Please try again.' }) }
-                }}>View Lead</button>
-              )}
-              {q.edits?.length > 0 && (
-                <button className="link-btn" onClick={() => setHistoryQuote(q)}>View Edit History</button>
-              )}
-            </div>
-          </div>
-        ))}
-      </div>
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
 
-      {showModal && (
+      {/* Pagination Controls */}
+      {filteredQuotations.length > 0 && (
+        <div className="pagination-container" style={{ 
+          display: 'flex', 
+          justifyContent: 'space-between', 
+          alignItems: 'center', 
+          marginTop: '24px',
+          padding: '16px',
+          background: 'var(--card)',
+          borderRadius: '8px',
+          border: '1px solid var(--border)'
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '14px' }}>
+              Items per page:
+              <select
+                value={itemsPerPage}
+                onChange={(e) => {
+                  setItemsPerPage(Number(e.target.value))
+                  setCurrentPage(1)
+                }}
+                style={{
+                  padding: '4px 8px',
+                  border: '1px solid var(--border)',
+                  borderRadius: '6px',
+                  background: 'var(--bg)',
+                  color: 'var(--text)',
+                  fontSize: '14px',
+                  cursor: 'pointer'
+                }}
+              >
+                <option value={5}>5</option>
+                <option value={10}>10</option>
+                <option value={20}>20</option>
+                <option value={50}>50</option>
+              </select>
+            </label>
+            <span style={{ fontSize: '14px', color: 'var(--text-muted)' }}>
+              Showing {startIndex + 1} to {Math.min(endIndex, filteredQuotations.length)} of {filteredQuotations.length}
+            </span>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <button
+              onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+              disabled={currentPage === 1}
+              style={{
+                padding: '6px 12px',
+                border: '1px solid var(--border)',
+                borderRadius: '6px',
+                background: currentPage === 1 ? 'var(--bg)' : 'var(--card)',
+                color: currentPage === 1 ? 'var(--text-muted)' : 'var(--text)',
+                cursor: currentPage === 1 ? 'not-allowed' : 'pointer',
+                fontSize: '14px',
+                opacity: currentPage === 1 ? 0.5 : 1
+              }}
+            >
+              Previous
+            </button>
+            <div style={{ display: 'flex', gap: '4px' }}>
+              {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+                let pageNum
+                if (totalPages <= 5) {
+                  pageNum = i + 1
+                } else if (currentPage <= 3) {
+                  pageNum = i + 1
+                } else if (currentPage >= totalPages - 2) {
+                  pageNum = totalPages - 4 + i
+                } else {
+                  pageNum = currentPage - 2 + i
+                }
+                return (
+                  <button
+                    key={pageNum}
+                    onClick={() => setCurrentPage(pageNum)}
+                    style={{
+                      padding: '6px 12px',
+                      border: '1px solid var(--border)',
+                      borderRadius: '6px',
+                      background: currentPage === pageNum ? 'var(--primary)' : 'var(--card)',
+                      color: currentPage === pageNum ? 'white' : 'var(--text)',
+                      cursor: 'pointer',
+                      fontSize: '14px',
+                      fontWeight: currentPage === pageNum ? 600 : 400
+                    }}
+                  >
+                    {pageNum}
+                  </button>
+                )
+              })}
+            </div>
+            <button
+              onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+              disabled={currentPage === totalPages}
+              style={{
+                padding: '6px 12px',
+                border: '1px solid var(--border)',
+                borderRadius: '6px',
+                background: currentPage === totalPages ? 'var(--bg)' : 'var(--card)',
+                color: currentPage === totalPages ? 'var(--text-muted)' : 'var(--text)',
+                cursor: currentPage === totalPages ? 'not-allowed' : 'pointer',
+                fontSize: '14px',
+                opacity: currentPage === totalPages ? 0.5 : 1
+              }}
+            >
+              Next
+            </button>
+          </div>
+        </div>
+      )}
+
+      <CreateQuotationModal
+        isOpen={showModal}
+        onClose={() => {
+          setShowModal(false)
+          setEditing(null)
+        }}
+        onSave={handleSave}
+        editing={editing}
+        leads={leads}
+      />
+
+      {/* Legacy modal code - keeping for reference but disabled */}
+      {false && showModal && (
         <div className="modal-overlay" onClick={() => setShowModal(false)}>
           <div className="modal" onClick={e => e.stopPropagation()}>
             <div className="modal-header">
               <h2>{editing ? 'Edit Quotation' : 'Create Quotation'}</h2>
               <button onClick={() => setShowModal(false)} className="close-btn">×</button>
             </div>
-            <form onSubmit={handleSave} className="lead-form" style={{ maxHeight: '70vh', overflow: 'auto' }}>
+            <form onSubmit={(e) => { e.preventDefault(); }} className="lead-form" style={{ maxHeight: '70vh', overflow: 'auto' }}>
               <div className="form-group">
                 <label>Select Lead *</label>
                 <select value={form.lead} onChange={e => setForm({ ...form, lead: e.target.value })} required>
@@ -1441,6 +1841,74 @@ function QuotationManagement() {
                 ))
               ) : (
                 <p>No edits recorded.</p>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showRevisionsModal && selectedQuotationForRevisions && (
+        <div className="modal-overlay" onClick={() => {
+          setShowRevisionsModal(false)
+          setSelectedQuotationForRevisions(null)
+          setRevisionsForQuotation([])
+        }}>
+          <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: '900px', width: '90%' }}>
+            <div className="modal-header">
+              <h2>Revisions for {selectedQuotationForRevisions.projectTitle || selectedQuotationForRevisions.offerReference || 'Quotation'}</h2>
+              <button onClick={() => {
+                setShowRevisionsModal(false)
+                setSelectedQuotationForRevisions(null)
+                setRevisionsForQuotation([])
+              }} className="close-btn">×</button>
+            </div>
+            <div className="lead-form" style={{ maxHeight: '70vh', overflow: 'auto' }}>
+              {revisionsForQuotation.length === 0 ? (
+                <p>No revisions found for this quotation.</p>
+              ) : (
+                <div className="table">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Revision #</th>
+                        <th>Offer Ref</th>
+                        <th>Offer Date</th>
+                        <th>Grand Total</th>
+                        <th>Status</th>
+                        <th>Created By</th>
+                        <th>Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {revisionsForQuotation.map((r) => (
+                        <tr key={r._id}>
+                          <td data-label="Revision #">{r.revisionNumber || 'N/A'}</td>
+                          <td data-label="Offer Ref">{r.offerReference || 'N/A'}</td>
+                          <td data-label="Offer Date">{r.offerDate ? new Date(r.offerDate).toLocaleDateString() : 'N/A'}</td>
+                          <td data-label="Grand Total">{(r.priceSchedule?.currency || 'AED')} {Number(r.priceSchedule?.grandTotal || 0).toFixed(2)}</td>
+                          <td data-label="Status">{r.managementApproval?.status || 'pending'}</td>
+                          <td data-label="Created By">{r.createdBy?._id === currentUser?.id ? 'You' : (r.createdBy?.name || 'N/A')}</td>
+                          <td data-label="Actions">
+                            <button
+                              className="save-btn"
+                              onClick={() => {
+                                try {
+                                  localStorage.setItem('revisionId', r._id)
+                                  localStorage.setItem('revisionDetail', JSON.stringify(r))
+                                  const leadId = typeof r.lead === 'object' ? r.lead?._id : r.lead
+                                  if (leadId) localStorage.setItem('leadId', leadId)
+                                } catch {}
+                                window.location.href = '/revision-detail'
+                              }}
+                            >
+                              View
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               )}
             </div>
           </div>

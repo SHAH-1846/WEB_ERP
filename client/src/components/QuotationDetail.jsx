@@ -16,6 +16,8 @@ function QuotationDetail() {
   const [approvalsViewOpen, setApprovalsViewOpen] = useState(false)
   const [revisionModal, setRevisionModal] = useState({ open: false, form: null })
   const [hasRevisions, setHasRevisions] = useState(false)
+  const [revisions, setRevisions] = useState([])
+  const [revisionHistoryOpen, setRevisionHistoryOpen] = useState({})
   const [notify, setNotify] = useState({ open: false, title: '', message: '' })
 
   const ensurePdfMake = async () => {
@@ -483,7 +485,9 @@ function QuotationDetail() {
           try {
             const revRes = await apiFetch(`/api/revisions?parentQuotation=${qid}`)
             const revs = await revRes.json()
-            setHasRevisions(Array.isArray(revs) && revs.length > 0)
+            const revisionsList = Array.isArray(revs) ? revs : []
+            setRevisions(revisionsList)
+            setHasRevisions(revisionsList.length > 0)
           } catch {}
         } else if (initial) {
           setQuotation(initial)
@@ -498,7 +502,9 @@ function QuotationDetail() {
           try {
             const revRes = await apiFetch(`/api/revisions?parentQuotation=${initial._id || localStorage.getItem('quotationId')}`)
             const revs = await revRes.json()
-            setHasRevisions(Array.isArray(revs) && revs.length > 0)
+            const revisionsList = Array.isArray(revs) ? revs : []
+            setRevisions(revisionsList)
+            setHasRevisions(revisionsList.length > 0)
           } catch {}
         }
       } catch {}
@@ -832,6 +838,88 @@ function QuotationDetail() {
           </div>
         </div>
       )}
+      {Array.isArray(revisions) && revisions.length > 0 && (
+        <div className="ld-card ld-section">
+          <h3>Revisions ({revisions.length})</h3>
+          <div className="table">
+            <table>
+              <thead>
+                <tr>
+                  <th>Revision #</th>
+                  <th>Offer Ref</th>
+                  <th>Offer Date</th>
+                  <th>Grand Total</th>
+                  <th>Status</th>
+                  <th>Created By</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {revisions.map((r) => (
+                  <>
+                    <tr key={r._id}>
+                      <td data-label="Revision #">{r.revisionNumber || 'N/A'}</td>
+                      <td data-label="Offer Ref">{r.offerReference || 'N/A'}</td>
+                      <td data-label="Offer Date">{r.offerDate ? new Date(r.offerDate).toLocaleDateString() : 'N/A'}</td>
+                      <td data-label="Grand Total">{(r.priceSchedule?.currency || 'AED')} {Number(r.priceSchedule?.grandTotal || 0).toFixed(2)}</td>
+                      <td data-label="Status">{r.managementApproval?.status || 'pending'}</td>
+                      <td data-label="Created By">
+                        {r.createdBy?._id === currentUser?.id ? 'You' : (r.createdBy?.name || 'N/A')}
+                        {r.createdBy?._id !== currentUser?.id && r.createdBy && (
+                          <button className="link-btn" onClick={() => setProfileUser(r.createdBy)} style={{ marginLeft: 6 }}>View Profile</button>
+                        )}
+                      </td>
+                      <td data-label="Actions">
+                        <div className="ld-actions">
+                          <button className="save-btn" onClick={() => {
+                            try {
+                              localStorage.setItem('revisionId', r._id)
+                              localStorage.setItem('revisionDetail', JSON.stringify(r))
+                              const leadId = typeof r.lead === 'object' ? r.lead?._id : r.lead
+                              if (leadId) localStorage.setItem('leadId', leadId)
+                            } catch {}
+                            window.location.href = '/revision-detail'
+                          }}>View Revision</button>
+                          {r.edits?.length > 0 && (
+                            <button className="link-btn" onClick={() => setRevisionHistoryOpen(prev => ({ ...prev, [r._id]: !prev[r._id] }))}>
+                              {revisionHistoryOpen[r._id] ? 'Hide History' : 'View History'}
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                    {revisionHistoryOpen[r._id] && r.edits?.length > 0 && (
+                      <tr className="history-row">
+                        <td colSpan={7}>
+                          <div className="history-panel">
+                            {r.edits.slice().reverse().map((e, j) => (
+                              <div key={j} className="edit-item" style={{ marginTop: 8 }}>
+                                <div className="edit-header">
+                                  <span>By {e.editedBy?._id === currentUser?.id ? 'You' : (e.editedBy?.name || 'N/A')}</span>
+                                  <span>{new Date(e.editedAt).toLocaleString()}</span>
+                                  {e.editedBy?._id !== currentUser?.id && e.editedBy && (
+                                    <button className="link-btn" onClick={() => setProfileUser(e.editedBy)}>View Profile</button>
+                                  )}
+                                </div>
+                                <ul className="changes-list">
+                                  {e.changes.map((c, k) => (
+                                    <li key={k}><strong>{c.field}:</strong> {String(c.from || '')} → {String(c.to || '')}</li>
+                                  ))}
+                                </ul>
+                              </div>
+                            ))}
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                  </>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
       {(currentUser?.roles?.includes('manager') || currentUser?.roles?.includes('admin')) && approvalStatus === 'pending' && (
         <div className="ld-card ld-section">
           <div className="ld-actions">
