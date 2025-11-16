@@ -7,6 +7,7 @@ function ProjectDetail() {
   const [lead, setLead] = useState(null)
   const [quotation, setQuotation] = useState(null)
   const [revisions, setRevisions] = useState([])
+  const [variations, setVariations] = useState([])
   const [notify, setNotify] = useState({ open: false, title: '', message: '' })
   const [editModal, setEditModal] = useState({ open: false, form: { name: '', locationDetails: '', workingHours: '', manpowerCount: '', status: 'active' } })
   const [projectEngineers, setProjectEngineers] = useState([])
@@ -53,6 +54,14 @@ function ProjectDetail() {
         if (pj.sourceRevision?.parentQuotation) {
           const resR = await api.get(`/api/revisions?parentQuotation=${pj.sourceRevision.parentQuotation}`)
           setRevisions(Array.isArray(resR.data) ? resR.data : [])
+        }
+        // Fetch project variations
+        try {
+          const resV = await api.get(`/api/project-variations?parentProject=${focus}`)
+          setVariations(Array.isArray(resV.data) ? resV.data : [])
+        } catch (err) {
+          console.error('Error fetching variations:', err)
+          setVariations([])
         }
         // Preload project engineers for name mapping and profile view
         try {
@@ -585,6 +594,40 @@ function ProjectDetail() {
               </tbody>
             </table>
           </div>
+        </div>
+
+        <div className="ld-card ld-section">
+          <h3>Project Variations ({variations && Array.isArray(variations) ? variations.length : 0})</h3>
+          {variations && Array.isArray(variations) && variations.length > 0 ? (
+            <div className="table">
+              <table>
+                <thead>
+                  <tr>
+                    <th>#</th>
+                    <th>Status</th>
+                    <th>Grand Total</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {variations.sort((a,b)=> (a.variationNumber||0)-(b.variationNumber||0)).map(v => (
+                    <tr key={v._id}>
+                      <td data-label="#">{v.variationNumber}</td>
+                      <td data-label="Status">{v.managementApproval?.status || 'pending'}</td>
+                      <td data-label="Grand Total">{(v.priceSchedule?.currency || 'AED')} {Number(v.priceSchedule?.grandTotal || 0).toFixed(2)}</td>
+                      <td data-label="Actions">
+                        <button className="link-btn" onClick={() => { try { localStorage.setItem('variationId', v._id) } catch {}; window.location.href = '/variation-detail' }}>View</button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div style={{ padding: '12px 0' }}>
+              <p style={{ color: 'var(--text-muted)', margin: 0 }}>No variations created yet.</p>
+            </div>
+          )}
         </div>
 
         {lead && (

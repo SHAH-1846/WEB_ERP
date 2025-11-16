@@ -24,6 +24,10 @@ function RevisionManagement() {
   })
   const [currentPage, setCurrentPage] = useState(1)
   const [itemsPerPage, setItemsPerPage] = useState(10)
+  const [projectMap, setProjectMap] = useState({}) // Map revision ID to project info
+  const [expandedProjectRows, setExpandedProjectRows] = useState({}) // Track which rows have expanded projects
+  const [projectDetailsMap, setProjectDetailsMap] = useState({}) // Store full project details per revision ID
+  const [projectModal, setProjectModal] = useState({ open: false, project: null })
 
   const defaultCompany = useMemo(() => ({
     logo,
@@ -48,7 +52,20 @@ function RevisionManagement() {
     try {
       const token = localStorage.getItem('token')
       const res = await api.get('/api/revisions')
-      setRevisions(res.data)
+      const revisionsData = res.data
+      setRevisions(revisionsData)
+      
+      // Check which revisions have projects
+      const projectChecks = {}
+      for (const rev of revisionsData) {
+        try {
+          const projectRes = await api.get(`/api/projects/by-revision/${rev._id}`)
+          projectChecks[rev._id] = projectRes.data
+        } catch {
+          // No project for this revision
+        }
+      }
+      setProjectMap(projectChecks)
     } catch {}
   }
 
@@ -395,8 +412,48 @@ function RevisionManagement() {
   }, [myOnly, selectedApprovedQuotationFilter, search, sortKey])
 
   // Helper function to render revision actions
+  const fetchProjectDetails = async (revisionId) => {
+    if (projectDetailsMap[revisionId]) return projectDetailsMap[revisionId]
+    
+    try {
+      const projectInfo = projectMap[revisionId]
+      if (!projectInfo?._id) return null
+      
+      const res = await api.get(`/api/projects/${projectInfo._id}`)
+      const project = res.data
+      setProjectDetailsMap(prev => ({ ...prev, [revisionId]: project }))
+      return project
+    } catch {
+      return null
+    }
+  }
+
+  const handleViewProject = async (revision, isTable = false) => {
+    if (isTable) {
+      // Toggle accordion in table view
+      const isExpanded = expandedProjectRows[revision._id]
+      setExpandedProjectRows(prev => ({ ...prev, [revision._id]: !isExpanded }))
+      
+      // Fetch project details if not already loaded
+      if (!isExpanded && !projectDetailsMap[revision._id]) {
+        await fetchProjectDetails(revision._id)
+      }
+    } else {
+      // Open modal in card view
+      const project = await fetchProjectDetails(revision._id)
+      if (project) {
+        setProjectModal({ open: true, project })
+      }
+    }
+  }
+
   const renderRevisionActions = (r) => (
     <div className="lead-actions">
+      {projectMap[r._id] && (
+        <button className="link-btn" onClick={() => handleViewProject(r, viewMode === 'table')}>
+          View Project
+        </button>
+      )}
       <button className="save-btn" onClick={() => exportPDF(r)}>Export</button>
       {(currentUser?.roles?.includes('estimation_engineer') || currentUser?.roles?.includes('manager') || currentUser?.roles?.includes('admin') || r.createdBy?._id === currentUser?.id) && (
         <button className="assign-btn" onClick={() => setEditModal({ open: true, revision: r, mode: 'edit', form: {
@@ -674,40 +731,74 @@ function RevisionManagement() {
             </thead>
             <tbody>
               {paginatedRevisions.map(r => (
-                <tr key={r._id}>
-                  <td data-label="Revision #">{r.revisionNumber || 'N/A'}</td>
-                  <td data-label="Project">{r.projectTitle || r.lead?.projectTitle || 'Revision'}</td>
-                  <td data-label="Customer">{r.lead?.customerName || 'N/A'}</td>
-                  <td data-label="Offer Ref">{r.offerReference || 'N/A'}</td>
-                  <td data-label="Parent Quotation">
-                    {typeof r.parentQuotation === 'object' ? (r.parentQuotation?.offerReference || 'N/A') : 'N/A'}
-                    {typeof r.parentQuotation === 'object' && r.parentQuotation?._id && (
-                      <button className="link-btn" onClick={() => {
-                        localStorage.setItem('quotationId', r.parentQuotation._id)
-                        window.location.href = '/quotation-detail'
-                      }} style={{ marginLeft: '6px' }}>
-                        View
-                      </button>
-                    )}
-                  </td>
-                  <td data-label="Grand Total">{(r.priceSchedule?.currency || 'AED')} {Number(r.priceSchedule?.grandTotal || 0).toFixed(2)}</td>
-                  <td data-label="Status">
-                    <span className={`status-badge ${r.managementApproval?.status === 'approved' ? 'green' : (r.managementApproval?.status === 'rejected' ? 'red' : 'blue')}`}>
-                      {r.managementApproval?.status === 'pending' ? 'Approval Pending' : (r.managementApproval?.status || 'N/A')}
-                    </span>
-                  </td>
-                  <td data-label="Created By">
-                    {r.createdBy?._id === currentUser?.id ? 'You' : (r.createdBy?.name || 'N/A')}
-                    {r.createdBy?._id !== currentUser?.id && r.createdBy && (
-                      <button className="link-btn" onClick={() => setProfileUser(r.createdBy)} style={{ marginLeft: '6px' }}>
-                        View Profile
-                      </button>
-                    )}
-                  </td>
-                  <td data-label="Actions">
-                    {renderRevisionActions(r)}
-                  </td>
-                </tr>
+                <>
+                  <tr key={r._id}>
+                    <td data-label="Revision #">{r.revisionNumber || 'N/A'}</td>
+                    <td data-label="Project">{r.projectTitle || r.lead?.projectTitle || 'Revision'}</td>
+                    <td data-label="Customer">{r.lead?.customerName || 'N/A'}</td>
+                    <td data-label="Offer Ref">{r.offerReference || 'N/A'}</td>
+                    <td data-label="Parent Quotation">
+                      {typeof r.parentQuotation === 'object' ? (r.parentQuotation?.offerReference || 'N/A') : 'N/A'}
+                      {typeof r.parentQuotation === 'object' && r.parentQuotation?._id && (
+                        <button className="link-btn" onClick={() => {
+                          localStorage.setItem('quotationId', r.parentQuotation._id)
+                          window.location.href = '/quotation-detail'
+                        }} style={{ marginLeft: '6px' }}>
+                          View
+                        </button>
+                      )}
+                    </td>
+                    <td data-label="Grand Total">{(r.priceSchedule?.currency || 'AED')} {Number(r.priceSchedule?.grandTotal || 0).toFixed(2)}</td>
+                    <td data-label="Status">
+                      <span className={`status-badge ${r.managementApproval?.status === 'approved' ? 'green' : (r.managementApproval?.status === 'rejected' ? 'red' : 'blue')}`}>
+                        {r.managementApproval?.status === 'pending' ? 'Approval Pending' : (r.managementApproval?.status || 'N/A')}
+                      </span>
+                    </td>
+                    <td data-label="Created By">
+                      {r.createdBy?._id === currentUser?.id ? 'You' : (r.createdBy?.name || 'N/A')}
+                      {r.createdBy?._id !== currentUser?.id && r.createdBy && (
+                        <button className="link-btn" onClick={() => setProfileUser(r.createdBy)} style={{ marginLeft: '6px' }}>
+                          View Profile
+                        </button>
+                      )}
+                    </td>
+                    <td data-label="Actions">
+                      {renderRevisionActions(r)}
+                    </td>
+                  </tr>
+                  {expandedProjectRows[r._id] && projectDetailsMap[r._id] && (
+                    <tr className="accordion-row">
+                      <td colSpan="9" style={{ padding: '0', borderTop: 'none' }}>
+                        <div className="accordion-content" style={{ padding: '20px', background: 'var(--bg)' }}>
+                          <h4 style={{ marginTop: 0, marginBottom: '16px' }}>Project Details</h4>
+                          <div className="ld-kv" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px 16px' }}>
+                            <p><strong>Project Name:</strong> {projectDetailsMap[r._id].name || 'N/A'}</p>
+                            <p><strong>Status:</strong> {projectDetailsMap[r._id].status || 'N/A'}</p>
+                            <p><strong>Location:</strong> {projectDetailsMap[r._id].locationDetails || 'N/A'}</p>
+                            <p><strong>Working Hours:</strong> {projectDetailsMap[r._id].workingHours || 'N/A'}</p>
+                            <p><strong>Manpower Count:</strong> {projectDetailsMap[r._id].manpowerCount || 'N/A'}</p>
+                            <p><strong>Budget:</strong> {projectDetailsMap[r._id].budget ? `${projectDetailsMap[r._id].budget}` : 'N/A'}</p>
+                            <p><strong>Site Engineer:</strong> {projectDetailsMap[r._id].assignedSiteEngineer?.name || 'Not Assigned'}</p>
+                            <p><strong>Project Engineer:</strong> {projectDetailsMap[r._id].assignedProjectEngineer?.name || 'Not Assigned'}</p>
+                            <p><strong>Created At:</strong> {projectDetailsMap[r._id].createdAt ? new Date(projectDetailsMap[r._id].createdAt).toLocaleString() : 'N/A'}</p>
+                            <p><strong>Created By:</strong> {projectDetailsMap[r._id].createdBy?.name || 'N/A'}</p>
+                          </div>
+                          <div style={{ marginTop: '16px' }}>
+                            <button className="assign-btn" onClick={() => {
+                              try {
+                                localStorage.setItem('projectsFocusId', projectDetailsMap[r._id]._id)
+                                localStorage.setItem('projectId', projectDetailsMap[r._id]._id)
+                              } catch {}
+                              window.location.href = '/project-detail'
+                            }}>
+                              View Full Project Details
+                            </button>
+                          </div>
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </>
               ))}
             </tbody>
           </table>
@@ -1381,6 +1472,42 @@ function RevisionManagement() {
               <p>{notify.message}</p>
               <div className="form-actions">
                 <button type="button" className="save-btn" onClick={() => setNotify({ open: false, title: '', message: '' })}>OK</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {projectModal.open && projectModal.project && (
+        <div className="modal-overlay" onClick={() => setProjectModal({ open: false, project: null })}>
+          <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: '800px', width: '90%' }}>
+            <div className="modal-header">
+              <h2>Project Details</h2>
+              <button onClick={() => setProjectModal({ open: false, project: null })} className="close-btn">×</button>
+            </div>
+            <div className="lead-form" style={{ maxHeight: '70vh', overflow: 'auto' }}>
+              <div className="ld-kv" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px 16px' }}>
+                <p><strong>Project Name:</strong> {projectModal.project.name || 'N/A'}</p>
+                <p><strong>Status:</strong> {projectModal.project.status || 'N/A'}</p>
+                <p><strong>Location:</strong> {projectModal.project.locationDetails || 'N/A'}</p>
+                <p><strong>Working Hours:</strong> {projectModal.project.workingHours || 'N/A'}</p>
+                <p><strong>Manpower Count:</strong> {projectModal.project.manpowerCount || 'N/A'}</p>
+                <p><strong>Budget:</strong> {projectModal.project.budget ? `${projectModal.project.budget}` : 'N/A'}</p>
+                <p><strong>Site Engineer:</strong> {projectModal.project.assignedSiteEngineer?.name || 'Not Assigned'}</p>
+                <p><strong>Project Engineer:</strong> {projectModal.project.assignedProjectEngineer?.name || 'Not Assigned'}</p>
+                <p><strong>Created At:</strong> {projectModal.project.createdAt ? new Date(projectModal.project.createdAt).toLocaleString() : 'N/A'}</p>
+                <p><strong>Created By:</strong> {projectModal.project.createdBy?.name || 'N/A'}</p>
+              </div>
+              <div style={{ marginTop: '20px' }}>
+                <button className="assign-btn" onClick={() => {
+                  try {
+                    localStorage.setItem('projectsFocusId', projectModal.project._id)
+                    localStorage.setItem('projectId', projectModal.project._id)
+                  } catch {}
+                  window.location.href = '/project-detail'
+                }}>
+                  View Full Project Details
+                </button>
               </div>
             </div>
           </div>

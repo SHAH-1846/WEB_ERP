@@ -33,6 +33,10 @@ function QuotationManagement() {
   const [currentPage, setCurrentPage] = useState(1)
   const [itemsPerPage, setItemsPerPage] = useState(10)
   const [search, setSearch] = useState('')
+  const [revisionProjectMap, setRevisionProjectMap] = useState({}) // Map revision ID to project info
+  const [expandedProjectRows, setExpandedProjectRows] = useState({}) // Track which revision rows have expanded projects
+  const [revisionProjectDetailsMap, setRevisionProjectDetailsMap] = useState({}) // Store full project details per revision ID
+  const [projectModal, setProjectModal] = useState({ open: false, project: null })
 
   const defaultCompany = useMemo(() => ({
     logo,
@@ -82,6 +86,26 @@ function QuotationManagement() {
   useEffect(() => {
     localStorage.setItem('quotationViewMode', viewMode)
   }, [viewMode])
+
+  // Adjust itemsPerPage when switching views to ensure grid-friendly values for card view
+  useEffect(() => {
+    if (viewMode === 'card' && ![6, 9, 12, 15, 18, 21, 24].includes(itemsPerPage)) {
+      // Find the nearest card-friendly value (multiple of 3)
+      const cardValues = [6, 9, 12, 15, 18, 21, 24]
+      const nearest = cardValues.reduce((prev, curr) => 
+        Math.abs(curr - itemsPerPage) < Math.abs(prev - itemsPerPage) ? curr : prev
+      )
+      setItemsPerPage(nearest)
+    } else if (viewMode === 'table' && ![5, 10, 20, 50].includes(itemsPerPage)) {
+      // Find the nearest table-friendly value
+      const tableValues = [5, 10, 20, 50]
+      const nearest = tableValues.reduce((prev, curr) => 
+        Math.abs(curr - itemsPerPage) < Math.abs(prev - itemsPerPage) ? curr : prev
+      )
+      setItemsPerPage(nearest)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [viewMode]) // Only run when viewMode changes, not when itemsPerPage changes
 
   // Note: Legacy localStorage-based auto-open removed - now using route-based modal
   // The CreateQuotationModal handles pre-selection via props
@@ -614,12 +638,59 @@ function QuotationManagement() {
           const revRes = await api.get(`/api/revisions?parentQuotation=${quotationId}`)
           const revisions = Array.isArray(revRes.data) ? revRes.data : []
           setQuotationRevisionsMap(prev => ({ ...prev, [quotationId]: revisions }))
+          
+          // Check which revisions have projects
+          const projectChecks = {}
+          for (const rev of revisions) {
+            try {
+              const projectRes = await api.get(`/api/projects/by-revision/${rev._id}`)
+              projectChecks[rev._id] = projectRes.data
+            } catch {
+              // No project for this revision
+            }
+          }
+          setRevisionProjectMap(prev => ({ ...prev, ...projectChecks }))
         } catch (e) {
           setNotify({ open: true, title: 'Load Failed', message: 'We could not load the revisions. Please try again.' })
           return
         }
       }
       setExpandedRevisionRows(prev => ({ ...prev, [quotationId]: true }))
+    }
+  }
+
+  const fetchRevisionProjectDetails = async (revisionId) => {
+    if (revisionProjectDetailsMap[revisionId]) return revisionProjectDetailsMap[revisionId]
+    
+    try {
+      const projectInfo = revisionProjectMap[revisionId]
+      if (!projectInfo?._id) return null
+      
+      const res = await api.get(`/api/projects/${projectInfo._id}`)
+      const project = res.data
+      setRevisionProjectDetailsMap(prev => ({ ...prev, [revisionId]: project }))
+      return project
+    } catch {
+      return null
+    }
+  }
+
+  const handleViewProjectFromRevision = async (revision, isTable = false) => {
+    if (isTable) {
+      // Toggle accordion in table view
+      const isExpanded = expandedProjectRows[revision._id]
+      setExpandedProjectRows(prev => ({ ...prev, [revision._id]: !isExpanded }))
+      
+      // Fetch project details if not already loaded
+      if (!isExpanded && !revisionProjectDetailsMap[revision._id]) {
+        await fetchRevisionProjectDetails(revision._id)
+      }
+    } else {
+      // Open modal in card view
+      const project = await fetchRevisionProjectDetails(revision._id)
+      if (project) {
+        setProjectModal({ open: true, project })
+      }
     }
   }
 
@@ -706,6 +777,18 @@ function QuotationManagement() {
               setRevisionsForQuotation(revisions)
               setSelectedQuotationForRevisions(q)
               setShowRevisionsModal(true)
+              
+              // Check which revisions have projects
+              const projectChecks = {}
+              for (const rev of revisions) {
+                try {
+                  const projectRes = await api.get(`/api/projects/by-revision/${rev._id}`)
+                  projectChecks[rev._id] = projectRes.data
+                } catch {
+                  // No project for this revision
+                }
+              }
+              setRevisionProjectMap(prev => ({ ...prev, ...projectChecks }))
             } catch (e) {
               setNotify({ open: true, title: 'Open Failed', message: 'We could not load the revisions. Please try again.' })
             }
@@ -964,30 +1047,73 @@ function QuotationManagement() {
                                   </thead>
                                   <tbody>
                                     {(quotationRevisionsMap[q._id] || []).map((r) => (
-                                      <tr key={r._id}>
-                                        <td data-label="Revision #">{r.revisionNumber || 'N/A'}</td>
-                                        <td data-label="Offer Ref">{r.offerReference || 'N/A'}</td>
-                                        <td data-label="Offer Date">{r.offerDate ? new Date(r.offerDate).toLocaleDateString() : 'N/A'}</td>
-                                        <td data-label="Grand Total">{(r.priceSchedule?.currency || 'AED')} {Number(r.priceSchedule?.grandTotal || 0).toFixed(2)}</td>
-                                        <td data-label="Status">{r.managementApproval?.status || 'pending'}</td>
-                                        <td data-label="Created By">{r.createdBy?._id === currentUser?.id ? 'You' : (r.createdBy?.name || 'N/A')}</td>
-                                        <td data-label="Actions">
-                                          <button
-                                            className="save-btn"
-                                            onClick={() => {
-                                              try {
-                                                localStorage.setItem('revisionId', r._id)
-                                                localStorage.setItem('revisionDetail', JSON.stringify(r))
-                                                const leadId = typeof r.lead === 'object' ? r.lead?._id : r.lead
-                                                if (leadId) localStorage.setItem('leadId', leadId)
-                                              } catch {}
-                                              window.location.href = '/revision-detail'
-                                            }}
-                                          >
-                                            View
-                                          </button>
-                                        </td>
-                                      </tr>
+                                      <>
+                                        <tr key={r._id}>
+                                          <td data-label="Revision #">{r.revisionNumber || 'N/A'}</td>
+                                          <td data-label="Offer Ref">{r.offerReference || 'N/A'}</td>
+                                          <td data-label="Offer Date">{r.offerDate ? new Date(r.offerDate).toLocaleDateString() : 'N/A'}</td>
+                                          <td data-label="Grand Total">{(r.priceSchedule?.currency || 'AED')} {Number(r.priceSchedule?.grandTotal || 0).toFixed(2)}</td>
+                                          <td data-label="Status">{r.managementApproval?.status || 'pending'}</td>
+                                          <td data-label="Created By">{r.createdBy?._id === currentUser?.id ? 'You' : (r.createdBy?.name || 'N/A')}</td>
+                                          <td data-label="Actions">
+                                            <button
+                                              className="save-btn"
+                                              onClick={() => {
+                                                try {
+                                                  localStorage.setItem('revisionId', r._id)
+                                                  localStorage.setItem('revisionDetail', JSON.stringify(r))
+                                                  const leadId = typeof r.lead === 'object' ? r.lead?._id : r.lead
+                                                  if (leadId) localStorage.setItem('leadId', leadId)
+                                                } catch {}
+                                                window.location.href = '/revision-detail'
+                                              }}
+                                            >
+                                              View
+                                            </button>
+                                            {revisionProjectMap[r._id] && (
+                                              <button
+                                                className="link-btn"
+                                                onClick={() => handleViewProjectFromRevision(r, true)}
+                                                style={{ marginLeft: '6px' }}
+                                              >
+                                                View Project
+                                              </button>
+                                            )}
+                                          </td>
+                                        </tr>
+                                        {expandedProjectRows[r._id] && revisionProjectDetailsMap[r._id] && (
+                                          <tr className="accordion-row">
+                                            <td colSpan="7" style={{ padding: '0', borderTop: 'none' }}>
+                                              <div className="accordion-content" style={{ padding: '20px', background: 'var(--bg)' }}>
+                                                <h4 style={{ marginTop: 0, marginBottom: '16px' }}>Project Details</h4>
+                                                <div className="ld-kv" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px 16px' }}>
+                                                  <p><strong>Project Name:</strong> {revisionProjectDetailsMap[r._id].name || 'N/A'}</p>
+                                                  <p><strong>Status:</strong> {revisionProjectDetailsMap[r._id].status || 'N/A'}</p>
+                                                  <p><strong>Location:</strong> {revisionProjectDetailsMap[r._id].locationDetails || 'N/A'}</p>
+                                                  <p><strong>Working Hours:</strong> {revisionProjectDetailsMap[r._id].workingHours || 'N/A'}</p>
+                                                  <p><strong>Manpower Count:</strong> {revisionProjectDetailsMap[r._id].manpowerCount || 'N/A'}</p>
+                                                  <p><strong>Budget:</strong> {revisionProjectDetailsMap[r._id].budget ? `${revisionProjectDetailsMap[r._id].budget}` : 'N/A'}</p>
+                                                  <p><strong>Site Engineer:</strong> {revisionProjectDetailsMap[r._id].assignedSiteEngineer?.name || 'Not Assigned'}</p>
+                                                  <p><strong>Project Engineer:</strong> {revisionProjectDetailsMap[r._id].assignedProjectEngineer?.name || 'Not Assigned'}</p>
+                                                  <p><strong>Created At:</strong> {revisionProjectDetailsMap[r._id].createdAt ? new Date(revisionProjectDetailsMap[r._id].createdAt).toLocaleString() : 'N/A'}</p>
+                                                  <p><strong>Created By:</strong> {revisionProjectDetailsMap[r._id].createdBy?.name || 'N/A'}</p>
+                                                </div>
+                                                <div style={{ marginTop: '16px' }}>
+                                                  <button className="assign-btn" onClick={() => {
+                                                    try {
+                                                      localStorage.setItem('projectsFocusId', revisionProjectDetailsMap[r._id]._id)
+                                                      localStorage.setItem('projectId', revisionProjectDetailsMap[r._id]._id)
+                                                    } catch {}
+                                                    window.location.href = '/project-detail'
+                                                  }}>
+                                                    View Full Project Details
+                                                  </button>
+                                                </div>
+                                              </div>
+                                            </td>
+                                          </tr>
+                                        )}
+                                      </>
                                     ))}
                                   </tbody>
                                 </table>
@@ -1036,10 +1162,24 @@ function QuotationManagement() {
                   cursor: 'pointer'
                 }}
               >
-                <option value={5}>5</option>
-                <option value={10}>10</option>
-                <option value={20}>20</option>
-                <option value={50}>50</option>
+                {viewMode === 'card' ? (
+                  <>
+                    <option value={6}>6</option>
+                    <option value={9}>9</option>
+                    <option value={12}>12</option>
+                    <option value={15}>15</option>
+                    <option value={18}>18</option>
+                    <option value={21}>21</option>
+                    <option value={24}>24</option>
+                  </>
+                ) : (
+                  <>
+                    <option value={5}>5</option>
+                    <option value={10}>10</option>
+                    <option value={20}>20</option>
+                    <option value={50}>50</option>
+                  </>
+                )}
               </select>
             </label>
             <span style={{ fontSize: '14px', color: 'var(--text-muted)' }}>
@@ -1903,6 +2043,15 @@ function QuotationManagement() {
                             >
                               View
                             </button>
+                            {revisionProjectMap[r._id] && (
+                              <button
+                                className="link-btn"
+                                onClick={() => handleViewProjectFromRevision(r, false)}
+                                style={{ marginLeft: '6px' }}
+                              >
+                                View Project
+                              </button>
+                            )}
                           </td>
                         </tr>
                       ))}
@@ -1910,6 +2059,42 @@ function QuotationManagement() {
                   </table>
                 </div>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {projectModal.open && projectModal.project && (
+        <div className="modal-overlay" onClick={() => setProjectModal({ open: false, project: null })}>
+          <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: '800px', width: '90%' }}>
+            <div className="modal-header">
+              <h2>Project Details</h2>
+              <button onClick={() => setProjectModal({ open: false, project: null })} className="close-btn">×</button>
+            </div>
+            <div className="lead-form" style={{ maxHeight: '70vh', overflow: 'auto' }}>
+              <div className="ld-kv" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px 16px' }}>
+                <p><strong>Project Name:</strong> {projectModal.project.name || 'N/A'}</p>
+                <p><strong>Status:</strong> {projectModal.project.status || 'N/A'}</p>
+                <p><strong>Location:</strong> {projectModal.project.locationDetails || 'N/A'}</p>
+                <p><strong>Working Hours:</strong> {projectModal.project.workingHours || 'N/A'}</p>
+                <p><strong>Manpower Count:</strong> {projectModal.project.manpowerCount || 'N/A'}</p>
+                <p><strong>Budget:</strong> {projectModal.project.budget ? `${projectModal.project.budget}` : 'N/A'}</p>
+                <p><strong>Site Engineer:</strong> {projectModal.project.assignedSiteEngineer?.name || 'Not Assigned'}</p>
+                <p><strong>Project Engineer:</strong> {projectModal.project.assignedProjectEngineer?.name || 'Not Assigned'}</p>
+                <p><strong>Created At:</strong> {projectModal.project.createdAt ? new Date(projectModal.project.createdAt).toLocaleString() : 'N/A'}</p>
+                <p><strong>Created By:</strong> {projectModal.project.createdBy?.name || 'N/A'}</p>
+              </div>
+              <div style={{ marginTop: '20px' }}>
+                <button className="assign-btn" onClick={() => {
+                  try {
+                    localStorage.setItem('projectsFocusId', projectModal.project._id)
+                    localStorage.setItem('projectId', projectModal.project._id)
+                  } catch {}
+                  window.location.href = '/project-detail'
+                }}>
+                  View Full Project Details
+                </button>
+              </div>
             </div>
           </div>
         </div>

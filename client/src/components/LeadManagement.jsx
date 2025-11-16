@@ -63,6 +63,26 @@ function LeadManagement() {
     localStorage.setItem('leadViewMode', viewMode)
   }, [viewMode])
 
+  // Adjust itemsPerPage when switching views to ensure grid-friendly values for card view
+  useEffect(() => {
+    if (viewMode === 'card' && ![6, 9, 12, 15, 18, 21, 24].includes(itemsPerPage)) {
+      // Find the nearest card-friendly value (multiple of 3)
+      const cardValues = [6, 9, 12, 15, 18, 21, 24]
+      const nearest = cardValues.reduce((prev, curr) => 
+        Math.abs(curr - itemsPerPage) < Math.abs(prev - itemsPerPage) ? curr : prev
+      )
+      setItemsPerPage(nearest)
+    } else if (viewMode === 'table' && ![5, 10, 20, 50].includes(itemsPerPage)) {
+      // Find the nearest table-friendly value
+      const tableValues = [5, 10, 20, 50]
+      const nearest = tableValues.reduce((prev, curr) => 
+        Math.abs(curr - itemsPerPage) < Math.abs(prev - itemsPerPage) ? curr : prev
+      )
+      setItemsPerPage(nearest)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [viewMode]) // Only run when viewMode changes, not when itemsPerPage changes
+
   const fetchLeads = async () => {
     try {
       const response = await api.get('/api/leads')
@@ -579,10 +599,24 @@ function LeadManagement() {
                   cursor: 'pointer'
                 }}
               >
-                <option value={5}>5</option>
-                <option value={10}>10</option>
-                <option value={20}>20</option>
-                <option value={50}>50</option>
+                {viewMode === 'card' ? (
+                  <>
+                    <option value={6}>6</option>
+                    <option value={9}>9</option>
+                    <option value={12}>12</option>
+                    <option value={15}>15</option>
+                    <option value={18}>18</option>
+                    <option value={21}>21</option>
+                    <option value={24}>24</option>
+                  </>
+                ) : (
+                  <>
+                    <option value={5}>5</option>
+                    <option value={10}>10</option>
+                    <option value={20}>20</option>
+                    <option value={50}>50</option>
+                  </>
+                )}
               </select>
             </label>
             <span style={{ fontSize: '14px', color: 'var(--text-muted)' }}>

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { api } from '../lib/api'
 import './ProjectManagement.css'
 
@@ -33,6 +33,25 @@ function ProjectManagement() {
   const [projectEngineers, setProjectEngineers] = useState([])
   const [profileUser, setProfileUser] = useState(null)
   const [historyOpen, setHistoryOpen] = useState({})
+  const [viewMode, setViewMode] = useState(() => {
+    const saved = localStorage.getItem('projectViewMode')
+    return saved === 'table' ? 'table' : 'card' // default to 'card' if not set
+  })
+  const [search, setSearch] = useState('')
+  const [currentPage, setCurrentPage] = useState(1)
+  const [itemsPerPage, setItemsPerPage] = useState(10)
+  const [revisions, setRevisions] = useState([])
+  const [selectedRevisionFilter, setSelectedRevisionFilter] = useState('')
+  const [variationModal, setVariationModal] = useState({ open: false, project: null, form: null })
+  const [allVariations, setAllVariations] = useState([])
+  
+  const defaultCompany = useMemo(() => ({
+    logo: null,
+    name: 'WBES',
+    address: 'Dubai, UAE',
+    phone: '+971-00-000-0000',
+    email: 'info@wbes.example'
+  }), [])
 
   const ensurePdfMake = async () => {
     if (window.pdfMake) return
@@ -540,6 +559,8 @@ function ProjectManagement() {
     setCurrentUser(userData)
     fetchProjects()
     fetchSiteEngineers()
+    fetchRevisions()
+    fetchAllVariations()
     ;(async () => {
       try {
         const token = localStorage.getItem('token')
@@ -548,6 +569,60 @@ function ProjectManagement() {
       } catch {}
     })()
   }, [])
+
+  const fetchAllVariations = async () => {
+    try {
+      const res = await api.get('/api/project-variations')
+      setAllVariations(Array.isArray(res.data) ? res.data : [])
+    } catch (err) {
+      console.error('Error fetching variations:', err)
+      setAllVariations([])
+    }
+  }
+
+  const fetchRevisions = async () => {
+    try {
+      const res = await api.get('/api/revisions')
+      // Filter to only approved revisions that have projects
+      const allRevisions = Array.isArray(res.data) ? res.data : []
+      // Get revisions that have projects
+      const revisionsWithProjects = []
+      for (const rev of allRevisions) {
+        try {
+          await api.get(`/api/projects/by-revision/${rev._id}`)
+          revisionsWithProjects.push(rev)
+        } catch {
+          // No project for this revision
+        }
+      }
+      setRevisions(revisionsWithProjects)
+    } catch {}
+  }
+
+  // Persist view mode to localStorage whenever it changes
+  useEffect(() => {
+    localStorage.setItem('projectViewMode', viewMode)
+  }, [viewMode])
+
+  // Adjust itemsPerPage when switching views to ensure grid-friendly values for card view
+  useEffect(() => {
+    if (viewMode === 'card' && ![6, 9, 12, 15, 18, 21, 24].includes(itemsPerPage)) {
+      // Find the nearest card-friendly value (multiple of 3)
+      const cardValues = [6, 9, 12, 15, 18, 21, 24]
+      const nearest = cardValues.reduce((prev, curr) => 
+        Math.abs(curr - itemsPerPage) < Math.abs(prev - itemsPerPage) ? curr : prev
+      )
+      setItemsPerPage(nearest)
+    } else if (viewMode === 'table' && ![5, 10, 20, 50].includes(itemsPerPage)) {
+      // Find the nearest table-friendly value
+      const tableValues = [5, 10, 20, 50]
+      const nearest = tableValues.reduce((prev, curr) => 
+        Math.abs(curr - itemsPerPage) < Math.abs(prev - itemsPerPage) ? curr : prev
+      )
+      setItemsPerPage(nearest)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [viewMode]) // Only run when viewMode changes, not when itemsPerPage changes
 
   const fetchProjects = async () => {
     try {
@@ -620,6 +695,55 @@ function ProjectManagement() {
     return currentUser?.roles?.includes('project_engineer')
   }
 
+  const canCreateVariation = () => {
+    return currentUser?.roles?.some(role => ['admin', 'manager', 'estimation_engineer'].includes(role))
+  }
+
+  const createVariation = async () => {
+    try {
+      const token = localStorage.getItem('token')
+      const payload = { ...variationModal.form }
+      const project = variationModal.project
+      
+      // Get source data from project's source revision or quotation
+      let sourceData = null
+      if (project.sourceRevision) {
+        try {
+          const revRes = await api.get(`/api/revisions/${typeof project.sourceRevision === 'object' ? project.sourceRevision._id : project.sourceRevision}`)
+          sourceData = revRes.data
+        } catch {}
+      } else if (project.sourceQuotation) {
+        try {
+          const qRes = await api.get(`/api/quotations/${typeof project.sourceQuotation === 'object' ? project.sourceQuotation._id : project.sourceQuotation}`)
+          sourceData = qRes.data
+        } catch {}
+      }
+      
+      if (!sourceData) {
+        setNotify({ open: true, title: 'Error', message: 'Project has no source quotation or revision to base variation on.' })
+        return
+      }
+      
+      const fields = ['companyInfo','submittedTo','attention','offerReference','enquiryNumber','offerDate','enquiryDate','projectTitle','introductionText','scopeOfWork','priceSchedule','ourViewpoints','exclusions','paymentTerms','deliveryCompletionWarrantyValidity']
+      let changed = false
+      for (const f of fields) {
+        if (JSON.stringify(sourceData?.[f] ?? null) !== JSON.stringify(payload?.[f] ?? null)) { changed = true; break }
+      }
+      if (!changed) { 
+        setNotify({ open: true, title: 'No Changes', message: 'No changes detected. Please modify data before creating a variation.' })
+        return 
+      }
+      
+      await api.post('/api/project-variations', { parentProjectId: project._id, data: payload })
+      setNotify({ open: true, title: 'Variation Created', message: 'The variation quotation was created successfully.' })
+      setVariationModal({ open: false, project: null, form: null })
+      await fetchProjects()
+      await fetchAllVariations()
+    } catch (e) {
+      setNotify({ open: true, title: 'Create Failed', message: e.response?.data?.message || 'We could not create the variation. Please try again.' })
+    }
+  }
+
   const getStatusColor = (status) => {
     const colors = {
       active: 'green',
@@ -629,14 +753,212 @@ function ProjectManagement() {
     return colors[status] || 'gray'
   }
 
+  // Filter projects based on search and revision
+  const filteredProjects = projects.filter(project => {
+    // Apply revision filter
+    if (selectedRevisionFilter) {
+      const projectRevisionId = typeof project.sourceRevision === 'object' ? project.sourceRevision?._id : project.sourceRevision
+      if (projectRevisionId !== selectedRevisionFilter) return false
+    }
+    
+    // Apply search filter
+    if (search.trim()) {
+      const term = search.toLowerCase()
+      const matches = (
+        (project.name || '').toLowerCase().includes(term) ||
+        (project.locationDetails || '').toLowerCase().includes(term) ||
+        (project.leadId?.customerName || '').toLowerCase().includes(term) ||
+        (project.leadId?.projectTitle || '').toLowerCase().includes(term) ||
+        (project.assignedSiteEngineer?.name || '').toLowerCase().includes(term) ||
+        (project.assignedProjectEngineer?.name || '').toLowerCase().includes(term)
+      )
+      if (!matches) return false
+    }
+    
+    return true
+  })
+  const totalProjects = projects.length
+  const displayedProjects = filteredProjects.length
+
+  // Pagination calculations
+  const totalPages = Math.ceil(filteredProjects.length / itemsPerPage)
+  const startIndex = (currentPage - 1) * itemsPerPage
+  const endIndex = startIndex + itemsPerPage
+  const paginatedProjects = filteredProjects.slice(startIndex, endIndex)
+
+  // Reset to page 1 when filters change
+  useEffect(() => {
+    setCurrentPage(1)
+  }, [search, selectedRevisionFilter])
+
+  // Helper function to render project actions
+  const renderProjectActions = (project) => (
+    <div className="project-actions">
+      {canCreateVariation() && (
+        <button className="assign-btn" onClick={async () => {
+          // Get source data from project's source revision or quotation
+          let sourceData = null
+          if (project.sourceRevision) {
+            try {
+              const revRes = await api.get(`/api/revisions/${typeof project.sourceRevision === 'object' ? project.sourceRevision._id : project.sourceRevision}`)
+              sourceData = revRes.data
+            } catch {}
+          } else if (project.sourceQuotation) {
+            try {
+              const qRes = await api.get(`/api/quotations/${typeof project.sourceQuotation === 'object' ? project.sourceQuotation._id : project.sourceQuotation}`)
+              sourceData = qRes.data
+            } catch {}
+          }
+          
+          if (!sourceData) {
+            setNotify({ open: true, title: 'Error', message: 'Project has no source quotation or revision to base variation on.' })
+            return
+          }
+          
+          setVariationModal({ open: true, project, form: {
+            companyInfo: sourceData.companyInfo || defaultCompany,
+            submittedTo: sourceData.submittedTo || '',
+            attention: sourceData.attention || '',
+            offerReference: sourceData.offerReference || '',
+            enquiryNumber: sourceData.enquiryNumber || '',
+            offerDate: sourceData.offerDate ? sourceData.offerDate.substring(0,10) : '',
+            enquiryDate: sourceData.enquiryDate ? sourceData.enquiryDate.substring(0,10) : '',
+            projectTitle: sourceData.projectTitle || project.name || '',
+            introductionText: sourceData.introductionText || '',
+            scopeOfWork: sourceData.scopeOfWork?.length ? sourceData.scopeOfWork : [{ description: '', quantity: '', unit: '', locationRemarks: '' }],
+            priceSchedule: sourceData.priceSchedule || { items: [], subTotal: 0, grandTotal: 0, currency: 'AED', taxDetails: { vatRate: 5, vatAmount: 0 } },
+            ourViewpoints: sourceData.ourViewpoints || '',
+            exclusions: sourceData.exclusions?.length ? sourceData.exclusions : [''],
+            paymentTerms: sourceData.paymentTerms?.length ? sourceData.paymentTerms : [{ milestoneDescription: '', amountPercent: ''}],
+            deliveryCompletionWarrantyValidity: sourceData.deliveryCompletionWarrantyValidity || { deliveryTimeline: '', warrantyPeriod: '', offerValidity: 30, authorizedSignatory: currentUser?.name || '' }
+          } })
+        }}>Create Variation Quotation</button>
+      )}
+      <button className="save-btn" onClick={() => exportProjectPDF(project)}>Export PDF</button>
+      <button className="assign-btn" onClick={() => { try { localStorage.setItem('projectId', project._id); localStorage.setItem('projectsFocusId', project._id) } catch {}; window.location.href = '/project-detail' }}>View Details</button>
+      <button className="assign-btn" onClick={() => {
+        setSelectedProject(project)
+        ;(async () => {
+          try {
+            const token = localStorage.getItem('token')
+            const resEng = await api.get('/api/projects/project-engineers')
+            setProjectEngineers(Array.isArray(resEng.data) ? resEng.data : [])
+          } catch {}
+        })()
+        setEditProjectModal({ open: true, form: {
+          name: project.name || '',
+          locationDetails: project.locationDetails || '',
+          workingHours: project.workingHours || '',
+          manpowerCount: project.manpowerCount || '',
+          status: project.status || 'active',
+          assignedProjectEngineer: project.assignedProjectEngineer?._id || ''
+        } })
+      }}>Edit</button>
+      {canCreateSiteVisit() && (
+        <button onClick={() => {
+          setSelectedProject(project)
+          setShowVisitModal(true)
+        }} className="assign-btn">
+          New Site Visit
+        </button>
+      )}
+      {(currentUser?.roles?.includes('manager') || currentUser?.roles?.includes('admin')) && (
+        <button className="reject-btn" onClick={() => setDeleteModal({ open: true, project })}>Delete Project</button>
+      )}
+    </div>
+  )
+
   return (
     <div className="project-management">
       <div className="header">
-        <h1>Project Management</h1>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <h1>Project Management</h1>
+          <span style={{ 
+            padding: '4px 12px', 
+            borderRadius: '12px', 
+            background: 'var(--bg)', 
+            color: 'var(--text-muted)', 
+            fontSize: '14px', 
+            fontWeight: 600,
+            border: '1px solid var(--border)'
+          }}>
+            {(search || selectedRevisionFilter) ? `${displayedProjects} of ${totalProjects}` : totalProjects} {totalProjects === 1 ? 'Project' : 'Projects'}
+          </span>
+        </div>
+        <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+          <select
+            value={selectedRevisionFilter}
+            onChange={(e) => setSelectedRevisionFilter(e.target.value)}
+            style={{
+              padding: '6px 12px',
+              border: '1px solid var(--border)',
+              borderRadius: '8px',
+              background: 'var(--card)',
+              color: 'var(--text)',
+              fontSize: '14px',
+              cursor: 'pointer',
+              minWidth: '200px'
+            }}
+          >
+            <option value="">All Revisions</option>
+            {revisions.map(rev => (
+              <option key={rev._id} value={rev._id}>
+                Revision #{rev.revisionNumber} - {rev.projectTitle || rev.lead?.projectTitle || rev.offerReference || 'N/A'}
+              </option>
+            ))}
+          </select>
+          <input 
+            placeholder="Search..." 
+            value={search} 
+            onChange={e => setSearch(e.target.value)}
+            style={{
+              padding: '6px 12px',
+              border: '1px solid var(--border)',
+              borderRadius: '8px',
+              background: 'var(--card)',
+              color: 'var(--text)',
+              fontSize: '14px',
+              minWidth: '200px'
+            }}
+          />
+          <div style={{ display: 'flex', gap: '4px', alignItems: 'center', border: '1px solid var(--border)', borderRadius: '8px', padding: '2px' }}>
+            <button
+              onClick={() => setViewMode('card')}
+              style={{
+                padding: '6px 12px',
+                border: 'none',
+                borderRadius: '6px',
+                background: viewMode === 'card' ? 'var(--primary)' : 'transparent',
+                color: viewMode === 'card' ? 'white' : 'var(--text)',
+                cursor: 'pointer',
+                fontSize: '14px',
+                fontWeight: 600,
+              }}
+            >
+              Card
+            </button>
+            <button
+              onClick={() => setViewMode('table')}
+              style={{
+                padding: '6px 12px',
+                border: 'none',
+                borderRadius: '6px',
+                background: viewMode === 'table' ? 'var(--primary)' : 'transparent',
+                color: viewMode === 'table' ? 'white' : 'var(--text)',
+                cursor: 'pointer',
+                fontSize: '14px',
+                fontWeight: 600,
+              }}
+            >
+              Table
+            </button>
+          </div>
+        </div>
       </div>
 
-      <div className="projects-grid">
-        {projects.map(project => (
+      {viewMode === 'card' ? (
+        <div className="projects-grid">
+          {paginatedProjects.map(project => (
           <div key={project._id} className="project-card">
             <div className="project-header">
               <h3>{project.name}</h3>
@@ -689,39 +1011,7 @@ function ProjectManagement() {
               </div>
             )}
 
-            <div className="project-actions">
-              <button className="save-btn" onClick={() => exportProjectPDF(project)}>Export PDF</button>
-              <button className="assign-btn" onClick={() => { try { localStorage.setItem('projectId', project._id); localStorage.setItem('projectsFocusId', project._id) } catch {}; window.location.href = '/project-detail' }}>View Details</button>
-              <button className="assign-btn" onClick={() => {
-                setSelectedProject(project)
-                ;(async () => {
-                  try {
-                    const token = localStorage.getItem('token')
-                    const resEng = await api.get('/api/projects/project-engineers')
-                    setProjectEngineers(Array.isArray(resEng.data) ? resEng.data : [])
-                  } catch {}
-                })()
-                setEditProjectModal({ open: true, form: {
-                  name: project.name || '',
-                  locationDetails: project.locationDetails || '',
-                  workingHours: project.workingHours || '',
-                  manpowerCount: project.manpowerCount || '',
-                  status: project.status || 'active',
-                  assignedProjectEngineer: project.assignedProjectEngineer?._id || ''
-                } })
-              }}>Edit</button>
-              {canCreateSiteVisit() && (
-                <button onClick={() => {
-                  setSelectedProject(project)
-                  setShowVisitModal(true)
-                }} className="assign-btn">
-                  New Site Visit
-                </button>
-              )}
-              {(currentUser?.roles?.includes('manager') || currentUser?.roles?.includes('admin')) && (
-                <button className="reject-btn" onClick={() => setDeleteModal({ open: true, project })}>Delete Project</button>
-              )}
-            </div>
+            {renderProjectActions(project)}
             {Array.isArray(project.edits) && project.edits.length > 0 && (
               <div className="ld-card ld-section" style={{ marginTop: 12 }}>
                 <div className="edit-header">
@@ -758,8 +1048,182 @@ function ProjectManagement() {
           </div>
         ))}
       </div>
+      ) : (
+        <div className="table" style={{ marginTop: '24px' }}>
+          <table>
+            <thead>
+              <tr>
+                <th>Project Name</th>
+                <th>Status</th>
+                <th>Location</th>
+                <th>Budget</th>
+                <th>Site Engineer</th>
+                <th>Project Engineer</th>
+                <th>Created By</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {paginatedProjects.map(project => (
+                <tr key={project._id}>
+                  <td data-label="Project Name">{project.name || 'N/A'}</td>
+                  <td data-label="Status">
+                    <span className={`status-badge ${getStatusColor(project.status)}`}>
+                      {project.status || 'N/A'}
+                    </span>
+                  </td>
+                  <td data-label="Location">{project.locationDetails || 'N/A'}</td>
+                  <td data-label="Budget">AED {project.budget?.toLocaleString() || 'N/A'}</td>
+                  <td data-label="Site Engineer">{project.assignedSiteEngineer?.name || 'Not Assigned'}</td>
+                  <td data-label="Project Engineer">
+                    {project.assignedProjectEngineer?.name || 'Not Assigned'}
+                    {project.assignedProjectEngineer?._id && (
+                      <button className="link-btn" onClick={() => setProfileUser(project.assignedProjectEngineer)} style={{ marginLeft: '6px' }}>
+                        View Profile
+                      </button>
+                    )}
+                  </td>
+                  <td data-label="Created By">
+                    {project.createdBy?._id === currentUser?.id ? 'You' : (project.createdBy?.name || 'N/A')}
+                    {project.createdBy?._id !== currentUser?.id && project.createdBy && (
+                      <button className="link-btn" onClick={() => setProfileUser(project.createdBy)} style={{ marginLeft: '6px' }}>
+                        View Profile
+                      </button>
+                    )}
+                  </td>
+                  <td data-label="Actions">
+                    {renderProjectActions(project)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
 
-      
+      {/* Pagination Controls */}
+      {filteredProjects.length > 0 && (
+        <div className="pagination-container" style={{ 
+          display: 'flex', 
+          justifyContent: 'space-between', 
+          alignItems: 'center', 
+          marginTop: '24px',
+          padding: '16px',
+          background: 'var(--card)',
+          borderRadius: '8px',
+          border: '1px solid var(--border)'
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '14px' }}>
+              Items per page:
+              <select
+                value={itemsPerPage}
+                onChange={(e) => {
+                  setItemsPerPage(Number(e.target.value))
+                  setCurrentPage(1)
+                }}
+                style={{
+                  padding: '4px 8px',
+                  border: '1px solid var(--border)',
+                  borderRadius: '6px',
+                  background: 'var(--bg)',
+                  color: 'var(--text)',
+                  fontSize: '14px',
+                  cursor: 'pointer'
+                }}
+              >
+                {viewMode === 'card' ? (
+                  <>
+                    <option value={6}>6</option>
+                    <option value={9}>9</option>
+                    <option value={12}>12</option>
+                    <option value={15}>15</option>
+                    <option value={18}>18</option>
+                    <option value={21}>21</option>
+                    <option value={24}>24</option>
+                  </>
+                ) : (
+                  <>
+                    <option value={5}>5</option>
+                    <option value={10}>10</option>
+                    <option value={20}>20</option>
+                    <option value={50}>50</option>
+                  </>
+                )}
+              </select>
+            </label>
+            <span style={{ fontSize: '14px', color: 'var(--text-muted)' }}>
+              Showing {startIndex + 1} to {Math.min(endIndex, filteredProjects.length)} of {filteredProjects.length}
+            </span>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <button
+              onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+              disabled={currentPage === 1}
+              style={{
+                padding: '6px 12px',
+                border: '1px solid var(--border)',
+                borderRadius: '6px',
+                background: currentPage === 1 ? 'var(--bg)' : 'var(--card)',
+                color: currentPage === 1 ? 'var(--text-muted)' : 'var(--text)',
+                cursor: currentPage === 1 ? 'not-allowed' : 'pointer',
+                fontSize: '14px',
+                opacity: currentPage === 1 ? 0.5 : 1
+              }}
+            >
+              Previous
+            </button>
+            <div style={{ display: 'flex', gap: '4px' }}>
+              {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+                let pageNum
+                if (totalPages <= 5) {
+                  pageNum = i + 1
+                } else if (currentPage <= 3) {
+                  pageNum = i + 1
+                } else if (currentPage >= totalPages - 2) {
+                  pageNum = totalPages - 4 + i
+                } else {
+                  pageNum = currentPage - 2 + i
+                }
+                return (
+                  <button
+                    key={pageNum}
+                    onClick={() => setCurrentPage(pageNum)}
+                    style={{
+                      padding: '6px 12px',
+                      border: '1px solid var(--border)',
+                      borderRadius: '6px',
+                      background: currentPage === pageNum ? 'var(--primary)' : 'var(--card)',
+                      color: currentPage === pageNum ? 'white' : 'var(--text)',
+                      cursor: 'pointer',
+                      fontSize: '14px',
+                      fontWeight: currentPage === pageNum ? 600 : 400
+                    }}
+                  >
+                    {pageNum}
+                  </button>
+                )
+              })}
+            </div>
+            <button
+              onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+              disabled={currentPage === totalPages}
+              style={{
+                padding: '6px 12px',
+                border: '1px solid var(--border)',
+                borderRadius: '6px',
+                background: currentPage === totalPages ? 'var(--bg)' : 'var(--card)',
+                color: currentPage === totalPages ? 'var(--text-muted)' : 'var(--text)',
+                cursor: currentPage === totalPages ? 'not-allowed' : 'pointer',
+                fontSize: '14px',
+                opacity: currentPage === totalPages ? 0.5 : 1
+              }}
+            >
+              Next
+            </button>
+          </div>
+        </div>
+      )}
 
       {showVisitModal && (
         <div className="modal-overlay" onClick={() => setShowVisitModal(false)}>
@@ -930,6 +1394,163 @@ function ProjectManagement() {
                     setNotify({ open: true, title: 'Save Failed', message: error.response?.data?.message || 'We could not update the project.' })
                   }
                 }}>Save Changes</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+      {variationModal.open && variationModal.form && (
+        <div className="modal-overlay" onClick={() => setVariationModal({ open: false, project: null, form: null })}>
+          <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: '90vw', width: '900px' }}>
+            <div className="modal-header">
+              <h2>Create Variation Quotation</h2>
+              <button onClick={() => setVariationModal({ open: false, project: null, form: null })} className="close-btn">×</button>
+            </div>
+            <div className="lead-form" style={{ maxHeight: '70vh', overflow: 'auto' }}>
+              <div className="form-section">
+                <div className="section-header">
+                  <h3>Cover & Basic Details</h3>
+                </div>
+                <div className="form-group">
+                  <label>Submitted To (Client Company)</label>
+                  <input type="text" value={variationModal.form.submittedTo} onChange={e => setVariationModal({ ...variationModal, form: { ...variationModal.form, submittedTo: e.target.value } })} />
+                </div>
+                <div className="form-group">
+                  <label>Attention (Contact Person)</label>
+                  <input type="text" value={variationModal.form.attention} onChange={e => setVariationModal({ ...variationModal, form: { ...variationModal.form, attention: e.target.value } })} />
+                </div>
+                <div className="form-row">
+                  <div className="form-group" style={{ flex: 1 }}>
+                    <label>Offer Reference</label>
+                    <input type="text" value={variationModal.form.offerReference} onChange={e => setVariationModal({ ...variationModal, form: { ...variationModal.form, offerReference: e.target.value } })} />
+                  </div>
+                  <div className="form-group" style={{ flex: 1 }}>
+                    <label>Enquiry Number</label>
+                    <input type="text" value={variationModal.form.enquiryNumber} onChange={e => setVariationModal({ ...variationModal, form: { ...variationModal.form, enquiryNumber: e.target.value } })} />
+                  </div>
+                </div>
+                <div className="form-row">
+                  <div className="form-group" style={{ flex: 1 }}>
+                    <label>Offer Date</label>
+                    <input type="date" value={variationModal.form.offerDate} onChange={e => setVariationModal({ ...variationModal, form: { ...variationModal.form, offerDate: e.target.value } })} />
+                  </div>
+                  <div className="form-group" style={{ flex: 1 }}>
+                    <label>Enquiry Date</label>
+                    <input type="date" value={variationModal.form.enquiryDate} onChange={e => setVariationModal({ ...variationModal, form: { ...variationModal.form, enquiryDate: e.target.value } })} />
+                  </div>
+                </div>
+              </div>
+
+              <div className="form-section">
+                <div className="section-header">
+                  <h3>Project Details</h3>
+                </div>
+                <div className="form-group">
+                  <label>Project Title</label>
+                  <input type="text" value={variationModal.form.projectTitle} onChange={e => setVariationModal({ ...variationModal, form: { ...variationModal.form, projectTitle: e.target.value } })} />
+                </div>
+                <div className="form-group">
+                  <label>Introduction</label>
+                  <textarea value={variationModal.form.introductionText} onChange={e => setVariationModal({ ...variationModal, form: { ...variationModal.form, introductionText: e.target.value } })} />
+                </div>
+              </div>
+
+              <div className="form-section">
+                <div className="section-header">
+                  <h3>Price Schedule</h3>
+                </div>
+                <div className="form-row">
+                  <div className="form-group" style={{ flex: 1 }}>
+                    <label>Currency</label>
+                    <input type="text" value={variationModal.form.priceSchedule.currency} onChange={e => setVariationModal({ ...variationModal, form: { ...variationModal.form, priceSchedule: { ...variationModal.form.priceSchedule, currency: e.target.value } } })} />
+                  </div>
+                  <div className="form-group" style={{ flex: 1 }}>
+                    <label>VAT Rate (%)</label>
+                    <input type="number" value={variationModal.form.priceSchedule.taxDetails.vatRate} onChange={e => {
+                      const items = variationModal.form.priceSchedule.items
+                      const sub = items.reduce((sum, it) => sum + Number(it.totalAmount || 0), 0)
+                      const vat = sub * (Number(e.target.value || 0) / 100)
+                      const grand = sub + vat
+                      setVariationModal({ ...variationModal, form: { ...variationModal.form, priceSchedule: { ...variationModal.form.priceSchedule, subTotal: Number(sub.toFixed(2)), grandTotal: Number(grand.toFixed(2)), taxDetails: { ...variationModal.form.priceSchedule.taxDetails, vatRate: e.target.value, vatAmount: Number(vat.toFixed(2)) } } } })
+                    }} />
+                  </div>
+                </div>
+                {variationModal.form.priceSchedule.items.map((it, i) => (
+                  <div key={i} className="item-card">
+                    <div className="item-header">
+                      <span>Item {i + 1}</span>
+                      <button type="button" className="cancel-btn" onClick={() => {
+                        const items = variationModal.form.priceSchedule.items.filter((_, idx) => idx !== i)
+                        const sub = items.reduce((sum, it) => sum + Number(it.totalAmount || 0), 0)
+                        const vat = sub * (Number(variationModal.form.priceSchedule.taxDetails.vatRate || 0) / 100)
+                        const grand = sub + vat
+                        setVariationModal({ ...variationModal, form: { ...variationModal.form, priceSchedule: { ...variationModal.form.priceSchedule, items, subTotal: Number(sub.toFixed(2)), grandTotal: Number(grand.toFixed(2)), taxDetails: { ...variationModal.form.priceSchedule.taxDetails, vatAmount: Number(vat.toFixed(2)) } } } })
+                      }}>Remove</button>
+                    </div>
+                    <div className="form-row">
+                      <div className="form-group" style={{ flex: 2 }}>
+                        <label>Description</label>
+                        <input type="text" value={it.description} onChange={e => {
+                          const items = variationModal.form.priceSchedule.items.map((x, idx) => idx === i ? { ...x, description: e.target.value } : x)
+                          setVariationModal({ ...variationModal, form: { ...variationModal.form, priceSchedule: { ...variationModal.form.priceSchedule, items } } })
+                        }} />
+                      </div>
+                      <div className="form-group" style={{ flex: 1 }}>
+                        <label>Qty</label>
+                        <input type="number" value={it.quantity} onChange={e => {
+                          const items = variationModal.form.priceSchedule.items.map((x, idx) => idx === i ? { ...x, quantity: e.target.value, totalAmount: Number((Number(e.target.value || 0) * Number(x.unitRate || 0)).toFixed(2)) } : x)
+                          const sub = items.reduce((sum, it) => sum + Number(it.totalAmount || 0), 0)
+                          const vat = sub * (Number(variationModal.form.priceSchedule.taxDetails.vatRate || 0) / 100)
+                          const grand = sub + vat
+                          setVariationModal({ ...variationModal, form: { ...variationModal.form, priceSchedule: { ...variationModal.form.priceSchedule, items, subTotal: Number(sub.toFixed(2)), grandTotal: Number(grand.toFixed(2)), taxDetails: { ...variationModal.form.priceSchedule.taxDetails, vatAmount: Number(vat.toFixed(2)) } } } })
+                        }} />
+                      </div>
+                      <div className="form-group" style={{ flex: 1 }}>
+                        <label>Unit</label>
+                        <input type="text" value={it.unit} onChange={e => {
+                          const items = variationModal.form.priceSchedule.items.map((x, idx) => idx === i ? { ...x, unit: e.target.value } : x)
+                          setVariationModal({ ...variationModal, form: { ...variationModal.form, priceSchedule: { ...variationModal.form.priceSchedule, items } } })
+                        }} />
+                      </div>
+                      <div className="form-group" style={{ flex: 1 }}>
+                        <label>Unit Rate</label>
+                        <input type="number" value={it.unitRate} onChange={e => {
+                          const items = variationModal.form.priceSchedule.items.map((x, idx) => idx === i ? { ...x, unitRate: e.target.value, totalAmount: Number((Number(x.quantity || 0) * Number(e.target.value || 0)).toFixed(2)) } : x)
+                          const sub = items.reduce((sum, it) => sum + Number(it.totalAmount || 0), 0)
+                          const vat = sub * (Number(variationModal.form.priceSchedule.taxDetails.vatRate || 0) / 100)
+                          const grand = sub + vat
+                          setVariationModal({ ...variationModal, form: { ...variationModal.form, priceSchedule: { ...variationModal.form.priceSchedule, items, subTotal: Number(sub.toFixed(2)), grandTotal: Number(grand.toFixed(2)), taxDetails: { ...variationModal.form.priceSchedule.taxDetails, vatAmount: Number(vat.toFixed(2)) } } } })
+                        }} />
+                      </div>
+                      <div className="form-group" style={{ flex: 1 }}>
+                        <label>Total</label>
+                        <input type="number" readOnly value={Number(it.totalAmount || 0)} />
+                      </div>
+                    </div>
+                  </div>
+                ))}
+                <div className="section-actions">
+                  <button type="button" className="link-btn" onClick={() => setVariationModal({ ...variationModal, form: { ...variationModal.form, priceSchedule: { ...variationModal.form.priceSchedule, items: [...variationModal.form.priceSchedule.items, { description: '', quantity: 0, unit: '', unitRate: 0, totalAmount: 0 }] } } })}>+ Add Item</button>
+                </div>
+                <div className="form-row" style={{ marginTop: '16px' }}>
+                  <div className="form-group" style={{ flex: 1 }}>
+                    <label>Sub Total</label>
+                    <input type="number" readOnly value={Number(variationModal.form.priceSchedule.subTotal || 0)} />
+                  </div>
+                  <div className="form-group" style={{ flex: 1 }}>
+                    <label>VAT Amount</label>
+                    <input type="number" readOnly value={Number(variationModal.form.priceSchedule.taxDetails.vatAmount || 0)} />
+                  </div>
+                  <div className="form-group" style={{ flex: 1 }}>
+                    <label>Grand Total</label>
+                    <input type="number" readOnly value={Number(variationModal.form.priceSchedule.grandTotal || 0)} />
+                  </div>
+                </div>
+              </div>
+
+              <div className="form-actions">
+                <button type="button" className="cancel-btn" onClick={() => setVariationModal({ open: false, project: null, form: null })}>Cancel</button>
+                <button type="button" className="save-btn" onClick={createVariation}>Create Variation</button>
               </div>
             </div>
           </div>

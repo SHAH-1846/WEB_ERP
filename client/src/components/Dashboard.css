@@ -35,9 +35,6 @@
 }
 
 .theme-toggle-dash {
-  position: fixed;
-  top: 24px;
-  right: 24px;
   width: 48px;
   height: 48px;
   border: 1px solid var(--border);
@@ -45,11 +42,11 @@
   border-radius: 12px;
   cursor: pointer;
   transition: all 0.3s ease;
-  z-index: 1000;
   display: flex;
   align-items: center;
   justify-content: center;
   box-shadow: var(--shadow);
+  flex-shrink: 0;
 }
 
 .theme-toggle-dash:hover {
@@ -341,6 +338,12 @@
 @keyframes slideDown {
   from { transform: translateY(-100%); }
   to { transform: translateY(0); }
+}
+
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 16px;
 }
 
 .header-left h1 {

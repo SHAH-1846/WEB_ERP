@@ -6,6 +6,7 @@ import LeadManagement from './LeadManagement'
 import ProjectManagement from './ProjectManagement'
 import QuotationManagement from './QuotationManagement'
 import RevisionManagement from './RevisionManagement'
+import ProjectVariationManagement from './ProjectVariationManagement'
 import QuotationModal from './QuotationModal'
 import { initTheme, setTheme } from '../utils/theme'
 
@@ -44,7 +45,7 @@ function Dashboard() {
     if (isModalRoute && backgroundLocation) {
       const pathSegments = backgroundLocation.pathname.split('/').filter(Boolean)
       const basePath = pathSegments[0] || 'dashboard'
-      if (['dashboard','users','leads','projects','quotations','revisions'].includes(basePath)) {
+      if (['dashboard','users','leads','projects','quotations','revisions','project-variations'].includes(basePath)) {
         setActiveTab(basePath)
       }
     } else if (isModalRoute && !backgroundLocation) {
@@ -55,7 +56,7 @@ function Dashboard() {
       } else {
         const pathSegments = location.pathname.split('/').filter(Boolean)
         const basePath = pathSegments[0] || 'dashboard'
-        if (['dashboard','users','leads','projects','quotations','revisions'].includes(basePath)) {
+        if (['dashboard','users','leads','projects','quotations','revisions','project-variations'].includes(basePath)) {
           setActiveTab(basePath)
         }
       }
@@ -63,7 +64,7 @@ function Dashboard() {
       // Normal navigation - use current pathname
       const pathSegments = location.pathname.split('/').filter(Boolean)
       const basePath = pathSegments[0] || 'dashboard'
-      if (['dashboard','users','leads','projects','quotations','revisions'].includes(basePath)) {
+      if (['dashboard','users','leads','projects','quotations','revisions','project-variations'].includes(basePath)) {
         setActiveTab(basePath)
       }
     }
@@ -83,18 +84,6 @@ function Dashboard() {
 
   return (
     <div className="dashboard">
-      <button className="theme-toggle-dash" onClick={() => setIsDark(!isDark)}>
-        {isDark ? (
-          <svg viewBox="0 0 24 24" fill="currentColor">
-            <path d="M12 2.25a.75.75 0 01.75.75v2.25a.75.75 0 01-1.5 0V3a.75.75 0 01.75-.75zM7.5 12a4.5 4.5 0 119 0 4.5 4.5 0 01-9 0zM18.894 6.166a.75.75 0 00-1.06-1.06l-1.591 1.59a.75.75 0 101.06 1.061l1.591-1.59zM21.75 12a.75.75 0 01-.75.75h-2.25a.75.75 0 010-1.5H21a.75.75 0 01.75.75zM17.834 18.894a.75.75 0 001.06-1.06l-1.59-1.591a.75.75 0 10-1.061 1.06l1.59 1.591zM12 18a.75.75 0 01.75.75V21a.75.75 0 01-1.5 0v-2.25A.75.75 0 0112 18zM7.758 17.303a.75.75 0 00-1.061-1.06l-1.591 1.59a.75.75 0 001.06 1.061l1.591-1.59zM6 12a.75.75 0 01-.75.75H3a.75.75 0 010-1.5h2.25A.75.75 0 016 12zM6.697 7.757a.75.75 0 001.06-1.06l-1.59-1.591a.75.75 0 00-1.061 1.06l1.59 1.591z"/>
-          </svg>
-        ) : (
-          <svg viewBox="0 0 24 24" fill="currentColor">
-            <path fillRule="evenodd" d="M9.528 1.718a.75.75 0 01.162.819A8.97 8.97 0 009 6a9 9 0 009 9 8.97 8.97 0 003.463-.69.75.75 0 01.981.98 10.503 10.503 0 01-9.694 6.46c-5.799 0-10.5-4.701-10.5-10.5 0-4.368 2.667-8.112 6.46-9.694a.75.75 0 01.818.162z" clipRule="evenodd"/>
-          </svg>
-        )}
-      </button>
-      
       <div className={`sidebar ${collapsed ? 'collapsed' : ''}`}>
         <div className="sidebar-header">
           <div className="logo">
@@ -156,6 +145,14 @@ function Dashboard() {
             </svg>
             <span className="label">Projects</span>
           </NavLink>
+          {user?.roles?.some(r => ['estimation_engineer','manager','admin'].includes(r)) && (
+            <NavLink to="/project-variations" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
+              <svg viewBox="0 0 24 24" fill="currentColor">
+                <path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-2 10h-4v4h-4v-4H5v-4h4V5h4v4h4v4z"/>
+              </svg>
+              <span className="label">Project Variations</span>
+            </NavLink>
+          )}
         </nav>
         
         <div className="sidebar-footer">
@@ -178,15 +175,29 @@ function Dashboard() {
       <div className={`main-content ${collapsed ? 'collapsed' : ''}`}>
         <header className="header">
           <div className="header-left">
-            <h1>
-            {activeTab === 'dashboard' && 'Dashboard'}
-            {activeTab === 'users' && 'User Management'}
-            {activeTab === 'leads' && 'Lead Management'}
-            {activeTab === 'projects' && 'Project Management'}
-            {activeTab === 'quotations' && 'Quotation Management'}
-            {activeTab === 'revisions' && 'Revisions Management'}
-          </h1>
-            <p>Welcome back, {user?.name}!</p>
+            <button className="theme-toggle-dash" onClick={() => setIsDark(!isDark)}>
+              {isDark ? (
+                <svg viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M12 2.25a.75.75 0 01.75.75v2.25a.75.75 0 01-1.5 0V3a.75.75 0 01.75-.75zM7.5 12a4.5 4.5 0 119 0 4.5 4.5 0 01-9 0zM18.894 6.166a.75.75 0 00-1.06-1.06l-1.591 1.59a.75.75 0 101.06 1.061l1.591-1.59zM21.75 12a.75.75 0 01-.75.75h-2.25a.75.75 0 010-1.5H21a.75.75 0 01.75.75zM17.834 18.894a.75.75 0 001.06-1.06l-1.59-1.591a.75.75 0 10-1.061 1.06l1.59 1.591zM12 18a.75.75 0 01.75.75V21a.75.75 0 01-1.5 0v-2.25A.75.75 0 0112 18zM7.758 17.303a.75.75 0 00-1.061-1.06l-1.591 1.59a.75.75 0 001.06 1.061l1.591-1.59zM6 12a.75.75 0 01-.75.75H3a.75.75 0 010-1.5h2.25A.75.75 0 016 12zM6.697 7.757a.75.75 0 001.06-1.06l-1.59-1.591a.75.75 0 00-1.061 1.06l1.59 1.591z"/>
+                </svg>
+              ) : (
+                <svg viewBox="0 0 24 24" fill="currentColor">
+                  <path fillRule="evenodd" d="M9.528 1.718a.75.75 0 01.162.819A8.97 8.97 0 009 6a9 9 0 009 9 8.97 8.97 0 003.463-.69.75.75 0 01.981.98 10.503 10.503 0 01-9.694 6.46c-5.799 0-10.5-4.701-10.5-10.5 0-4.368 2.667-8.112 6.46-9.694a.75.75 0 01.818.162z" clipRule="evenodd"/>
+                </svg>
+              )}
+            </button>
+            <div>
+              <h1>
+              {activeTab === 'dashboard' && 'Dashboard'}
+              {activeTab === 'users' && 'User Management'}
+              {activeTab === 'leads' && 'Lead Management'}
+              {activeTab === 'projects' && 'Project Management'}
+              {activeTab === 'quotations' && 'Quotation Management'}
+              {activeTab === 'revisions' && 'Revisions Management'}
+              {activeTab === 'project-variations' && 'Project Variations'}
+            </h1>
+              <p>Welcome back, {user?.name}!</p>
+            </div>
           </div>
           <div className="header-right">
             <div className="user-profile">
@@ -303,6 +314,7 @@ function Dashboard() {
           {activeTab === 'projects' && <ProjectManagement />}
           {activeTab === 'quotations' && <QuotationManagement />}
           {activeTab === 'revisions' && <RevisionManagement />}
+          {activeTab === 'project-variations' && <ProjectVariationManagement />}
         </div>
       </div>
       
