@@ -1,7 +1,17 @@
 import { useEffect, useMemo, useState } from 'react'
 import { api } from '../lib/api'
 import './LeadManagement.css'
+import './LoadingComponents.css'
 import logo from '../assets/logo/WBES_Logo.png'
+import { 
+  Spinner, 
+  Skeleton, 
+  SkeletonCard, 
+  SkeletonTableRow, 
+  PageSkeleton, 
+  ButtonLoader,
+  DotsLoader 
+} from './LoadingComponents'
 
 function ProjectVariationManagement() {
   const [currentUser, setCurrentUser] = useState(null)
@@ -25,6 +35,9 @@ function ProjectVariationManagement() {
   })
   const [currentPage, setCurrentPage] = useState(1)
   const [itemsPerPage, setItemsPerPage] = useState(10)
+  const [isLoading, setIsLoading] = useState(true)
+  const [isSubmitting, setIsSubmitting] = useState(false)
+  const [loadingAction, setLoadingAction] = useState(null) // Track which action is loading
 
   const defaultCompany = useMemo(() => ({
     logo,
@@ -36,8 +49,12 @@ function ProjectVariationManagement() {
 
   useEffect(() => {
     setCurrentUser(JSON.parse(localStorage.getItem('user')) || null)
-    void fetchVariations()
-    void fetchProjects()
+    const loadData = async () => {
+      setIsLoading(true)
+      await Promise.all([fetchVariations(false), fetchProjects()])
+      setIsLoading(false)
+    }
+    void loadData()
   }, [])
 
   // Persist view mode to localStorage whenever it changes
@@ -65,7 +82,8 @@ function ProjectVariationManagement() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [viewMode]) // Only run when viewMode changes, not when itemsPerPage changes
 
-  const fetchVariations = async () => {
+  const fetchVariations = async (showLoading = false) => {
+    if (showLoading) setIsLoading(true)
     try {
       const token = localStorage.getItem('token')
       const res = await api.get('/api/project-variations')
@@ -73,6 +91,8 @@ function ProjectVariationManagement() {
     } catch (err) {
       console.error('Error fetching variations:', err)
       setVariations([])
+    } finally {
+      if (showLoading) setIsLoading(false)
     }
   }
 
@@ -84,6 +104,8 @@ function ProjectVariationManagement() {
   }
 
   const sendForApproval = async (variation) => {
+    setLoadingAction(`approve-${variation._id}`)
+    setIsSubmitting(true)
     try {
       const token = localStorage.getItem('token')
       await api.patch(`/api/project-variations/${variation._id}/approve`, { status: 'pending' })
@@ -91,10 +113,15 @@ function ProjectVariationManagement() {
       setNotify({ open: true, title: 'Request Sent', message: 'Approval request has been sent successfully.' })
     } catch (e) {
       setNotify({ open: true, title: 'Send Failed', message: e.response?.data?.message || 'We could not send for approval. Please try again.' })
+    } finally {
+      setIsSubmitting(false)
+      setLoadingAction(null)
     }
   }
 
   const approveVariation = async (variation, status, note) => {
+    setLoadingAction(`approve-${variation._id}-${status}`)
+    setIsSubmitting(true)
     try {
       const token = localStorage.getItem('token')
       await api.patch(`/api/project-variations/${variation._id}/approve`, { status, note })
@@ -103,6 +130,9 @@ function ProjectVariationManagement() {
       setNotify({ open: true, title: status === 'approved' ? 'Variation Approved' : 'Variation Rejected', message: `The variation has been ${status === 'approved' ? 'approved' : 'rejected'} successfully.` })
     } catch (e) {
       setNotify({ open: true, title: 'Approval Failed', message: e.response?.data?.message || 'We could not update approval. Please try again.' })
+    } finally {
+      setIsSubmitting(false)
+      setLoadingAction(null)
     }
   }
 
@@ -518,7 +548,38 @@ function ProjectVariationManagement() {
         </div>
       </div>
 
-      {viewMode === 'card' ? (
+      {isLoading ? (
+        viewMode === 'card' ? (
+          <div className="leads-grid">
+            {Array.from({ length: itemsPerPage }).map((_, idx) => (
+              <SkeletonCard key={idx} />
+            ))}
+          </div>
+        ) : (
+          <div className="table" style={{ marginTop: '24px' }}>
+            <table>
+              <thead>
+                <tr>
+                  <th>Variation #</th>
+                  <th>Project</th>
+                  <th>Offer Ref</th>
+                  <th>Status</th>
+                  <th>Grand Total</th>
+                  <th>Changes</th>
+                  <th>Created By</th>
+                  <th>Created At</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {Array.from({ length: itemsPerPage }).map((_, idx) => (
+                  <SkeletonTableRow key={idx} columns={9} />
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )
+      ) : viewMode === 'card' ? (
         <div className="leads-grid">
           {paginatedVariations.map(v => (
             <div key={v._id} className="lead-card">
@@ -602,14 +663,41 @@ function ProjectVariationManagement() {
                   <span className="status-badge blue" style={{ marginLeft: '8px' }}>Approval Pending</span>
                 ) : (
                   (v.managementApproval?.status !== 'approved' && (currentUser?.roles?.includes('estimation_engineer') || v.createdBy?._id === currentUser?.id)) && (
-                    <button className="save-btn" onClick={() => setSendApprovalConfirmModal({ open: true, variation: v })} style={{ marginLeft: '8px' }}>Send for Approval</button>
+                    <button 
+                  className="save-btn" 
+                  onClick={() => setSendApprovalConfirmModal({ open: true, variation: v })} 
+                  style={{ marginLeft: '8px' }}
+                  disabled={isSubmitting}
+                >
+                  <ButtonLoader loading={loadingAction === `approve-${v._id}`}>
+                    Send for Approval
+                  </ButtonLoader>
+                </button>
                   )
                 )}
                 <button className="link-btn" onClick={() => setApprovalsView(v)} style={{ marginLeft: '8px' }}>View Approvals/Rejections</button>
                 {(currentUser?.roles?.includes('manager') || currentUser?.roles?.includes('admin')) && v.managementApproval?.status === 'pending' && (
                   <>
-                    <button className="approve-btn" onClick={() => setApprovalModal({ open: true, variation: v, action: 'approved', note: '' })} style={{ marginLeft: '8px' }}>Approve</button>
-                    <button className="reject-btn" onClick={() => setApprovalModal({ open: true, variation: v, action: 'rejected', note: '' })} style={{ marginLeft: '8px' }}>Reject</button>
+                    <button 
+                      className="approve-btn" 
+                      onClick={() => setApprovalModal({ open: true, variation: v, action: 'approved', note: '' })} 
+                      style={{ marginLeft: '8px' }}
+                      disabled={isSubmitting}
+                    >
+                      <ButtonLoader loading={loadingAction === `approve-${v._id}-approved`}>
+                        Approve
+                      </ButtonLoader>
+                    </button>
+                    <button 
+                      className="reject-btn" 
+                      onClick={() => setApprovalModal({ open: true, variation: v, action: 'rejected', note: '' })} 
+                      style={{ marginLeft: '8px' }}
+                      disabled={isSubmitting}
+                    >
+                      <ButtonLoader loading={loadingAction === `approve-${v._id}-rejected`}>
+                        Reject
+                      </ButtonLoader>
+                    </button>
                   </>
                 )}
                 {v.managementApproval?.status === 'approved' && (currentUser?.roles?.includes('estimation_engineer') || v.createdBy?._id === currentUser?.id) && (
@@ -752,14 +840,38 @@ function ProjectVariationManagement() {
                         <span className="status-badge blue">Approval Pending</span>
                       ) : (
                         (v.managementApproval?.status !== 'approved' && (currentUser?.roles?.includes('estimation_engineer') || v.createdBy?._id === currentUser?.id)) && (
-                          <button className="save-btn" onClick={() => setSendApprovalConfirmModal({ open: true, variation: v })}>Send for Approval</button>
+                          <button 
+                            className="save-btn" 
+                            onClick={() => setSendApprovalConfirmModal({ open: true, variation: v })}
+                            disabled={isSubmitting}
+                          >
+                            <ButtonLoader loading={loadingAction === `approve-${v._id}`}>
+                              Send for Approval
+                            </ButtonLoader>
+                          </button>
                         )
                       )}
                       <button className="link-btn" onClick={() => setApprovalsView(v)}>View Approvals/Rejections</button>
                       {(currentUser?.roles?.includes('manager') || currentUser?.roles?.includes('admin')) && v.managementApproval?.status === 'pending' && (
                         <>
-                          <button className="approve-btn" onClick={() => setApprovalModal({ open: true, variation: v, action: 'approved', note: '' })}>Approve</button>
-                          <button className="reject-btn" onClick={() => setApprovalModal({ open: true, variation: v, action: 'rejected', note: '' })}>Reject</button>
+                          <button 
+                            className="approve-btn" 
+                            onClick={() => setApprovalModal({ open: true, variation: v, action: 'approved', note: '' })}
+                            disabled={isSubmitting}
+                          >
+                            <ButtonLoader loading={loadingAction === `approve-${v._id}-approved`}>
+                              Approve
+                            </ButtonLoader>
+                          </button>
+                          <button 
+                            className="reject-btn" 
+                            onClick={() => setApprovalModal({ open: true, variation: v, action: 'rejected', note: '' })}
+                            disabled={isSubmitting}
+                          >
+                            <ButtonLoader loading={loadingAction === `approve-${v._id}-rejected`}>
+                              Reject
+                            </ButtonLoader>
+                          </button>
                         </>
                       )}
                       {v.managementApproval?.status === 'approved' && (currentUser?.roles?.includes('estimation_engineer') || v.createdBy?._id === currentUser?.id) && (
@@ -1033,11 +1145,27 @@ function ProjectVariationManagement() {
                 <textarea value={approvalModal.note} onChange={e => setApprovalModal({ ...approvalModal, note: e.target.value })} />
               </div>
               <div className="form-actions">
-                <button type="button" className="cancel-btn" onClick={() => setApprovalModal({ open: false, variation: null, action: null, note: '' })}>Cancel</button>
-                <button type="button" className="save-btn" onClick={async () => {
-                  if (!approvalModal.variation || !approvalModal.action) return
-                  await approveVariation(approvalModal.variation, approvalModal.action, approvalModal.note)
-                }}>Confirm</button>
+                <button 
+                  type="button" 
+                  className="cancel-btn" 
+                  onClick={() => setApprovalModal({ open: false, variation: null, action: null, note: '' })}
+                  disabled={isSubmitting}
+                >
+                  Cancel
+                </button>
+                <button 
+                  type="button" 
+                  className="save-btn" 
+                  onClick={async () => {
+                    if (!approvalModal.variation || !approvalModal.action) return
+                    await approveVariation(approvalModal.variation, approvalModal.action, approvalModal.note)
+                  }}
+                  disabled={isSubmitting}
+                >
+                  <ButtonLoader loading={isSubmitting}>
+                    {isSubmitting ? (approvalModal.action === 'approved' ? 'Approving...' : 'Rejecting...') : (approvalModal.action === 'approved' ? 'Approve' : 'Reject')}
+                  </ButtonLoader>
+                </button>
               </div>
             </div>
           </div>
@@ -1071,12 +1199,21 @@ function ProjectVariationManagement() {
               )}
               <div className="form-actions">
                 <button type="button" className="cancel-btn" onClick={() => setSendApprovalConfirmModal({ open: false, variation: null })}>Cancel</button>
-                <button type="button" className="save-btn" onClick={async () => {
-                  if (sendApprovalConfirmModal.variation) {
-                    setSendApprovalConfirmModal({ open: false, variation: null })
-                    await sendForApproval(sendApprovalConfirmModal.variation)
-                  }
-                }}>Confirm</button>
+                <button 
+                  type="button" 
+                  className="save-btn" 
+                  onClick={async () => {
+                    if (sendApprovalConfirmModal.variation) {
+                      setSendApprovalConfirmModal({ open: false, variation: null })
+                      await sendForApproval(sendApprovalConfirmModal.variation)
+                    }
+                  }}
+                  disabled={isSubmitting}
+                >
+                  <ButtonLoader loading={isSubmitting && loadingAction?.startsWith('approve-')}>
+                    {isSubmitting ? 'Sending...' : 'Confirm'}
+                  </ButtonLoader>
+                </button>
               </div>
             </div>
           </div>
@@ -1096,33 +1233,48 @@ function ProjectVariationManagement() {
               </p>
               <div className="form-actions">
                 <button type="button" className="cancel-btn" onClick={() => setCreateVariationModal({ open: false, variation: null, form: null })}>Cancel</button>
-                <button type="button" className="save-btn" onClick={async () => {
-                  try {
-                    const v = createVariationModal.variation
-                    // Check if there are changes from the parent variation
-                    const fields = ['companyInfo','submittedTo','attention','offerReference','enquiryNumber','offerDate','enquiryDate','projectTitle','introductionText','scopeOfWork','priceSchedule','ourViewpoints','exclusions','paymentTerms','deliveryCompletionWarrantyValidity']
-                    let changed = false
-                    for (const f of fields) {
-                      if (JSON.stringify(v?.[f] ?? null) !== JSON.stringify(createVariationModal.form?.[f] ?? null)) { changed = true; break }
-                    }
-                    if (!changed) {
-                      setNotify({ open: true, title: 'No Changes', message: 'No changes detected. Please modify data before creating a variation.' })
-                      return
-                    }
-                    
-                    const res = await api.post('/api/project-variations', { parentVariationId: v._id, data: createVariationModal.form })
-                    setCreateVariationModal({ open: false, variation: null, form: null })
-                    setNotify({ open: true, title: 'Variation Created', message: 'The new variation has been created successfully.' })
-                    await fetchVariations()
-                    // Navigate to the new variation
+                <button 
+                  type="button" 
+                  className="save-btn" 
+                  onClick={async () => {
+                    if (isSubmitting) return
+                    setLoadingAction('create-variation')
+                    setIsSubmitting(true)
                     try {
-                      localStorage.setItem('variationId', res.data._id)
-                      window.location.href = '/variation-detail'
-                    } catch {}
-                  } catch (e) {
-                    setNotify({ open: true, title: 'Creation Failed', message: e.response?.data?.message || 'We could not create the variation. Please try again.' })
-                  }
-                }}>Create Variation</button>
+                      const v = createVariationModal.variation
+                      // Check if there are changes from the parent variation
+                      const fields = ['companyInfo','submittedTo','attention','offerReference','enquiryNumber','offerDate','enquiryDate','projectTitle','introductionText','scopeOfWork','priceSchedule','ourViewpoints','exclusions','paymentTerms','deliveryCompletionWarrantyValidity']
+                      let changed = false
+                      for (const f of fields) {
+                        if (JSON.stringify(v?.[f] ?? null) !== JSON.stringify(createVariationModal.form?.[f] ?? null)) { changed = true; break }
+                      }
+                      if (!changed) {
+                        setNotify({ open: true, title: 'No Changes', message: 'No changes detected. Please modify data before creating a variation.' })
+                        return
+                      }
+                      
+                      const res = await api.post('/api/project-variations', { parentVariationId: v._id, data: createVariationModal.form })
+                      setCreateVariationModal({ open: false, variation: null, form: null })
+                      setNotify({ open: true, title: 'Variation Created', message: 'The new variation has been created successfully.' })
+                      await fetchVariations()
+                      // Navigate to the new variation
+                      try {
+                        localStorage.setItem('variationId', res.data._id)
+                        window.location.href = '/variation-detail'
+                      } catch {}
+                    } catch (e) {
+                      setNotify({ open: true, title: 'Creation Failed', message: e.response?.data?.message || 'We could not create the variation. Please try again.' })
+                    } finally {
+                      setIsSubmitting(false)
+                      setLoadingAction(null)
+                    }
+                  }}
+                  disabled={isSubmitting}
+                >
+                  <ButtonLoader loading={loadingAction === 'create-variation'}>
+                    {isSubmitting ? 'Creating...' : 'Create Variation'}
+                  </ButtonLoader>
+                </button>
               </div>
               <div style={{ marginTop: '16px', padding: '16px', background: '#FEF3C7', border: '1px solid #F59E0B', borderRadius: '8px' }}>
                 <p style={{ margin: 0, color: '#7C2D12', fontWeight: 500 }}>

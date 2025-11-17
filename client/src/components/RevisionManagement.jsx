@@ -28,6 +28,9 @@ function RevisionManagement() {
   const [expandedProjectRows, setExpandedProjectRows] = useState({}) // Track which rows have expanded projects
   const [projectDetailsMap, setProjectDetailsMap] = useState({}) // Store full project details per revision ID
   const [projectModal, setProjectModal] = useState({ open: false, project: null })
+  const [isLoading, setIsLoading] = useState(true)
+  const [isSubmitting, setIsSubmitting] = useState(false)
+  const [loadingAction, setLoadingAction] = useState(null)
 
   const defaultCompany = useMemo(() => ({
     logo,
@@ -39,8 +42,12 @@ function RevisionManagement() {
 
   useEffect(() => {
     setCurrentUser(JSON.parse(localStorage.getItem('user')) || null)
-    void fetchRevisions()
-    void fetchQuotations()
+    const loadData = async () => {
+      setIsLoading(true)
+      await Promise.all([fetchRevisions(), fetchQuotations()])
+      setIsLoading(false)
+    }
+    void loadData()
   }, [])
 
   // Persist view mode to localStorage whenever it changes
@@ -79,16 +86,25 @@ function RevisionManagement() {
   }
 
   const approveRevision = async (rev, status, note) => {
+    setLoadingAction(`approve-${rev._id}-${status}`)
+    setIsSubmitting(true)
     try {
       const token = localStorage.getItem('token')
       await api.patch(`/api/revisions/${rev._id}/approve`, { status, note })
       await fetchRevisions()
+      setApprovalModal({ open: false, revision: null, action: null, note: '' })
+      setNotify({ open: true, title: status === 'approved' ? 'Revision Approved' : 'Revision Rejected', message: `The revision has been ${status === 'approved' ? 'approved' : 'rejected'} successfully.` })
     } catch (e) {
       setNotify({ open: true, title: 'Approval Failed', message: e.response?.data?.message || 'We could not update approval. Please try again.' })
+    } finally {
+      setIsSubmitting(false)
+      setLoadingAction(null)
     }
   }
 
   const sendForApproval = async (rev) => {
+    setLoadingAction(`send-approval-${rev._id}`)
+    setIsSubmitting(true)
     try {
       const token = localStorage.getItem('token')
       await api.patch(`/api/revisions/${rev._id}/approve`, { status: 'pending' })
@@ -96,6 +112,9 @@ function RevisionManagement() {
       setNotify({ open: true, title: 'Request Sent', message: 'Approval request has been sent successfully.' })
     } catch (e) {
       setNotify({ open: true, title: 'Send Failed', message: e.response?.data?.message || 'We could not send for approval. Please try again.' })
+    } finally {
+      setIsSubmitting(false)
+      setLoadingAction(null)
     }
   }
 
@@ -1413,19 +1432,34 @@ function RevisionManagement() {
               )}
               <div className="form-actions">
                 <button type="button" className="cancel-btn" onClick={() => setCreateProjectModal({ open: false, revision: null, form: { name: '', locationDetails: '', workingHours: '', manpowerCount: '', assignedProjectEngineerId: '' }, engineers: [], ack: false })}>Cancel</button>
-                <button type="button" className="save-btn" disabled={currentUser?.roles?.includes('estimation_engineer') && !createProjectModal.ack} onClick={async () => {
-                  try {
-                    const token = localStorage.getItem('token')
-                    // final guard on server side too
-                    const body = { ...createProjectModal.form }
-                    await api.post(`/api/projects/from-revision/${createProjectModal.revision._id}`, body)
-                    setCreateProjectModal({ open: false, revision: null, form: { name: '', locationDetails: '', workingHours: '', manpowerCount: '', assignedProjectEngineerId: '' }, engineers: [], ack: false })
-                    setNotify({ open: true, title: 'Project Created', message: 'Project created from approved revision. Redirecting to Projects...' })
-                    setTimeout(() => { window.location.href = '/projects' }, 800)
-                  } catch (e) {
-                    setNotify({ open: true, title: 'Create Project Failed', message: e.response?.data?.message || 'We could not create the project. Please try again.' })
-                  }
-                }}>Create Project</button>
+                <button 
+                  type="button" 
+                  className="save-btn" 
+                  disabled={(currentUser?.roles?.includes('estimation_engineer') && !createProjectModal.ack) || isSubmitting} 
+                  onClick={async () => {
+                    if (isSubmitting) return
+                    setLoadingAction('create-project')
+                    setIsSubmitting(true)
+                    try {
+                      const token = localStorage.getItem('token')
+                      // final guard on server side too
+                      const body = { ...createProjectModal.form }
+                      await api.post(`/api/projects/from-revision/${createProjectModal.revision._id}`, body)
+                      setCreateProjectModal({ open: false, revision: null, form: { name: '', locationDetails: '', workingHours: '', manpowerCount: '', assignedProjectEngineerId: '' }, engineers: [], ack: false })
+                      setNotify({ open: true, title: 'Project Created', message: 'Project created from approved revision. Redirecting to Projects...' })
+                      setTimeout(() => { window.location.href = '/projects' }, 800)
+                    } catch (e) {
+                      setNotify({ open: true, title: 'Create Project Failed', message: e.response?.data?.message || 'We could not create the project. Please try again.' })
+                    } finally {
+                      setIsSubmitting(false)
+                      setLoadingAction(null)
+                    }
+                  }}
+                >
+                  <ButtonLoader loading={loadingAction === 'create-project'}>
+                    {isSubmitting ? 'Creating...' : 'Create Project'}
+                  </ButtonLoader>
+                </button>
               </div>
             </div>
           </div>

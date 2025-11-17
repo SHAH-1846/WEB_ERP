@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import { api } from '../lib/api'
 import './LeadManagement.css'
+import './LoadingComponents.css'
+import { Spinner, PageSkeleton, ButtonLoader } from './LoadingComponents'
 
 function ProjectDetail() {
   const [project, setProject] = useState(null)
@@ -17,6 +19,9 @@ function ProjectDetail() {
   const [currentUser, setCurrentUser] = useState(() => {
     try { return JSON.parse(localStorage.getItem('user')) } catch { return null }
   })
+  const [isLoading, setIsLoading] = useState(true)
+  const [isSubmitting, setIsSubmitting] = useState(false)
+  const [loadingAction, setLoadingAction] = useState(null)
 
   const ensurePdfMake = async () => {
     if (window.pdfMake) return
@@ -38,9 +43,13 @@ function ProjectDetail() {
 
   useEffect(() => {
     ;(async () => {
+      setIsLoading(true)
       try {
         const focus = localStorage.getItem('projectsFocusId') || localStorage.getItem('projectId')
-        if (!focus) return
+        if (!focus) {
+          setIsLoading(false)
+          return
+        }
         const res = await api.get(`/api/projects/${focus}`)
         const pj = res.data
         setProject(pj)
@@ -69,7 +78,11 @@ function ProjectDetail() {
           const resEng = await api.get('/api/projects/project-engineers')
           setProjectEngineers(Array.isArray(resEng.data) ? resEng.data : [])
         } catch {}
-      } catch (e) {}
+      } catch (e) {
+        console.error('Error loading project:', e)
+      } finally {
+        setIsLoading(false)
+      }
     })()
   }, [])
 
@@ -535,6 +548,14 @@ function ProjectDetail() {
     }
   }
 
+  if (isLoading) {
+    return (
+      <div className="lead-management" style={{ padding: 24 }}>
+        <PageSkeleton showHeader={true} showContent={true} />
+      </div>
+    )
+  }
+
   if (!project) return (
     <div className="lead-management" style={{ padding: 24 }}>
       <h2>Project Details</h2>
@@ -811,25 +832,40 @@ function ProjectDetail() {
               )}
               <div className="form-actions">
                 <button type="button" className="cancel-btn" onClick={() => setEditModal({ open: false, form: { name: '', locationDetails: '', workingHours: '', manpowerCount: '', status: 'active' } })}>Cancel</button>
-                <button type="button" className="save-btn" onClick={async () => {
-                  try {
-                    // Safety check: verify no variations exist before saving
-                    if (variations && Array.isArray(variations) && variations.length > 0) {
+                <button 
+                  type="button" 
+                  className="save-btn" 
+                  onClick={async () => {
+                    if (isSubmitting) return
+                    setLoadingAction('save-project')
+                    setIsSubmitting(true)
+                    try {
+                      // Safety check: verify no variations exist before saving
+                      if (variations && Array.isArray(variations) && variations.length > 0) {
+                        setEditModal({ open: false, form: { name: '', locationDetails: '', workingHours: '', manpowerCount: '', status: 'active' } })
+                        setEditProjectWarningModal({ open: true, existingVariations: variations })
+                        return
+                      }
+                      
+                      const token = localStorage.getItem('token')
+                      await api.put(`/api/projects/${project._id}`, editModal.form)
+                      const res = await api.get(`/api/projects/${project._id}`)
+                      setProject(res.data)
                       setEditModal({ open: false, form: { name: '', locationDetails: '', workingHours: '', manpowerCount: '', status: 'active' } })
-                      setEditProjectWarningModal({ open: true, existingVariations: variations })
-                      return
+                      setNotify({ open: true, title: 'Saved', message: 'Project updated successfully.' })
+                    } catch (error) {
+                      setNotify({ open: true, title: 'Save Failed', message: error.response?.data?.message || 'We could not update the project.' })
+                    } finally {
+                      setIsSubmitting(false)
+                      setLoadingAction(null)
                     }
-                    
-                    const token = localStorage.getItem('token')
-                    await api.put(`/api/projects/${project._id}`, editModal.form)
-                    const res = await api.get(`/api/projects/${project._id}`)
-                    setProject(res.data)
-                    setEditModal({ open: false, form: { name: '', locationDetails: '', workingHours: '', manpowerCount: '', status: 'active' } })
-                    setNotify({ open: true, title: 'Saved', message: 'Project updated successfully.' })
-                  } catch (error) {
-                    setNotify({ open: true, title: 'Save Failed', message: error.response?.data?.message || 'We could not update the project.' })
-                  }
-                }}>Save Changes</button>
+                  }}
+                  disabled={isSubmitting}
+                >
+                  <ButtonLoader loading={loadingAction === 'save-project'}>
+                    {isSubmitting ? 'Saving...' : 'Save Changes'}
+                  </ButtonLoader>
+                </button>
               </div>
             </div>
           </div>

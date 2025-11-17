@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useState } from 'react'
 import { api } from '../lib/api'
 import './LeadManagement.css'
+import './LoadingComponents.css'
 import { CreateQuotationModal } from './CreateQuotationModal'
 import '../design-system'
 import logo from '../assets/logo/WBES_Logo.png'
+import { Spinner, SkeletonCard, SkeletonTableRow, ButtonLoader, PageSkeleton } from './LoadingComponents'
 
 function QuotationManagement() {
   const [currentUser, setCurrentUser] = useState(null)
@@ -37,6 +39,9 @@ function QuotationManagement() {
   const [expandedProjectRows, setExpandedProjectRows] = useState({}) // Track which revision rows have expanded projects
   const [revisionProjectDetailsMap, setRevisionProjectDetailsMap] = useState({}) // Store full project details per revision ID
   const [projectModal, setProjectModal] = useState({ open: false, project: null })
+  const [isLoading, setIsLoading] = useState(true)
+  const [isSubmitting, setIsSubmitting] = useState(false)
+  const [loadingAction, setLoadingAction] = useState(null)
 
   const defaultCompany = useMemo(() => ({
     logo,
@@ -78,8 +83,12 @@ function QuotationManagement() {
 
   useEffect(() => {
     setCurrentUser(JSON.parse(localStorage.getItem('user')) || null)
-    void fetchLeads()
-    void fetchQuotations()
+    const loadData = async () => {
+      setIsLoading(true)
+      await Promise.all([fetchLeads(), fetchQuotations()])
+      setIsLoading(false)
+    }
+    void loadData()
   }, [])
 
   // Persist view mode to localStorage whenever it changes
@@ -182,36 +191,62 @@ function QuotationManagement() {
   }
 
   const handleSave = async (payload, editingQuote) => {
-    if (editingQuote) {
-      await api.put(`/api/quotations/${editingQuote._id}`, payload)
-    } else {
-      await api.post('/api/quotations', payload)
+    if (isSubmitting) return
+    setLoadingAction(editingQuote ? 'update-quotation' : 'create-quotation')
+    setIsSubmitting(true)
+    try {
+      if (editingQuote) {
+        await api.put(`/api/quotations/${editingQuote._id}`, payload)
+      } else {
+        await api.post('/api/quotations', payload)
+      }
+      await fetchQuotations()
+      setShowModal(false)
+      setEditing(null)
+      setNotify({ open: true, title: 'Success', message: editingQuote ? 'Quotation updated successfully.' : 'Quotation created successfully.' })
+    } catch (e) {
+      setNotify({ open: true, title: 'Save Failed', message: e.response?.data?.message || 'We could not save the quotation. Please try again.' })
+    } finally {
+      setIsSubmitting(false)
+      setLoadingAction(null)
     }
-    await fetchQuotations()
-    setShowModal(false)
-    setEditing(null)
   }
 
   const approveQuotation = async (q, status, note) => {
+    setLoadingAction(`approve-${q._id}-${status}`)
+    setIsSubmitting(true)
     try {
       await api.patch(`/api/quotations/${q._id}/approve`, { status, note })
       await fetchQuotations()
+      setApprovalModal({ open: false, quote: null, action: null, note: '' })
+      setNotify({ open: true, title: status === 'approved' ? 'Quotation Approved' : 'Quotation Rejected', message: `The quotation has been ${status === 'approved' ? 'approved' : 'rejected'} successfully.` })
     } catch (e) {
       setNotify({ open: true, title: 'Approval Failed', message: e.response?.data?.message || 'We could not update approval. Please try again.' })
+    } finally {
+      setIsSubmitting(false)
+      setLoadingAction(null)
     }
   }
 
   const sendForApproval = async (q) => {
+    setLoadingAction(`send-approval-${q._id}`)
+    setIsSubmitting(true)
     try {
       await api.patch(`/api/quotations/${q._id}/approve`, { status: 'pending' })
       await fetchQuotations()
       setNotify({ open: true, title: 'Request Sent', message: 'Approval request has been sent successfully.' })
     } catch (e) {
       setNotify({ open: true, title: 'Send Failed', message: e.response?.data?.message || 'We could not send for approval. Please try again.' })
+    } finally {
+      setIsSubmitting(false)
+      setLoadingAction(null)
     }
   }
 
   const createRevision = async (q) => {
+    if (isSubmitting) return
+    setLoadingAction('create-revision')
+    setIsSubmitting(true)
     try {
       const token = localStorage.getItem('token')
       const payload = { ...revisionModal.form }
@@ -221,13 +256,20 @@ function QuotationManagement() {
       for (const f of fields) {
         if (JSON.stringify(original?.[f] ?? null) !== JSON.stringify(payload?.[f] ?? null)) { changed = true; break }
       }
-      if (!changed) { setNotify({ open: true, title: 'No Changes', message: 'No changes detected. Please modify data before creating a revision.' }); return }
+      if (!changed) { 
+        setNotify({ open: true, title: 'No Changes', message: 'No changes detected. Please modify data before creating a revision.' })
+        return 
+      }
       await api.post('/api/revisions', { sourceQuotationId: q._id, data: payload })
       setNotify({ open: true, title: 'Revision Created', message: 'The revision was created successfully.' })
       setRevisionModal({ open: false, quote: null, form: null })
       setHasRevisionFor({ ...hasRevisionFor, [q._id]: true })
+      await fetchQuotations()
     } catch (e) {
       setNotify({ open: true, title: 'Create Failed', message: e.response?.data?.message || 'We could not create the revision. Please try again.' })
+    } finally {
+      setIsSubmitting(false)
+      setLoadingAction(null)
     }
   }
 

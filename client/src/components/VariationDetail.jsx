@@ -2,7 +2,9 @@ import { useEffect, useState } from 'react'
 import { api, apiFetch } from '../lib/api'
 import './LeadManagement.css'
 import './LeadDetail.css'
+import './LoadingComponents.css'
 import logo from '../assets/logo/WBES_Logo.png'
+import { Spinner, Skeleton, PageSkeleton, ButtonLoader } from './LoadingComponents'
 
 function VariationDetail() {
   const [variation, setVariation] = useState(null)
@@ -22,14 +24,27 @@ function VariationDetail() {
   const [sendApprovalConfirmModal, setSendApprovalConfirmModal] = useState({ open: false })
   const [dateFieldsModified, setDateFieldsModified] = useState({ offerDate: false, enquiryDate: false })
   const [originalDateValues, setOriginalDateValues] = useState({ offerDate: null, enquiryDate: null })
+  const [isLoading, setIsLoading] = useState(true)
+  const [isSubmitting, setIsSubmitting] = useState(false)
+  const [loadingAction, setLoadingAction] = useState(null)
 
   useEffect(() => {
     async function load() {
+      setIsLoading(true)
       try {
         const vid = localStorage.getItem('variationId')
-        if (!vid) return
+        if (!vid) {
+          setIsLoading(false)
+          return
+        }
         const res = await apiFetch(`/api/project-variations/${vid}`)
+        if (!res.ok) {
+          throw new Error(`Failed to fetch variation: ${res.status} ${res.statusText}`)
+        }
         const varData = await res.json()
+        if (!varData || !varData._id) {
+          throw new Error('Invalid variation data received')
+        }
         setVariation(varData)
         
         // Load lead if available
@@ -59,9 +74,12 @@ function VariationDetail() {
         }
       } catch (e) {
         console.error('Error loading variation:', e)
+        setNotify({ open: true, title: 'Load Failed', message: 'Failed to load variation data. Please try again.' })
+      } finally {
+        setIsLoading(false)
       }
     }
-    load()
+    void load()
   }, [])
 
   const ensurePdfMake = async () => {
@@ -375,6 +393,8 @@ function VariationDetail() {
   }
 
   const approveVariation = async (status, note) => {
+    setLoadingAction(`approve-${status}`)
+    setIsSubmitting(true)
     try {
       if (!variation) return
       const token = localStorage.getItem('token')
@@ -383,15 +403,24 @@ function VariationDetail() {
         body: JSON.stringify({ status, note })
       })
       const res = await apiFetch(`/api/project-variations/${variation._id}`)
+      if (!res.ok) throw new Error('Failed to refresh variation')
       const updated = await res.json()
-      setVariation(updated)
+      if (updated && updated._id) {
+        setVariation(updated)
+      }
       setApprovalModal({ open: false, action: null, note: '' })
+      setNotify({ open: true, title: status === 'approved' ? 'Variation Approved' : 'Variation Rejected', message: `The variation has been ${status === 'approved' ? 'approved' : 'rejected'} successfully.` })
     } catch (e) {
       setNotify({ open: true, title: 'Approval Failed', message: 'We could not update approval. Please try again.' })
+    } finally {
+      setIsSubmitting(false)
+      setLoadingAction(null)
     }
   }
 
   const sendForApproval = async () => {
+    setLoadingAction('send-approval')
+    setIsSubmitting(true)
     try {
       if (!variation) return
       const token = localStorage.getItem('token')
@@ -400,8 +429,12 @@ function VariationDetail() {
         body: JSON.stringify({ status: 'pending' })
       })
       const res = await apiFetch(`/api/project-variations/${variation._id}`)
+      if (!res.ok) throw new Error('Failed to refresh variation')
       const updated = await res.json()
-      setVariation(updated)
+      if (updated && updated._id) {
+        setVariation(updated)
+      }
+      setSendApprovalConfirmModal({ open: false })
       setNotify({ open: true, title: 'Request Sent', message: 'Approval request has been sent successfully.' })
     } catch (e) {
       setNotify({ open: true, title: 'Send Failed', message: 'We could not send for approval. Please try again.' })
@@ -625,10 +658,18 @@ function VariationDetail() {
     }
   }
 
+  if (isLoading) {
+    return (
+      <div className="lead-management" style={{ padding: 24 }}>
+        <PageSkeleton showHeader={true} showContent={true} />
+      </div>
+    )
+  }
+
   if (!variation) return (
     <div className="lead-management" style={{ padding: 24 }}>
       <h2>Variation Details</h2>
-      <p>Loading...</p>
+      <p>No variation found.</p>
     </div>
   )
 
@@ -711,13 +752,37 @@ function VariationDetail() {
             <span className="status-badge blue">Approval Pending</span>
           ) : (
             (approvalStatus !== 'approved' && (currentUser?.roles?.includes('estimation_engineer') || variation?.createdBy?._id === currentUser?.id)) && (
-              <button className="save-btn" onClick={() => setSendApprovalConfirmModal({ open: true })}>Send for Approval</button>
+              <button 
+                className="save-btn" 
+                onClick={() => setSendApprovalConfirmModal({ open: true })}
+                disabled={isSubmitting}
+              >
+                <ButtonLoader loading={loadingAction === 'send-approval'}>
+                  Send for Approval
+                </ButtonLoader>
+              </button>
             )
           )}
           {(currentUser?.roles?.includes('manager') || currentUser?.roles?.includes('admin')) && approvalStatus === 'pending' && (
             <>
-              <button className="approve-btn" onClick={() => setApprovalModal({ open: true, action: 'approved', note: '' })}>Approve</button>
-              <button className="reject-btn" onClick={() => setApprovalModal({ open: true, action: 'rejected', note: '' })}>Reject</button>
+              <button 
+                className="approve-btn" 
+                onClick={() => setApprovalModal({ open: true, action: 'approved', note: '' })}
+                disabled={isSubmitting}
+              >
+                <ButtonLoader loading={loadingAction === 'approve-approved'}>
+                  Approve
+                </ButtonLoader>
+              </button>
+              <button 
+                className="reject-btn" 
+                onClick={() => setApprovalModal({ open: true, action: 'rejected', note: '' })}
+                disabled={isSubmitting}
+              >
+                <ButtonLoader loading={loadingAction === 'approve-rejected'}>
+                  Reject
+                </ButtonLoader>
+              </button>
             </>
           )}
           {approvalStatus === 'approved' && (currentUser?.roles?.includes('estimation_engineer') || variation?.createdBy?._id === currentUser?.id) && (
@@ -803,18 +868,32 @@ function VariationDetail() {
           </div>
         )}
 
+        {variation.companyInfo && (variation.companyInfo.name || variation.companyInfo.address || variation.companyInfo.phone || variation.companyInfo.email) && (
+          <div className="ld-card ld-section">
+            <h3>Company Information</h3>
+            <div className="ld-kv">
+              {variation.companyInfo.name && <p><strong>Company Name:</strong> {variation.companyInfo.name}</p>}
+              {variation.companyInfo.address && <p><strong>Address:</strong> {variation.companyInfo.address}</p>}
+              {variation.companyInfo.phone && <p><strong>Phone:</strong> {variation.companyInfo.phone}</p>}
+              {variation.companyInfo.email && <p><strong>Email:</strong> {variation.companyInfo.email}</p>}
+            </div>
+          </div>
+        )}
+
         <div className="ld-card ld-section">
           <h3>Variation Quotation Overview</h3>
           <div className="ld-kv">
             <p><strong>Submitted To:</strong> {variation.submittedTo || 'N/A'}</p>
             <p><strong>Attention:</strong> {variation.attention || 'N/A'}</p>
+            <p><strong>Offer Reference:</strong> {variation.offerReference || 'N/A'}</p>
             <p><strong>Offer Date:</strong> {variation.offerDate ? new Date(variation.offerDate).toLocaleDateString() : 'N/A'}</p>
             <p><strong>Enquiry Date:</strong> {variation.enquiryDate ? new Date(variation.enquiryDate).toLocaleDateString() : 'N/A'}</p>
             <p><strong>Enquiry #:</strong> {variation.enquiryNumber || lead?.enquiryNumber || 'N/A'}</p>
+            <p><strong>Project Title:</strong> {variation.projectTitle || lead?.projectTitle || project?.name || 'N/A'}</p>
             <p><strong>Currency:</strong> {currency}</p>
-            <p><strong>Sub Total:</strong> {Number(variation.priceSchedule?.subTotal || 0).toFixed(2)}</p>
-            <p><strong>VAT:</strong> {variation.priceSchedule?.taxDetails?.vatRate || 0}% ({Number(variation.priceSchedule?.taxDetails?.vatAmount || 0).toFixed(2)})</p>
-            <p><strong>Grand Total:</strong> {Number(variation.priceSchedule?.grandTotal || 0).toFixed(2)}</p>
+            <p><strong>Sub Total:</strong> {currency} {Number(variation.priceSchedule?.subTotal || 0).toFixed(2)}</p>
+            <p><strong>VAT:</strong> {variation.priceSchedule?.taxDetails?.vatRate || 0}% ({currency} {Number(variation.priceSchedule?.taxDetails?.vatAmount || 0).toFixed(2)})</p>
+            <p><strong>Grand Total:</strong> {currency} {Number(variation.priceSchedule?.grandTotal || 0).toFixed(2)}</p>
             <p>
               <strong>Created By:</strong> {variation.createdBy?._id === currentUser?.id ? 'You' : (variation.createdBy?.name || 'N/A')}
               {variation.createdBy?._id !== currentUser?.id && variation.createdBy && (
@@ -1490,33 +1569,36 @@ function VariationDetail() {
                   <button 
                     type="button" 
                     className="save-btn" 
-                    disabled={variation.managementApproval?.status === 'approved'}
+                    disabled={variation.managementApproval?.status === 'approved' || isSubmitting}
                     style={variation.managementApproval?.status === 'approved' ? { opacity: 0.5, cursor: 'not-allowed' } : {}}
                     onClick={async () => {
-                      // Prevent saving if variation is approved (safety check)
-                      if (variation.managementApproval?.status === 'approved') {
-                        setNotify({ open: true, title: 'Cannot Edit', message: 'This variation has been approved and cannot be edited. The approval status must be reverted first.' })
-                        return
-                      }
-                      
-                      // Block save if date fields haven't been manually modified
-                      if (!dateFieldsModified.offerDate && !dateFieldsModified.enquiryDate) {
-                        // Check if dates are different from original (automatic change detected)
-                        const currentOfferDate = editModal.form.offerDate || ''
-                        const currentEnquiryDate = editModal.form.enquiryDate || ''
-                        if (currentOfferDate !== originalDateValues.offerDate || currentEnquiryDate !== originalDateValues.enquiryDate) {
-                          setNotify({ open: true, title: 'Date Fields Not Modified', message: 'Offer Date and Enquiry Date have not been manually modified. Please explicitly change these dates if you want to update them, or they will remain unchanged.' })
+                      if (isSubmitting) return
+                      setLoadingAction('save-variation')
+                      setIsSubmitting(true)
+                      try {
+                        // Prevent saving if variation is approved (safety check)
+                        if (variation.managementApproval?.status === 'approved') {
+                          setNotify({ open: true, title: 'Cannot Edit', message: 'This variation has been approved and cannot be edited. The approval status must be reverted first.' })
                           return
                         }
-                      }
-                      
-                      // Check if there are any actual changes
-                      if (!hasVariationChanges(variation, editModal.form)) {
-                        setNotify({ open: true, title: 'No Changes Detected', message: 'No changes have been made to this variation. Please modify the data before saving.' })
-                        return
-                      }
-                      
-                      try {
+                        
+                        // Block save if date fields haven't been manually modified
+                        if (!dateFieldsModified.offerDate && !dateFieldsModified.enquiryDate) {
+                          // Check if dates are different from original (automatic change detected)
+                          const currentOfferDate = editModal.form.offerDate || ''
+                          const currentEnquiryDate = editModal.form.enquiryDate || ''
+                          if (currentOfferDate !== originalDateValues.offerDate || currentEnquiryDate !== originalDateValues.enquiryDate) {
+                            setNotify({ open: true, title: 'Date Fields Not Modified', message: 'Offer Date and Enquiry Date have not been manually modified. Please explicitly change these dates if you want to update them, or they will remain unchanged.' })
+                            return
+                          }
+                        }
+                        
+                        // Check if there are any actual changes
+                        if (!hasVariationChanges(variation, editModal.form)) {
+                          setNotify({ open: true, title: 'No Changes Detected', message: 'No changes have been made to this variation. Please modify the data before saving.' })
+                          return
+                        }
+                        
                         const token = localStorage.getItem('token')
                         // Create payload excluding date fields if they weren't manually modified
                         const payload = { ...editModal.form }
@@ -1536,7 +1618,32 @@ function VariationDetail() {
                           throw new Error(errorData.message || 'Failed to save changes')
                         }
                         const updated = await res.json()
-                        setVariation(updated)
+                        if (updated && updated._id) {
+                          setVariation(updated)
+                          // Reload lead and project if they changed
+                          if (updated.lead) {
+                            const leadId = typeof updated.lead === 'object' ? updated.lead?._id : updated.lead
+                            if (leadId) {
+                              try {
+                                const resLead = await apiFetch(`/api/leads/${leadId}`)
+                                const leadData = await resLead.json()
+                                const visitsRes = await apiFetch(`/api/leads/${leadId}/site-visits`)
+                                const visits = await visitsRes.json()
+                                setLead({ ...leadData, siteVisits: visits })
+                              } catch {}
+                            }
+                          }
+                          if (updated.parentProject) {
+                            const projectId = typeof updated.parentProject === 'object' ? updated.parentProject?._id : updated.parentProject
+                            if (projectId) {
+                              try {
+                                const resProject = await apiFetch(`/api/projects/${projectId}`)
+                                const projectData = await resProject.json()
+                                setProject(projectData)
+                              } catch {}
+                            }
+                          }
+                        }
                         setEditModal({ open: false, form: null })
                         setDateFieldsModified({ offerDate: false, enquiryDate: false })
                         setOriginalDateValues({ offerDate: null, enquiryDate: null })
@@ -1827,40 +1934,55 @@ function VariationDetail() {
 
               <div className="form-actions">
                 <button type="button" className="cancel-btn" onClick={() => setCreateVariationModal({ open: false, form: null })}>Cancel</button>
-                <button type="button" className="save-btn" onClick={async () => {
-                  try {
-                    // Check if there are changes from the parent variation
-                    const fields = ['companyInfo','submittedTo','attention','offerReference','enquiryNumber','offerDate','enquiryDate','projectTitle','introductionText','scopeOfWork','priceSchedule','ourViewpoints','exclusions','paymentTerms','deliveryCompletionWarrantyValidity']
-                    let changed = false
-                    for (const f of fields) {
-                      if (JSON.stringify(variation?.[f] ?? null) !== JSON.stringify(createVariationModal.form?.[f] ?? null)) { changed = true; break }
-                    }
-                    if (!changed) {
-                      setNotify({ open: true, title: 'No Changes', message: 'No changes detected. Please modify data before creating a variation.' })
-                      return
-                    }
-                    
-                    const res = await apiFetch('/api/project-variations', {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ parentVariationId: variation._id, data: createVariationModal.form })
-                    })
-                    if (!res.ok) {
-                      const errorData = await res.json().catch(() => ({}))
-                      throw new Error(errorData.message || 'Failed to create variation')
-                    }
-                    const newVariation = await res.json()
-                    setCreateVariationModal({ open: false, form: null })
-                    setNotify({ open: true, title: 'Variation Created', message: 'The new variation has been created successfully.' })
-                    // Navigate to the new variation
+                <button 
+                  type="button" 
+                  className="save-btn" 
+                  onClick={async () => {
+                    if (isSubmitting) return
+                    setLoadingAction('create-variation')
+                    setIsSubmitting(true)
                     try {
-                      localStorage.setItem('variationId', newVariation._id)
-                      window.location.href = '/variation-detail'
-                    } catch {}
-                  } catch (e) {
-                    setNotify({ open: true, title: 'Creation Failed', message: e.message || 'We could not create the variation. Please try again.' })
-                  }
-                }}>Create Variation</button>
+                      // Check if there are changes from the parent variation
+                      const fields = ['companyInfo','submittedTo','attention','offerReference','enquiryNumber','offerDate','enquiryDate','projectTitle','introductionText','scopeOfWork','priceSchedule','ourViewpoints','exclusions','paymentTerms','deliveryCompletionWarrantyValidity']
+                      let changed = false
+                      for (const f of fields) {
+                        if (JSON.stringify(variation?.[f] ?? null) !== JSON.stringify(createVariationModal.form?.[f] ?? null)) { changed = true; break }
+                      }
+                      if (!changed) {
+                        setNotify({ open: true, title: 'No Changes', message: 'No changes detected. Please modify data before creating a variation.' })
+                        return
+                      }
+                      
+                      const res = await apiFetch('/api/project-variations', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ parentVariationId: variation._id, data: createVariationModal.form })
+                      })
+                      if (!res.ok) {
+                        const errorData = await res.json().catch(() => ({}))
+                        throw new Error(errorData.message || 'Failed to create variation')
+                      }
+                      const newVariation = await res.json()
+                      setCreateVariationModal({ open: false, form: null })
+                      setNotify({ open: true, title: 'Variation Created', message: 'The new variation has been created successfully.' })
+                      // Navigate to the new variation
+                      try {
+                        localStorage.setItem('variationId', newVariation._id)
+                        window.location.href = '/variation-detail'
+                      } catch {}
+                    } catch (e) {
+                      setNotify({ open: true, title: 'Creation Failed', message: e.message || 'We could not create the variation. Please try again.' })
+                    } finally {
+                      setIsSubmitting(false)
+                      setLoadingAction(null)
+                    }
+                  }}
+                  disabled={isSubmitting}
+                >
+                  <ButtonLoader loading={loadingAction === 'create-variation'}>
+                    {isSubmitting ? 'Creating...' : 'Create Variation'}
+                  </ButtonLoader>
+                </button>
               </div>
             </div>
           </div>
@@ -1881,7 +2003,16 @@ function VariationDetail() {
               </div>
               <div className="form-actions">
                 <button type="button" className="cancel-btn" onClick={() => setApprovalModal({ open: false, action: null, note: '' })}>Cancel</button>
-                <button type="button" className="save-btn" onClick={() => approveVariation(approvalModal.action, approvalModal.note)}>Confirm</button>
+                <button 
+                  type="button" 
+                  className="save-btn" 
+                  onClick={() => approveVariation(approvalModal.action, approvalModal.note)}
+                  disabled={isSubmitting}
+                >
+                  <ButtonLoader loading={isSubmitting}>
+                    {isSubmitting ? (approvalModal.action === 'approved' ? 'Approving...' : 'Rejecting...') : 'Confirm'}
+                  </ButtonLoader>
+                </button>
               </div>
             </div>
           </div>
@@ -1939,10 +2070,18 @@ function VariationDetail() {
               )}
               <div className="form-actions">
                 <button type="button" className="cancel-btn" onClick={() => setSendApprovalConfirmModal({ open: false })}>Cancel</button>
-                <button type="button" className="save-btn" onClick={async () => {
-                  setSendApprovalConfirmModal({ open: false })
-                  await sendForApproval()
-                }}>Confirm</button>
+                <button 
+                  type="button" 
+                  className="save-btn" 
+                  onClick={async () => {
+                    await sendForApproval()
+                  }}
+                  disabled={isSubmitting}
+                >
+                  <ButtonLoader loading={loadingAction === 'send-approval'}>
+                    {isSubmitting ? 'Sending...' : 'Confirm'}
+                  </ButtonLoader>
+                </button>
               </div>
             </div>
           </div>

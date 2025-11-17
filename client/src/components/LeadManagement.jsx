@@ -3,6 +3,8 @@ import { useNavigate, useLocation } from 'react-router-dom'
 import { api } from '../lib/api'
 import { CreateQuotationModal } from './CreateQuotationModal'
 import './LeadManagement.css'
+import './LoadingComponents.css'
+import { Spinner, SkeletonCard, SkeletonTableRow, ButtonLoader, PageSkeleton } from './LoadingComponents'
 
 function LeadManagement() {
   const navigate = useNavigate()
@@ -51,11 +53,19 @@ function LeadManagement() {
   const [currentPage, setCurrentPage] = useState(1)
   const [itemsPerPage, setItemsPerPage] = useState(10)
   const [search, setSearch] = useState('')
+  const [isLoading, setIsLoading] = useState(true)
+  const [isSubmitting, setIsSubmitting] = useState(false)
+  const [loadingAction, setLoadingAction] = useState(null)
 
   useEffect(() => {
     const userData = JSON.parse(localStorage.getItem('user'))
     setCurrentUser(userData)
-    fetchLeads()
+    const loadData = async () => {
+      setIsLoading(true)
+      await fetchLeads()
+      setIsLoading(false)
+    }
+    void loadData()
   }, [])
 
   // Persist view mode to localStorage whenever it changes
@@ -110,30 +120,43 @@ function LeadManagement() {
 
   const handleSubmit = async (e) => {
     e.preventDefault()
+    if (isSubmitting) return
+    setLoadingAction(editingLead ? 'update-lead' : 'create-lead')
+    setIsSubmitting(true)
     try {
       if (editingLead) {
         await api.put(`/api/leads/${editingLead._id}`, formData)
       } else {
         await api.post('/api/leads', formData)
       }
-      fetchLeads()
+      await fetchLeads()
       setShowModal(false)
       setFormData({ customerName: '', projectTitle: '', enquiryNumber: '', enquiryDate: '', scopeSummary: '', submissionDueDate: '' })
       setEditingLead(null)
+      setNotify({ open: true, title: 'Success', message: editingLead ? 'Lead updated successfully.' : 'Lead created successfully.' })
     } catch (error) {
       setNotify({ open: true, title: 'Save Failed', message: error.response?.data?.message || 'We could not save this lead. Please try again.' })
+    } finally {
+      setIsSubmitting(false)
+      setLoadingAction(null)
     }
   }
 
   // Lead approvals removed; handled at Quotation level
 
   const convertToProject = async (leadId) => {
+    if (isSubmitting) return
+    setLoadingAction(`convert-${leadId}`)
+    setIsSubmitting(true)
     try {
       await api.post(`/api/leads/${leadId}/convert`, {})
-      fetchLeads()
+      await fetchLeads()
       setNotify({ open: true, title: 'Converted', message: 'Lead converted to project successfully.' })
     } catch (error) {
       setNotify({ open: true, title: 'Convert Failed', message: error.response?.data?.message || 'We could not convert this lead. Please try again.' })
+    } finally {
+      setIsSubmitting(false)
+      setLoadingAction(null)
     }
   }
 
@@ -152,11 +175,18 @@ function LeadManagement() {
 
   const handleDeleteLead = async (leadId) => {
     if (!confirm('Delete this lead?')) return
+    if (isSubmitting) return
+    setLoadingAction(`delete-${leadId}`)
+    setIsSubmitting(true)
     try {
       await api.delete(`/api/leads/${leadId}`)
-      fetchLeads()
+      await fetchLeads()
+      setNotify({ open: true, title: 'Deleted', message: 'Lead deleted successfully.' })
     } catch (error) {
       setNotify({ open: true, title: 'Delete Failed', message: error.response?.data?.message || 'We could not delete this lead. Please try again.' })
+    } finally {
+      setIsSubmitting(false)
+      setLoadingAction(null)
     }
   }
 
@@ -213,7 +243,11 @@ function LeadManagement() {
       {lead.status === 'draft' && (
         <>
           {(currentUser?.roles?.includes('sales_engineer') || currentUser?.roles?.includes('estimation_engineer') || lead.createdBy?._id === currentUser?.id) && (
-            <button onClick={() => handleEditLead(lead)} className="save-btn">
+            <button 
+              onClick={() => handleEditLead(lead)} 
+              className="save-btn"
+              disabled={isSubmitting}
+            >
               Edit
             </button>
           )}
@@ -223,8 +257,14 @@ function LeadManagement() {
             </button>
           )}
           {lead.createdBy?._id === currentUser?.id && (
-            <button onClick={() => handleDeleteLead(lead._id)} className="cancel-btn">
-              Delete
+            <button 
+              onClick={() => handleDeleteLead(lead._id)} 
+              className="cancel-btn"
+              disabled={isSubmitting}
+            >
+              <ButtonLoader loading={loadingAction === `delete-${lead._id}`}>
+                {isSubmitting && loadingAction === `delete-${lead._id}` ? 'Deleting...' : 'Delete'}
+              </ButtonLoader>
             </button>
           )}
         </>
@@ -291,8 +331,14 @@ function LeadManagement() {
         View Quotations
       </button>
       {lead.status === 'approved' && (
-        <button onClick={() => convertToProject(lead._id)} className="convert-btn">
-          Convert to Project
+        <button 
+          onClick={() => convertToProject(lead._id)} 
+          className="convert-btn"
+          disabled={isSubmitting}
+        >
+          <ButtonLoader loading={loadingAction === `convert-${lead._id}`}>
+            {isSubmitting && loadingAction === `convert-${lead._id}` ? 'Converting...' : 'Convert to Project'}
+          </ButtonLoader>
         </button>
       )}
     </div>
@@ -411,7 +457,36 @@ function LeadManagement() {
         </div>
       </div>
 
-      {viewMode === 'card' ? (
+      {isLoading ? (
+        viewMode === 'card' ? (
+          <div className="leads-grid">
+            {Array.from({ length: itemsPerPage }).map((_, idx) => (
+              <SkeletonCard key={idx} />
+            ))}
+          </div>
+        ) : (
+          <div className="table" style={{ marginTop: '24px' }}>
+            <table>
+              <thead>
+                <tr>
+                  <th>Customer</th>
+                  <th>Project Title</th>
+                  <th>Enquiry #</th>
+                  <th>Status</th>
+                  <th>Quotations</th>
+                  <th>Created By</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {Array.from({ length: itemsPerPage }).map((_, idx) => (
+                  <SkeletonTableRow key={idx} columns={7} />
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )
+      ) : viewMode === 'card' ? (
         <div className="leads-grid">
           {paginatedLeads.map(lead => (
           <div key={lead._id} className="lead-card">
@@ -769,8 +844,14 @@ function LeadManagement() {
                 <button type="button" onClick={() => setShowModal(false)} className="cancel-btn">
                   Cancel
                 </button>
-                <button type="submit" className="save-btn">
-                  {editingLead ? 'Save Changes' : 'Create Lead'}
+                <button 
+                  type="submit" 
+                  className="save-btn"
+                  disabled={isSubmitting}
+                >
+                  <ButtonLoader loading={loadingAction === 'create-lead' || loadingAction === 'update-lead'}>
+                    {isSubmitting ? (editingLead ? 'Saving...' : 'Creating...') : (editingLead ? 'Save Changes' : 'Create Lead')}
+                  </ButtonLoader>
                 </button>
               </div>
             </form>
@@ -787,6 +868,9 @@ function LeadManagement() {
             </div>
             <form onSubmit={async (e) => {
               e.preventDefault()
+              if (isSubmitting) return
+              setLoadingAction('create-site-visit')
+              setIsSubmitting(true)
               try {
                 await api.post(`/api/leads/${editingLead._id}/site-visits`, visitData)
                 setShowVisitModal(false)
@@ -794,6 +878,9 @@ function LeadManagement() {
                 setNotify({ open: true, title: 'Saved', message: 'Site visit saved successfully.' })
               } catch (error) {
                 setNotify({ open: true, title: 'Save Failed', message: error.response?.data?.message || 'We could not save the site visit. Please try again.' })
+              } finally {
+                setIsSubmitting(false)
+                setLoadingAction(null)
               }
             }} className="lead-form">
               <div className="form-group">

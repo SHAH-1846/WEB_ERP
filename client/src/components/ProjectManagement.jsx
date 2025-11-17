@@ -1,6 +1,8 @@
 import { useState, useEffect, useMemo } from 'react'
 import { api } from '../lib/api'
 import './ProjectManagement.css'
+import './LoadingComponents.css'
+import { Spinner, SkeletonCard, SkeletonTableRow, ButtonLoader, PageSkeleton } from './LoadingComponents'
 
 function ProjectManagement() {
   const [projects, setProjects] = useState([])
@@ -46,6 +48,9 @@ function ProjectManagement() {
   const [allVariations, setAllVariations] = useState([])
   const [variationWarningModal, setVariationWarningModal] = useState({ open: false, project: null, existingVariations: [] })
   const [editProjectWarningModal, setEditProjectWarningModal] = useState({ open: false, project: null, existingVariations: [] })
+  const [isLoading, setIsLoading] = useState(true)
+  const [isSubmitting, setIsSubmitting] = useState(false)
+  const [loadingAction, setLoadingAction] = useState(null)
   
   const defaultCompany = useMemo(() => ({
     logo: null,
@@ -559,10 +564,17 @@ function ProjectManagement() {
   useEffect(() => {
     const userData = JSON.parse(localStorage.getItem('user'))
     setCurrentUser(userData)
-    fetchProjects()
-    fetchSiteEngineers()
-    fetchRevisions()
-    fetchAllVariations()
+    const loadData = async () => {
+      setIsLoading(true)
+      await Promise.all([
+        fetchProjects(false),
+        fetchSiteEngineers(),
+        fetchRevisions(),
+        fetchAllVariations()
+      ])
+      setIsLoading(false)
+    }
+    void loadData()
     ;(async () => {
       try {
         const token = localStorage.getItem('token')
@@ -626,13 +638,16 @@ function ProjectManagement() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [viewMode]) // Only run when viewMode changes, not when itemsPerPage changes
 
-  const fetchProjects = async () => {
+  const fetchProjects = async (showLoading = false) => {
+    if (showLoading) setIsLoading(true)
     try {
       const token = localStorage.getItem('token')
       const response = await api.get('/api/projects')
       setProjects(response.data)
     } catch (error) {
       console.error('Error fetching projects:', error)
+    } finally {
+      if (showLoading) setIsLoading(false)
     }
   }
 
@@ -649,39 +664,57 @@ function ProjectManagement() {
 
   const assignSiteEngineer = async (e) => {
     e.preventDefault()
+    setLoadingAction('assign-engineer')
+    setIsSubmitting(true)
     try {
       const token = localStorage.getItem('token')
       await api.patch(`/api/projects/${selectedProject._id}/assign-engineer`, assignData)
-      fetchProjects()
+      await fetchProjects()
       setShowAssignModal(false)
       setAssignData({ siteEngineerId: '' })
+      setNotify({ open: true, title: 'Success', message: 'Site engineer assigned successfully.' })
     } catch (error) {
       setNotify({ open: true, title: 'Assign Failed', message: error.response?.data?.message || 'We could not assign the engineer. Please try again.' })
+    } finally {
+      setIsSubmitting(false)
+      setLoadingAction(null)
     }
   }
 
   const createRevision = async (e) => {
     e.preventDefault()
+    setLoadingAction('create-revision')
+    setIsSubmitting(true)
     try {
       const token = localStorage.getItem('token')
       await api.post(`/api/projects/${selectedProject._id}/revisions`, revisionData)
-      fetchProjects()
+      await fetchProjects()
       setShowRevisionModal(false)
       setRevisionData({ type: 'price', description: '' })
+      setNotify({ open: true, title: 'Success', message: 'Revision created successfully.' })
     } catch (error) {
       setNotify({ open: true, title: 'Create Failed', message: error.response?.data?.message || 'We could not create the revision. Please try again.' })
+    } finally {
+      setIsSubmitting(false)
+      setLoadingAction(null)
     }
   }
 
   const approveRevision = async (projectId, revisionId, status) => {
+    setLoadingAction(`approve-revision-${revisionId}`)
+    setIsSubmitting(true)
     try {
       const token = localStorage.getItem('token')
       await api.patch(`/api/projects/${projectId}/revisions/${revisionId}/approve`, {
         status, comments: ''
       })
-      fetchProjects()
+      await fetchProjects()
+      setNotify({ open: true, title: 'Success', message: `Revision ${status === 'approved' ? 'approved' : 'rejected'} successfully.` })
     } catch (error) {
       setNotify({ open: true, title: 'Process Failed', message: error.response?.data?.message || 'We could not process the revision. Please try again.' })
+    } finally {
+      setIsSubmitting(false)
+      setLoadingAction(null)
     }
   }
 
@@ -702,6 +735,9 @@ function ProjectManagement() {
   }
 
   const createVariation = async () => {
+    if (isSubmitting) return
+    setLoadingAction('create-variation')
+    setIsSubmitting(true)
     try {
       const token = localStorage.getItem('token')
       const payload = { ...variationModal.form }
@@ -743,6 +779,9 @@ function ProjectManagement() {
       await fetchAllVariations()
     } catch (e) {
       setNotify({ open: true, title: 'Create Failed', message: e.response?.data?.message || 'We could not create the variation. Please try again.' })
+    } finally {
+      setIsSubmitting(false)
+      setLoadingAction(null)
     }
   }
 
@@ -984,7 +1023,37 @@ function ProjectManagement() {
         </div>
       </div>
 
-      {viewMode === 'card' ? (
+      {isLoading ? (
+        viewMode === 'card' ? (
+          <div className="projects-grid">
+            {Array.from({ length: itemsPerPage }).map((_, idx) => (
+              <SkeletonCard key={idx} />
+            ))}
+          </div>
+        ) : (
+          <div className="table" style={{ marginTop: '24px' }}>
+            <table>
+              <thead>
+                <tr>
+                  <th>Project Name</th>
+                  <th>Status</th>
+                  <th>Location</th>
+                  <th>Budget</th>
+                  <th>Site Engineer</th>
+                  <th>Project Engineer</th>
+                  <th>Created By</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {Array.from({ length: itemsPerPage }).map((_, idx) => (
+                  <SkeletonTableRow key={idx} columns={8} />
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )
+      ) : viewMode === 'card' ? (
         <div className="projects-grid">
           {paginatedProjects.map(project => (
           <div key={project._id} className="project-card">
@@ -1023,13 +1092,23 @@ function ProjectManagement() {
                       <p className="revision-desc">{revision.description}</p>
                       {canCreateRevision() && revision.status === 'pending' && (
                         <div className="revision-actions">
-                          <button onClick={() => approveRevision(project._id, revision._id, 'approved')} 
-                                  className="approve-btn">
-                            Approve
+                          <button 
+                            onClick={() => approveRevision(project._id, revision._id, 'approved')} 
+                            className="approve-btn"
+                            disabled={isSubmitting}
+                          >
+                            <ButtonLoader loading={loadingAction === `approve-revision-${revision._id}` && !loadingAction.includes('rejected')}>
+                              Approve
+                            </ButtonLoader>
                           </button>
-                          <button onClick={() => approveRevision(project._id, revision._id, 'rejected')} 
-                                  className="reject-btn">
-                            Reject
+                          <button 
+                            onClick={() => approveRevision(project._id, revision._id, 'rejected')} 
+                            className="reject-btn"
+                            disabled={isSubmitting}
+                          >
+                            <ButtonLoader loading={loadingAction === `approve-revision-${revision._id}` && loadingAction.includes('rejected')}>
+                              Reject
+                            </ButtonLoader>
                           </button>
                         </div>
                       )}
@@ -1076,6 +1155,28 @@ function ProjectManagement() {
           </div>
         ))}
       </div>
+      ) : isLoading ? (
+        <div className="table" style={{ marginTop: '24px' }}>
+          <table>
+            <thead>
+              <tr>
+                <th>Project Name</th>
+                <th>Status</th>
+                <th>Location</th>
+                <th>Budget</th>
+                <th>Site Engineer</th>
+                <th>Project Engineer</th>
+                <th>Created By</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {Array.from({ length: itemsPerPage }).map((_, idx) => (
+                <SkeletonTableRow key={idx} columns={8} />
+              ))}
+            </tbody>
+          </table>
+        </div>
       ) : (
         <div className="table" style={{ marginTop: '24px' }}>
           <table>
@@ -1263,6 +1364,9 @@ function ProjectManagement() {
             <form
               onSubmit={async (e) => {
                 e.preventDefault()
+                if (isSubmitting) return
+                setLoadingAction('create-site-visit')
+                setIsSubmitting(true)
                 try {
                   const token = localStorage.getItem('token')
                   await api.post('/api/site-visits', {
@@ -1274,6 +1378,9 @@ function ProjectManagement() {
                   setNotify({ open: true, title: 'Saved', message: 'Site visit saved successfully.' })
                 } catch (error) {
                   setNotify({ open: true, title: 'Create Failed', message: error.response?.data?.message || 'We could not create the site visit. Please try again.' })
+                } finally {
+                  setIsSubmitting(false)
+                  setLoadingAction(null)
                 }
               }}
               className="assign-form"
@@ -1323,8 +1430,23 @@ function ProjectManagement() {
                 <textarea value={visitData.description} onChange={e => setVisitData({ ...visitData, description: e.target.value })} required />
               </div>
               <div className="form-actions">
-                <button type="button" onClick={() => setShowVisitModal(false)} className="cancel-btn">Cancel</button>
-                <button type="submit" className="save-btn">Save Visit</button>
+                <button 
+                  type="button" 
+                  onClick={() => setShowVisitModal(false)} 
+                  className="cancel-btn"
+                  disabled={isSubmitting}
+                >
+                  Cancel
+                </button>
+                <button 
+                  type="submit" 
+                  className="save-btn"
+                  disabled={isSubmitting}
+                >
+                  <ButtonLoader loading={loadingAction === 'create-site-visit'}>
+                    {isSubmitting ? 'Saving...' : 'Save Visit'}
+                  </ButtonLoader>
+                </button>
               </div>
             </form>
           </div>
@@ -1341,18 +1463,33 @@ function ProjectManagement() {
               <p>Are you sure you want to delete project "{deleteModal.project.name}"? This cannot be undone.</p>
               <div className="form-actions">
                 <button type="button" className="cancel-btn" onClick={() => setDeleteModal({ open: false, project: null })}>Cancel</button>
-                <button type="button" className="reject-btn" onClick={async () => {
-                  try {
-                    const token = localStorage.getItem('token')
-                    await api.delete(`/api/projects/${deleteModal.project._id}`)
-                    setDeleteModal({ open: false, project: null })
-                    setNotify({ open: true, title: 'Deleted', message: 'Project deleted successfully.' })
-                    fetchProjects()
-                  } catch (error) {
-                    setDeleteModal({ open: false, project: null })
-                    setNotify({ open: true, title: 'Delete Failed', message: error.response?.data?.message || 'We could not delete the project. Please try again.' })
-                  }
-                }}>Confirm Delete</button>
+                <button 
+                  type="button" 
+                  className="reject-btn" 
+                  onClick={async () => {
+                    if (isSubmitting) return
+                    setLoadingAction('delete-project')
+                    setIsSubmitting(true)
+                    try {
+                      const token = localStorage.getItem('token')
+                      await api.delete(`/api/projects/${deleteModal.project._id}`)
+                      setDeleteModal({ open: false, project: null })
+                      setNotify({ open: true, title: 'Deleted', message: 'Project deleted successfully.' })
+                      await fetchProjects()
+                    } catch (error) {
+                      setDeleteModal({ open: false, project: null })
+                      setNotify({ open: true, title: 'Delete Failed', message: error.response?.data?.message || 'We could not delete the project. Please try again.' })
+                    } finally {
+                      setIsSubmitting(false)
+                      setLoadingAction(null)
+                    }
+                  }}
+                  disabled={isSubmitting}
+                >
+                  <ButtonLoader loading={loadingAction === 'delete-project'}>
+                    {isSubmitting ? 'Deleting...' : 'Confirm Delete'}
+                  </ButtonLoader>
+                </button>
               </div>
             </div>
           </div>
@@ -1411,30 +1548,45 @@ function ProjectManagement() {
               )}
               <div className="form-actions">
                 <button type="button" className="cancel-btn" onClick={() => setEditProjectModal({ open: false, form: { name: '', locationDetails: '', workingHours: '', manpowerCount: '', status: 'active' } })}>Cancel</button>
-                <button type="button" className="save-btn" onClick={async () => {
-                  try {
-                    // Safety check: verify no variations exist before saving
-                    const projectId = typeof selectedProject._id === 'object' ? selectedProject._id._id : selectedProject._id
-                    const existingVariations = allVariations.filter(v => {
-                      const variationProjectId = typeof v.parentProject === 'object' ? v.parentProject?._id : v.parentProject
-                      return variationProjectId === projectId
-                    })
-                    
-                    if (existingVariations.length > 0) {
+                <button 
+                  type="button" 
+                  className="save-btn" 
+                  onClick={async () => {
+                    if (isSubmitting) return
+                    setLoadingAction('save-project')
+                    setIsSubmitting(true)
+                    try {
+                      // Safety check: verify no variations exist before saving
+                      const projectId = typeof selectedProject._id === 'object' ? selectedProject._id._id : selectedProject._id
+                      const existingVariations = allVariations.filter(v => {
+                        const variationProjectId = typeof v.parentProject === 'object' ? v.parentProject?._id : v.parentProject
+                        return variationProjectId === projectId
+                      })
+                      
+                      if (existingVariations.length > 0) {
+                        setEditProjectModal({ open: false, form: { name: '', locationDetails: '', workingHours: '', manpowerCount: '', status: 'active' } })
+                        setEditProjectWarningModal({ open: true, project: selectedProject, existingVariations })
+                        return
+                      }
+                      
+                      const token = localStorage.getItem('token')
+                      await api.put(`/api/projects/${selectedProject._id}`, editProjectModal.form)
                       setEditProjectModal({ open: false, form: { name: '', locationDetails: '', workingHours: '', manpowerCount: '', status: 'active' } })
-                      setEditProjectWarningModal({ open: true, project: selectedProject, existingVariations })
-                      return
+                      await fetchProjects()
+                      setNotify({ open: true, title: 'Saved', message: 'Project updated successfully.' })
+                    } catch (error) {
+                      setNotify({ open: true, title: 'Save Failed', message: error.response?.data?.message || 'We could not update the project.' })
+                    } finally {
+                      setIsSubmitting(false)
+                      setLoadingAction(null)
                     }
-                    
-                    const token = localStorage.getItem('token')
-                    await api.put(`/api/projects/${selectedProject._id}`, editProjectModal.form)
-                    setEditProjectModal({ open: false, form: { name: '', locationDetails: '', workingHours: '', manpowerCount: '', status: 'active' } })
-                    await fetchProjects()
-                    setNotify({ open: true, title: 'Saved', message: 'Project updated successfully.' })
-                  } catch (error) {
-                    setNotify({ open: true, title: 'Save Failed', message: error.response?.data?.message || 'We could not update the project.' })
-                  }
-                }}>Save Changes</button>
+                  }}
+                  disabled={isSubmitting}
+                >
+                  <ButtonLoader loading={loadingAction === 'save-project'}>
+                    {isSubmitting ? 'Saving...' : 'Save Changes'}
+                  </ButtonLoader>
+                </button>
               </div>
             </div>
           </div>
@@ -1649,7 +1801,16 @@ function ProjectManagement() {
 
               <div className="form-actions">
                 <button type="button" className="cancel-btn" onClick={() => setVariationModal({ open: false, project: null, form: null })}>Cancel</button>
-                <button type="button" className="save-btn" onClick={createVariation}>Create Variation</button>
+                <button 
+                  type="button" 
+                  className="save-btn" 
+                  onClick={createVariation}
+                  disabled={isSubmitting}
+                >
+                  <ButtonLoader loading={loadingAction === 'create-variation'}>
+                    {isSubmitting ? 'Creating...' : 'Create Variation'}
+                  </ButtonLoader>
+                </button>
               </div>
             </div>
           </div>
