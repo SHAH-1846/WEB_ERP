@@ -11,12 +11,14 @@ function ProjectVariationManagement() {
   const [search, setSearch] = useState('')
   const [sortKey, setSortKey] = useState('createdAt_desc')
   const [editModal, setEditModal] = useState({ open: false, variation: null, form: null, mode: 'edit' })
+  const [createVariationModal, setCreateVariationModal] = useState({ open: false, variation: null, form: null })
   const [profileUser, setProfileUser] = useState(null)
   const [notify, setNotify] = useState({ open: false, title: '', message: '' })
   const [confirmDelete, setConfirmDelete] = useState({ open: false, variation: null })
   const [approvalsView, setApprovalsView] = useState(null)
   const [approvalModal, setApprovalModal] = useState({ open: false, variation: null, action: null, note: '' })
   const [sendApprovalConfirmModal, setSendApprovalConfirmModal] = useState({ open: false, variation: null })
+  const [diffModal, setDiffModal] = useState({ open: false, variation: null })
   const [viewMode, setViewMode] = useState(() => {
     const saved = localStorage.getItem('variationViewMode')
     return saved === 'table' ? 'table' : 'card' // default to 'card' if not set
@@ -127,16 +129,51 @@ function ProjectVariationManagement() {
     return true
   })
 
-  // Sort variations
+  // Sort variations - primarily by Project, secondarily by Variation number
   const sortedVariations = [...filteredVariations].sort((a, b) => {
+    // Primary sort: by Project (ID or name)
+    const aProjectId = a.parentProject?._id || a.parentProject || ''
+    const bProjectId = b.parentProject?._id || b.parentProject || ''
+    const aProjectName = a.parentProject?.name || ''
+    const bProjectName = b.parentProject?.name || ''
+    
+    // Compare by project ID first, then by project name if IDs are equal
+    let projectCompare = 0
+    if (aProjectId && bProjectId) {
+      // Compare by ID (string comparison)
+      projectCompare = String(aProjectId).localeCompare(String(bProjectId))
+    } else if (aProjectName && bProjectName) {
+      // Fallback to name comparison if IDs not available
+      projectCompare = aProjectName.localeCompare(bProjectName)
+    } else if (aProjectId && !bProjectId) {
+      projectCompare = -1
+    } else if (!aProjectId && bProjectId) {
+      projectCompare = 1
+    }
+    
+    // If projects are different, return the project comparison
+    if (projectCompare !== 0) {
+      return projectCompare
+    }
+    
+    // Secondary sort: by Variation number (within the same project)
+    const aVarNum = a.variationNumber || ''
+    const bVarNum = b.variationNumber || ''
+    const varNumCompare = String(aVarNum).localeCompare(String(bVarNum), undefined, { numeric: true, sensitivity: 'base' })
+    
+    // If variation numbers are different, return the variation number comparison
+    if (varNumCompare !== 0) {
+      return varNumCompare
+    }
+    
+    // Tertiary sort: by the selected sort key (if any other than project/variation)
     const [key, direction] = sortKey.split('_')
     let aVal, bVal
     
     switch (key) {
       case 'variationNumber':
-        aVal = a.variationNumber || 0
-        bVal = b.variationNumber || 0
-        break
+        // Already sorted above, so no additional sorting needed
+        return 0
       case 'grandTotal':
         aVal = a.priceSchedule?.grandTotal || 0
         bVal = b.priceSchedule?.grandTotal || 0
@@ -173,11 +210,231 @@ function ProjectVariationManagement() {
   const totalVariations = variations.length
   const displayedVariations = filteredVariations.length
 
+  // Helper function to format field names for display
+  const formatFieldName = (field) => {
+    const fieldMap = {
+      'companyInfo': 'Company Info',
+      'submittedTo': 'Submitted To',
+      'attention': 'Attention',
+      'offerReference': 'Offer Reference',
+      'enquiryNumber': 'Enquiry Number',
+      'offerDate': 'Offer Date',
+      'enquiryDate': 'Enquiry Date',
+      'projectTitle': 'Project Title',
+      'introductionText': 'Introduction',
+      'scopeOfWork': 'Scope of Work',
+      'priceSchedule': 'Price Schedule',
+      'ourViewpoints': 'Our Viewpoints',
+      'exclusions': 'Exclusions',
+      'paymentTerms': 'Payment Terms',
+      'deliveryCompletionWarrantyValidity': 'Delivery & Warranty'
+    }
+    return fieldMap[field] || field.replace(/([A-Z])/g, ' $1').replace(/^./, str => str.toUpperCase())
+  }
+
+  // Helper function to get concise diff summary
+  const getDiffSummary = (variation) => {
+    if (!variation.diffFromParent || !Array.isArray(variation.diffFromParent) || variation.diffFromParent.length === 0) {
+      return 'No changes'
+    }
+    const count = variation.diffFromParent.length
+    const fields = variation.diffFromParent.slice(0, 5).map(d => formatFieldName(d.field))
+    const more = count > 5 ? `\n+${count - 5} more field${count - 5 > 1 ? 's' : ''}` : ''
+    return `${count} change${count > 1 ? 's' : ''}:\n${fields.join(', ')}${more}`
+  }
+
+  // Helper function to format history values (same as VariationDetail)
+  const formatHistoryValue = (field, value) => {
+    // Handle null/undefined
+    if (value === null || value === undefined) return '(empty)'
+    
+    // Handle date strings (from diffFromParent normalization)
+    if (['offerDate', 'enquiryDate'].includes(field)) {
+      if (typeof value === 'string' && value.match(/^\d{4}-\d{2}-\d{2}$/)) {
+        try {
+          const date = new Date(value)
+          if (!isNaN(date.getTime())) {
+            return date.toLocaleDateString()
+          }
+        } catch {}
+      }
+      // If it's already a Date object or ISO string
+      if (value instanceof Date || (typeof value === 'string' && value.includes('T'))) {
+        try {
+          const date = new Date(value)
+          if (!isNaN(date.getTime())) {
+            return date.toLocaleDateString()
+          }
+        } catch {}
+      }
+      // If it's a number (timestamp)
+      if (typeof value === 'number') {
+        try {
+          const date = new Date(value)
+          if (!isNaN(date.getTime())) {
+            return date.toLocaleDateString()
+          }
+        } catch {}
+      }
+    }
+    
+    // Handle arrays first (before string check, as arrays might be serialized)
+    if (Array.isArray(value)) {
+      if (value.length === 0) return '(empty)'
+      
+      if (field === 'paymentTerms') {
+        return value.map((t, i) => {
+          if (typeof t === 'string') return `${i + 1}. ${t}`
+          if (!t || typeof t !== 'object') return `${i + 1}. ${String(t)}`
+          return `${i + 1}. ${t?.milestoneDescription || '-'} — ${t?.amountPercent ?? ''}%`
+        }).join('\n')
+      }
+      
+      if (field === 'scopeOfWork') {
+        return value.map((s, i) => {
+          if (typeof s === 'string') return `${i + 1}. ${s}`
+          if (!s || typeof s !== 'object') return `${i + 1}. ${String(s)}`
+          const qtyUnit = [s?.quantity ?? '', s?.unit || ''].filter(x => String(x).trim().length > 0).join(' ')
+          const remarks = s?.locationRemarks ? ` — ${s.locationRemarks}` : ''
+          return `${i + 1}. ${s?.description || '-'}${qtyUnit ? ` — Qty: ${qtyUnit}` : ''}${remarks}`
+        }).join('\n')
+      }
+      
+      if (field === 'exclusions') {
+        return value.map((v, i) => `${i + 1}. ${String(v)}`).join('\n')
+      }
+      
+      // Generic array handling
+      return value.map((v, i) => {
+        if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') {
+          return `${i + 1}. ${String(v)}`
+        }
+        if (v && typeof v === 'object') {
+          const parts = Object.entries(v).map(([k, val]) => `${k}: ${val}`)
+          return `${i + 1}. ${parts.join(', ')}`
+        }
+        return `${i + 1}. ${String(v)}`
+      }).join('\n')
+    }
+    
+    // Handle objects (before string check)
+    if (typeof value === 'object' && value !== null && !(value instanceof Date)) {
+      if (field === 'priceSchedule') {
+        const ps = value || {}
+        const lines = []
+        if (ps?.currency) lines.push(`Currency: ${ps.currency}`)
+        const items = Array.isArray(ps?.items) ? ps.items : []
+        if (items.length > 0) {
+          lines.push('Items:')
+          items.forEach((it, i) => {
+            const qtyUnit = [it?.quantity ?? '', it?.unit || ''].filter(x => String(x).trim().length > 0).join(' ')
+            const unitRate = (it?.unitRate ?? '') !== '' ? ` x ${it.unitRate}` : ''
+            const amount = (it?.totalAmount ?? '') !== '' ? ` = ${it.totalAmount}` : ''
+            lines.push(`  ${i + 1}. ${it?.description || '-'}${qtyUnit ? ` — Qty: ${qtyUnit}` : ''}${unitRate}${amount}`)
+          })
+        }
+        if (ps?.subTotal !== undefined && ps?.subTotal !== null) lines.push(`Sub Total: ${ps.subTotal}`)
+        if (ps?.taxDetails) {
+          const rate = ps?.taxDetails?.vatRate ?? ''
+          const amt = ps?.taxDetails?.vatAmount ?? ''
+          if (rate !== '' || amt !== '') {
+            lines.push(`VAT: ${rate}%${amt !== '' ? ` = ${amt}` : ''}`)
+          }
+        }
+        if (ps?.grandTotal !== undefined && ps?.grandTotal !== null) lines.push(`Grand Total: ${ps.grandTotal}`)
+        return lines.length > 0 ? lines.join('\n') : '(empty)'
+      }
+      
+      if (field === 'deliveryCompletionWarrantyValidity') {
+        const d = value || {}
+        const lines = []
+        if (d?.deliveryTimeline) lines.push(`Delivery Timeline: ${d.deliveryTimeline}`)
+        if (d?.warrantyPeriod) lines.push(`Warranty Period: ${d.warrantyPeriod}`)
+        if (d?.offerValidity !== undefined && d?.offerValidity !== null) lines.push(`Offer Validity: ${d.offerValidity} days`)
+        if (d?.authorizedSignatory) lines.push(`Authorized Signatory: ${d.authorizedSignatory}`)
+        return lines.length > 0 ? lines.join('\n') : '(empty)'
+      }
+      
+      if (field === 'companyInfo') {
+        const ci = value || {}
+        const lines = []
+        if (ci?.name) lines.push(`Name: ${ci.name}`)
+        if (ci?.address) lines.push(`Address: ${ci.address}`)
+        if (ci?.phone) lines.push(`Phone: ${ci.phone}`)
+        if (ci?.email) lines.push(`Email: ${ci.email}`)
+        return lines.length > 0 ? lines.join('\n') : '(empty)'
+      }
+      
+      // Generic object handling
+      const entries = Object.entries(value).map(([k, v]) => {
+        if (v === null || v === undefined) return `${k}: (empty)`
+        if (typeof v === 'object') {
+          try {
+            return `${k}: ${JSON.stringify(v, null, 2)}`
+          } catch {
+            return `${k}: ${String(v)}`
+          }
+        }
+        return `${k}: ${String(v)}`
+      })
+      return entries.length > 0 ? entries.join('\n') : '(empty)'
+    }
+    
+    // Handle primitive types
+    if (typeof value === 'string') {
+      // Try to parse JSON string if value looks like JSON
+      if ((value.startsWith('{') || value.startsWith('[')) && value.length > 1) {
+        try {
+          const parsed = JSON.parse(value)
+          // Recursively format the parsed value
+          return formatHistoryValue(field, parsed)
+        } catch {
+          // Not valid JSON, return as string
+          return value.trim() || '(empty)'
+        }
+      }
+      return value.trim() || '(empty)'
+    }
+    
+    if (typeof value === 'number' || typeof value === 'boolean') {
+      return String(value)
+    }
+    
+    // Fallback - try to stringify
+    try {
+      return JSON.stringify(value, null, 2)
+    } catch {
+      return String(value) || '(empty)'
+    }
+  }
+
   return (
     <div className="lead-management">
       <div className="header">
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
           <h1>Project Variations</h1>
+          {selectedProjectFilter && (() => {
+            const selectedProject = projects.find(p => p._id === selectedProjectFilter)
+            return selectedProject ? (
+              <button 
+                className="link-btn" 
+                onClick={() => {
+                  try {
+                    localStorage.setItem('projectsFocusId', selectedProject._id)
+                    localStorage.setItem('projectId', selectedProject._id)
+                  } catch {}
+                  window.location.href = '/project-detail'
+                }}
+                style={{ 
+                  fontSize: '14px',
+                  fontWeight: 600,
+                  padding: '4px 8px'
+                }}
+              >
+                View Project: {selectedProject.name}
+              </button>
+            ) : null
+          })()}
           <span style={{ 
             padding: '4px 12px', 
             borderRadius: '12px', 
@@ -266,7 +523,29 @@ function ProjectVariationManagement() {
           {paginatedVariations.map(v => (
             <div key={v._id} className="lead-card">
               <div className="lead-header">
-                <h3>Variation #{v.variationNumber}</h3>
+                <h3>
+                  <button
+                    className="link-btn"
+                    onClick={() => {
+                      if (v.parentProject?._id) {
+                        try {
+                          localStorage.setItem('projectsFocusId', v.parentProject._id)
+                          localStorage.setItem('projectId', v.parentProject._id)
+                        } catch {}
+                        window.location.href = '/project-detail'
+                      }
+                    }}
+                    style={{
+                      fontSize: 'inherit',
+                      fontWeight: 'inherit',
+                      padding: 0,
+                      textDecoration: 'underline',
+                      cursor: v.parentProject?._id ? 'pointer' : 'default'
+                    }}
+                  >
+                    Variation {v.variationNumber}
+                  </button>
+                </h3>
                 <span className={`status-badge ${v.managementApproval?.status === 'approved' ? 'approved' : v.managementApproval?.status === 'rejected' ? 'rejected' : v.managementApproval?.status === 'pending' ? 'blue' : 'draft'}`}>
                   {v.managementApproval?.status || 'draft'}
                 </span>
@@ -275,7 +554,46 @@ function ProjectVariationManagement() {
                 <p><strong>Project:</strong> {v.parentProject?.name || 'N/A'}</p>
                 <p><strong>Offer Ref:</strong> {v.offerReference || 'N/A'}</p>
                 <p><strong>Grand Total:</strong> {(v.priceSchedule?.currency || 'AED')} {Number(v.priceSchedule?.grandTotal || 0).toFixed(2)}</p>
-                <p><strong>Created By:</strong> {v.createdBy?.name || 'N/A'}</p>
+                {v.diffFromParent && Array.isArray(v.diffFromParent) && v.diffFromParent.length > 0 && (
+                  <p>
+                    <strong>Changes:</strong>
+                    <span 
+                      className="status-badge" 
+                      style={{ 
+                        marginLeft: '8px', 
+                        background: '#DBEAFE', 
+                        color: '#1E40AF', 
+                        border: '1px solid #93C5FD',
+                        cursor: 'pointer',
+                        fontWeight: 600,
+                        padding: '4px 10px',
+                        borderRadius: '6px',
+                        fontSize: '13px',
+                        transition: 'all 0.2s',
+                        userSelect: 'none'
+                      }}
+                      title="Click to view full changes"
+                      onClick={() => setDiffModal({ open: true, variation: v })}
+                      onMouseEnter={(e) => {
+                        e.target.style.background = '#BFDBFE'
+                        e.target.style.transform = 'scale(1.05)'
+                      }}
+                      onMouseLeave={(e) => {
+                        e.target.style.background = '#DBEAFE'
+                        e.target.style.transform = 'scale(1)'
+                      }}
+                    >
+                      {v.diffFromParent.length} change{v.diffFromParent.length > 1 ? 's' : ''}
+                    </span>
+                  </p>
+                )}
+                <p><strong>Created By:</strong> {v.createdBy?._id === currentUser?.id ? 'You' : (v.createdBy?.name || 'N/A')}
+                  {v.createdBy?._id !== currentUser?.id && v.createdBy && (
+                    <button className="link-btn" onClick={() => setProfileUser(v.createdBy)} style={{ marginLeft: '6px' }}>
+                      View Profile
+                    </button>
+                  )}
+                </p>
                 <p><strong>Created At:</strong> {v.createdAt ? new Date(v.createdAt).toLocaleDateString() : 'N/A'}</p>
               </div>
               <div className="lead-actions">
@@ -294,6 +612,41 @@ function ProjectVariationManagement() {
                     <button className="reject-btn" onClick={() => setApprovalModal({ open: true, variation: v, action: 'rejected', note: '' })} style={{ marginLeft: '8px' }}>Reject</button>
                   </>
                 )}
+                {v.managementApproval?.status === 'approved' && (currentUser?.roles?.includes('estimation_engineer') || v.createdBy?._id === currentUser?.id) && (
+                  <button className="save-btn" onClick={async () => {
+                    try {
+                      // Check if a child variation already exists
+                      const res = await api.get(`/api/project-variations?parentVariation=${v._id}`)
+                      const childVariations = res.data
+                      if (Array.isArray(childVariations) && childVariations.length > 0) {
+                        setNotify({ open: true, title: 'Not Allowed', message: 'A child variation already exists for this variation.' })
+                        return
+                      }
+                      // Open create variation modal with pre-populated form
+                      const originalOfferDate = v.offerDate ? String(v.offerDate).slice(0,10) : ''
+                      const originalEnquiryDate = v.enquiryDate ? String(v.enquiryDate).slice(0,10) : ''
+                      setCreateVariationModal({ open: true, variation: v, form: {
+                        companyInfo: v.companyInfo || {},
+                        submittedTo: v.submittedTo || '',
+                        attention: v.attention || '',
+                        offerReference: v.offerReference || '',
+                        enquiryNumber: v.enquiryNumber || '',
+                        offerDate: originalOfferDate,
+                        enquiryDate: originalEnquiryDate,
+                        projectTitle: v.projectTitle || v.lead?.projectTitle || v.parentProject?.name || '',
+                        introductionText: v.introductionText || '',
+                        scopeOfWork: v.scopeOfWork?.length ? v.scopeOfWork : [{ description: '', quantity: '', unit: '', locationRemarks: '' }],
+                        priceSchedule: v.priceSchedule || { items: [], subTotal: 0, grandTotal: 0, currency: 'AED', taxDetails: { vatRate: 5, vatAmount: 0 } },
+                        ourViewpoints: v.ourViewpoints || '',
+                        exclusions: v.exclusions?.length ? v.exclusions : [''],
+                        paymentTerms: v.paymentTerms?.length ? v.paymentTerms : [{ milestoneDescription: '', amountPercent: ''}],
+                        deliveryCompletionWarrantyValidity: v.deliveryCompletionWarrantyValidity || { deliveryTimeline: '', warrantyPeriod: '', offerValidity: 30, authorizedSignatory: currentUser?.name || '' }
+                      } })
+                    } catch (e) {
+                      setNotify({ open: true, title: 'Error', message: 'Could not check for existing child variations. Please try again.' })
+                    }
+                  }} style={{ marginLeft: '8px' }}>Create Another Variation</button>
+                )}
               </div>
             </div>
           ))}
@@ -308,6 +661,7 @@ function ProjectVariationManagement() {
                 <th>Offer Ref</th>
                 <th>Status</th>
                 <th>Grand Total</th>
+                <th>Changes</th>
                 <th>Created By</th>
                 <th>Created At</th>
                 <th>Actions</th>
@@ -316,7 +670,30 @@ function ProjectVariationManagement() {
             <tbody>
               {paginatedVariations.map(v => (
                 <tr key={v._id}>
-                  <td data-label="Variation #">{v.variationNumber}</td>
+                  <td data-label="Variation #">
+                    {v.parentProject?._id ? (
+                      <button
+                        className="link-btn"
+                        onClick={() => {
+                          try {
+                            localStorage.setItem('projectsFocusId', v.parentProject._id)
+                            localStorage.setItem('projectId', v.parentProject._id)
+                          } catch {}
+                          window.location.href = '/project-detail'
+                        }}
+                        style={{
+                          fontSize: 'inherit',
+                          fontWeight: 600,
+                          padding: 0,
+                          textDecoration: 'underline'
+                        }}
+                      >
+                        {v.variationNumber}
+                      </button>
+                    ) : (
+                      v.variationNumber
+                    )}
+                  </td>
                   <td data-label="Project">{v.parentProject?.name || 'N/A'}</td>
                   <td data-label="Offer Ref">{v.offerReference || 'N/A'}</td>
                   <td data-label="Status">
@@ -325,7 +702,48 @@ function ProjectVariationManagement() {
                     </span>
                   </td>
                   <td data-label="Grand Total">{(v.priceSchedule?.currency || 'AED')} {Number(v.priceSchedule?.grandTotal || 0).toFixed(2)}</td>
-                  <td data-label="Created By">{v.createdBy?.name || 'N/A'}</td>
+                  <td data-label="Changes">
+                    {v.diffFromParent && Array.isArray(v.diffFromParent) && v.diffFromParent.length > 0 ? (
+                      <span 
+                        className="status-badge" 
+                        style={{ 
+                          background: '#DBEAFE', 
+                          color: '#1E40AF', 
+                          border: '1px solid #93C5FD',
+                          cursor: 'pointer',
+                          fontWeight: 600,
+                          padding: '4px 10px',
+                          borderRadius: '6px',
+                          fontSize: '13px',
+                          display: 'inline-block',
+                          transition: 'all 0.2s',
+                          userSelect: 'none'
+                        }}
+                        title="Click to view full changes"
+                        onClick={() => setDiffModal({ open: true, variation: v })}
+                        onMouseEnter={(e) => {
+                          e.target.style.background = '#BFDBFE'
+                          e.target.style.transform = 'scale(1.05)'
+                        }}
+                        onMouseLeave={(e) => {
+                          e.target.style.background = '#DBEAFE'
+                          e.target.style.transform = 'scale(1)'
+                        }}
+                      >
+                        {v.diffFromParent.length} change{v.diffFromParent.length > 1 ? 's' : ''}
+                      </span>
+                    ) : (
+                      <span style={{ color: 'var(--text-muted)', fontSize: '13px' }}>No changes</span>
+                    )}
+                  </td>
+                  <td data-label="Created By">
+                    {v.createdBy?._id === currentUser?.id ? 'You' : (v.createdBy?.name || 'N/A')}
+                    {v.createdBy?._id !== currentUser?.id && v.createdBy && (
+                      <button className="link-btn" onClick={() => setProfileUser(v.createdBy)} style={{ marginLeft: '6px' }}>
+                        View Profile
+                      </button>
+                    )}
+                  </td>
                   <td data-label="Created At">{v.createdAt ? new Date(v.createdAt).toLocaleDateString() : 'N/A'}</td>
                   <td data-label="Actions">
                     <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
@@ -343,6 +761,41 @@ function ProjectVariationManagement() {
                           <button className="approve-btn" onClick={() => setApprovalModal({ open: true, variation: v, action: 'approved', note: '' })}>Approve</button>
                           <button className="reject-btn" onClick={() => setApprovalModal({ open: true, variation: v, action: 'rejected', note: '' })}>Reject</button>
                         </>
+                      )}
+                      {v.managementApproval?.status === 'approved' && (currentUser?.roles?.includes('estimation_engineer') || v.createdBy?._id === currentUser?.id) && (
+                        <button className="save-btn" onClick={async () => {
+                          try {
+                            // Check if a child variation already exists
+                            const res = await api.get(`/api/project-variations?parentVariation=${v._id}`)
+                            const childVariations = res.data
+                            if (Array.isArray(childVariations) && childVariations.length > 0) {
+                              setNotify({ open: true, title: 'Not Allowed', message: 'A child variation already exists for this variation.' })
+                              return
+                            }
+                            // Open create variation modal with pre-populated form
+                            const originalOfferDate = v.offerDate ? String(v.offerDate).slice(0,10) : ''
+                            const originalEnquiryDate = v.enquiryDate ? String(v.enquiryDate).slice(0,10) : ''
+                            setCreateVariationModal({ open: true, variation: v, form: {
+                              companyInfo: v.companyInfo || {},
+                              submittedTo: v.submittedTo || '',
+                              attention: v.attention || '',
+                              offerReference: v.offerReference || '',
+                              enquiryNumber: v.enquiryNumber || '',
+                              offerDate: originalOfferDate,
+                              enquiryDate: originalEnquiryDate,
+                              projectTitle: v.projectTitle || v.lead?.projectTitle || v.parentProject?.name || '',
+                              introductionText: v.introductionText || '',
+                              scopeOfWork: v.scopeOfWork?.length ? v.scopeOfWork : [{ description: '', quantity: '', unit: '', locationRemarks: '' }],
+                              priceSchedule: v.priceSchedule || { items: [], subTotal: 0, grandTotal: 0, currency: 'AED', taxDetails: { vatRate: 5, vatAmount: 0 } },
+                              ourViewpoints: v.ourViewpoints || '',
+                              exclusions: v.exclusions?.length ? v.exclusions : [''],
+                              paymentTerms: v.paymentTerms?.length ? v.paymentTerms : [{ milestoneDescription: '', amountPercent: ''}],
+                              deliveryCompletionWarrantyValidity: v.deliveryCompletionWarrantyValidity || { deliveryTimeline: '', warrantyPeriod: '', offerValidity: 30, authorizedSignatory: currentUser?.name || '' }
+                            } })
+                          } catch (e) {
+                            setNotify({ open: true, title: 'Error', message: 'Could not check for existing child variations. Please try again.' })
+                          }
+                        }}>Create Another Variation</button>
                       )}
                     </div>
                   </td>
@@ -630,6 +1083,57 @@ function ProjectVariationManagement() {
         </div>
       )}
 
+      {createVariationModal.open && createVariationModal.form && createVariationModal.variation && (
+        <div className="modal-overlay" onClick={() => setCreateVariationModal({ open: false, variation: null, form: null })}>
+          <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: '90vw', width: '900px' }}>
+            <div className="modal-header">
+              <h2>Create Another Variation</h2>
+              <button onClick={() => setCreateVariationModal({ open: false, variation: null, form: null })} className="close-btn">×</button>
+            </div>
+            <div className="lead-form" style={{ maxHeight: '70vh', overflow: 'auto' }}>
+              <p style={{ marginBottom: '16px', padding: '12px', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: '8px' }}>
+                Creating a new variation based on Variation #{createVariationModal.variation.variationNumber}. Please modify the data below to reflect the changes for this new variation.
+              </p>
+              <div className="form-actions">
+                <button type="button" className="cancel-btn" onClick={() => setCreateVariationModal({ open: false, variation: null, form: null })}>Cancel</button>
+                <button type="button" className="save-btn" onClick={async () => {
+                  try {
+                    const v = createVariationModal.variation
+                    // Check if there are changes from the parent variation
+                    const fields = ['companyInfo','submittedTo','attention','offerReference','enquiryNumber','offerDate','enquiryDate','projectTitle','introductionText','scopeOfWork','priceSchedule','ourViewpoints','exclusions','paymentTerms','deliveryCompletionWarrantyValidity']
+                    let changed = false
+                    for (const f of fields) {
+                      if (JSON.stringify(v?.[f] ?? null) !== JSON.stringify(createVariationModal.form?.[f] ?? null)) { changed = true; break }
+                    }
+                    if (!changed) {
+                      setNotify({ open: true, title: 'No Changes', message: 'No changes detected. Please modify data before creating a variation.' })
+                      return
+                    }
+                    
+                    const res = await api.post('/api/project-variations', { parentVariationId: v._id, data: createVariationModal.form })
+                    setCreateVariationModal({ open: false, variation: null, form: null })
+                    setNotify({ open: true, title: 'Variation Created', message: 'The new variation has been created successfully.' })
+                    await fetchVariations()
+                    // Navigate to the new variation
+                    try {
+                      localStorage.setItem('variationId', res.data._id)
+                      window.location.href = '/variation-detail'
+                    } catch {}
+                  } catch (e) {
+                    setNotify({ open: true, title: 'Creation Failed', message: e.response?.data?.message || 'We could not create the variation. Please try again.' })
+                  }
+                }}>Create Variation</button>
+              </div>
+              <div style={{ marginTop: '16px', padding: '16px', background: '#FEF3C7', border: '1px solid #F59E0B', borderRadius: '8px' }}>
+                <p style={{ margin: 0, color: '#7C2D12', fontWeight: 500 }}>
+                  Note: For detailed editing, you can create the variation and then edit it from the variation detail page. This will create a draft variation that you can modify.
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {profileUser && (
         <div className="modal-overlay profile" onClick={() => setProfileUser(null)}>
           <div className="modal" onClick={e => e.stopPropagation()}>
@@ -645,6 +1149,110 @@ function ProjectVariationManagement() {
               <div className="form-group">
                 <label>Email</label>
                 <input type="text" value={profileUser?.email || ''} readOnly />
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {diffModal.open && diffModal.variation && diffModal.variation.diffFromParent && Array.isArray(diffModal.variation.diffFromParent) && diffModal.variation.diffFromParent.length > 0 && (
+        <div className="modal-overlay" onClick={() => setDiffModal({ open: false, variation: null })}>
+          <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: '900px', maxHeight: '90vh', overflow: 'auto' }}>
+            <div className="modal-header">
+              <h2>Changes from Parent</h2>
+              <button onClick={() => setDiffModal({ open: false, variation: null })} className="close-btn">×</button>
+            </div>
+            <div className="lead-form">
+              <p style={{ marginBottom: '16px', color: 'var(--text-muted)' }}>
+                Variation #{diffModal.variation.variationNumber} includes the following changes from the parent {diffModal.variation.parentVariation ? 'variation' : 'project'}:
+              </p>
+              <div className="table">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Field</th>
+                      <th>Previous Value</th>
+                      <th>New Value</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {diffModal.variation.diffFromParent.map((diff, idx) => {
+                      const fieldNameMap = {
+                        'companyInfo': 'Company Info',
+                        'submittedTo': 'Submitted To',
+                        'attention': 'Attention',
+                        'offerReference': 'Offer Reference',
+                        'enquiryNumber': 'Enquiry Number',
+                        'offerDate': 'Offer Date',
+                        'enquiryDate': 'Enquiry Date',
+                        'projectTitle': 'Project Title',
+                        'introductionText': 'Introduction',
+                        'scopeOfWork': 'Scope of Work',
+                        'priceSchedule': 'Price Schedule',
+                        'ourViewpoints': 'Our Viewpoints',
+                        'exclusions': 'Exclusions',
+                        'paymentTerms': 'Payment Terms',
+                        'deliveryCompletionWarrantyValidity': 'Delivery & Warranty'
+                      }
+                      const fieldName = fieldNameMap[diff.field] || diff.field.replace(/([A-Z])/g, ' $1').replace(/^./, str => str.toUpperCase())
+                      
+                      // Format the values for display
+                      const fromVal = diff.from !== undefined ? diff.from : (diff.fromValue !== undefined ? diff.fromValue : null)
+                      const toVal = diff.to !== undefined ? diff.to : (diff.toValue !== undefined ? diff.toValue : null)
+                      const fromValue = formatHistoryValue(diff.field, fromVal)
+                      const toValue = formatHistoryValue(diff.field, toVal)
+                      
+                      return (
+                        <tr key={idx}>
+                          <td data-label="Field"><strong>{fieldName}</strong></td>
+                          <td data-label="Previous Value">
+                            <pre style={{ 
+                              margin: 0, 
+                              padding: '10px 12px', 
+                              background: '#FEF2F2', 
+                              border: '1px solid #FECACA', 
+                              borderRadius: '6px',
+                              whiteSpace: 'pre-wrap',
+                              wordBreak: 'break-word',
+                              fontSize: '13px',
+                              lineHeight: '1.5',
+                              maxHeight: '200px',
+                              overflow: 'auto',
+                              color: '#991B1B',
+                              fontFamily: 'inherit',
+                              fontWeight: 400
+                            }}>
+                              {fromValue || '(empty)'}
+                            </pre>
+                          </td>
+                          <td data-label="New Value">
+                            <pre style={{ 
+                              margin: 0, 
+                              padding: '10px 12px', 
+                              background: '#F0FDF4', 
+                              border: '1px solid #BBF7D0', 
+                              borderRadius: '6px',
+                              whiteSpace: 'pre-wrap',
+                              wordBreak: 'break-word',
+                              fontSize: '13px',
+                              lineHeight: '1.5',
+                              maxHeight: '200px',
+                              overflow: 'auto',
+                              color: '#166534',
+                              fontFamily: 'inherit',
+                              fontWeight: 400
+                            }}>
+                              {toValue || '(empty)'}
+                            </pre>
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              <div className="form-actions" style={{ marginTop: '20px' }}>
+                <button type="button" className="save-btn" onClick={() => setDiffModal({ open: false, variation: null })}>Close</button>
               </div>
             </div>
           </div>

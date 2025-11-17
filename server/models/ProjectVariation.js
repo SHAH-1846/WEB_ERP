@@ -2,7 +2,7 @@ const mongoose = require('mongoose');
 
 const ProjectVariationSchema = new mongoose.Schema({
   parentProject: { type: mongoose.Schema.Types.ObjectId, ref: 'Project', required: true },
-  variationNumber: { type: Number, required: true },
+  variationNumber: { type: String, required: true },
   parentVariation: { type: mongoose.Schema.Types.ObjectId, ref: 'ProjectVariation' },
 
   lead: { type: mongoose.Schema.Types.ObjectId, ref: 'Lead', required: true },

@@ -22,9 +22,10 @@ const auth = (req, res, next) => {
 // Get all project variations
 router.get('/', auth, async (req, res) => {
   try {
-    const { parentProject } = req.query;
+    const { parentProject, parentVariation } = req.query;
     const query = {};
     if (parentProject) query.parentProject = parentProject;
+    if (parentVariation) query.parentVariation = parentVariation;
     
     const variations = await ProjectVariation.find(query)
       .populate('parentProject', 'name')
@@ -112,8 +113,20 @@ router.post('/', auth, async (req, res) => {
       }
     }
     
+    // Get project to generate project key and lead
+    const project = await Project.findById(parentProjectId_final).populate('leadId');
+    if (!project) return res.status(404).json({ message: 'Project not found' });
+    
+    // Generate project key from project name (uppercase, alphanumeric, max 8 chars)
+    const projectKey = project.name
+      .toUpperCase()
+      .replace(/[^A-Z0-9]/g, '')
+      .substring(0, 8) || 'PROJ';
+    
+    // Count existing variations for this project
     const existingCount = await ProjectVariation.countDocuments({ parentProject: parentProjectId_final });
-    const variationNumber = existingCount + 1;
+    const variationNum = existingCount + 1;
+    const variationNumber = `${projectKey}-VAR-${String(variationNum).padStart(3, '0')}`;
 
     const base = sourceDoc.toObject({ depopulate: true });
     delete base._id;
@@ -164,8 +177,7 @@ router.post('/', auth, async (req, res) => {
       return res.status(400).json({ message: 'No changes detected. Please modify data before creating a variation.' });
     }
 
-    // Get lead from project
-    const project = await Project.findById(parentProjectId_final).populate('leadId');
+    // Get lead from project (already fetched above)
     const leadId = project.leadId?._id || project.leadId;
 
     const variation = await ProjectVariation.create({

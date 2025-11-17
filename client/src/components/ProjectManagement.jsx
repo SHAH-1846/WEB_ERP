@@ -44,6 +44,8 @@ function ProjectManagement() {
   const [selectedRevisionFilter, setSelectedRevisionFilter] = useState('')
   const [variationModal, setVariationModal] = useState({ open: false, project: null, form: null })
   const [allVariations, setAllVariations] = useState([])
+  const [variationWarningModal, setVariationWarningModal] = useState({ open: false, project: null, existingVariations: [] })
+  const [editProjectWarningModal, setEditProjectWarningModal] = useState({ open: false, project: null, existingVariations: [] })
   
   const defaultCompany = useMemo(() => ({
     logo: null,
@@ -796,6 +798,19 @@ function ProjectManagement() {
     <div className="project-actions">
       {canCreateVariation() && (
         <button className="assign-btn" onClick={async () => {
+          // Check if variations already exist for this project
+          const projectId = typeof project._id === 'object' ? project._id._id : project._id
+          const existingVariations = allVariations.filter(v => {
+            const variationProjectId = typeof v.parentProject === 'object' ? v.parentProject?._id : v.parentProject
+            return variationProjectId === projectId
+          })
+          
+          if (existingVariations.length > 0) {
+            // Show warning modal instead of opening variation modal
+            setVariationWarningModal({ open: true, project, existingVariations })
+            return
+          }
+          
           // Get source data from project's source revision or quotation
           let sourceData = null
           if (project.sourceRevision) {
@@ -837,6 +852,19 @@ function ProjectManagement() {
       <button className="save-btn" onClick={() => exportProjectPDF(project)}>Export PDF</button>
       <button className="assign-btn" onClick={() => { try { localStorage.setItem('projectId', project._id); localStorage.setItem('projectsFocusId', project._id) } catch {}; window.location.href = '/project-detail' }}>View Details</button>
       <button className="assign-btn" onClick={() => {
+        // Check if variations already exist for this project
+        const projectId = typeof project._id === 'object' ? project._id._id : project._id
+        const existingVariations = allVariations.filter(v => {
+          const variationProjectId = typeof v.parentProject === 'object' ? v.parentProject?._id : v.parentProject
+          return variationProjectId === projectId
+        })
+        
+        if (existingVariations.length > 0) {
+          // Show warning modal instead of opening edit modal
+          setEditProjectWarningModal({ open: true, project, existingVariations })
+          return
+        }
+        
         setSelectedProject(project)
         ;(async () => {
           try {
@@ -1385,6 +1413,19 @@ function ProjectManagement() {
                 <button type="button" className="cancel-btn" onClick={() => setEditProjectModal({ open: false, form: { name: '', locationDetails: '', workingHours: '', manpowerCount: '', status: 'active' } })}>Cancel</button>
                 <button type="button" className="save-btn" onClick={async () => {
                   try {
+                    // Safety check: verify no variations exist before saving
+                    const projectId = typeof selectedProject._id === 'object' ? selectedProject._id._id : selectedProject._id
+                    const existingVariations = allVariations.filter(v => {
+                      const variationProjectId = typeof v.parentProject === 'object' ? v.parentProject?._id : v.parentProject
+                      return variationProjectId === projectId
+                    })
+                    
+                    if (existingVariations.length > 0) {
+                      setEditProjectModal({ open: false, form: { name: '', locationDetails: '', workingHours: '', manpowerCount: '', status: 'active' } })
+                      setEditProjectWarningModal({ open: true, project: selectedProject, existingVariations })
+                      return
+                    }
+                    
                     const token = localStorage.getItem('token')
                     await api.put(`/api/projects/${selectedProject._id}`, editProjectModal.form)
                     setEditProjectModal({ open: false, form: { name: '', locationDetails: '', workingHours: '', manpowerCount: '', status: 'active' } })
@@ -1394,6 +1435,64 @@ function ProjectManagement() {
                     setNotify({ open: true, title: 'Save Failed', message: error.response?.data?.message || 'We could not update the project.' })
                   }
                 }}>Save Changes</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+      {editProjectWarningModal.open && editProjectWarningModal.project && (
+        <div className="modal-overlay" onClick={() => setEditProjectWarningModal({ open: false, project: null, existingVariations: [] })}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>Cannot Edit Project</h2>
+              <button onClick={() => setEditProjectWarningModal({ open: false, project: null, existingVariations: [] })} className="close-btn">×</button>
+            </div>
+            <div className="lead-form">
+              <div style={{ padding: '16px', background: '#FEF3C7', border: '1px solid #F59E0B', borderRadius: '8px', marginBottom: '16px' }}>
+                <p style={{ margin: 0, color: '#7C2D12', fontWeight: 500 }}>
+                  ⚠️ This project cannot be edited because it has {editProjectWarningModal.existingVariations.length} existing variation{editProjectWarningModal.existingVariations.length > 1 ? 's' : ''}.
+                </p>
+              </div>
+              <p style={{ marginBottom: '16px' }}>
+                Project <strong>{editProjectWarningModal.project.name}</strong> has existing variation quotations. 
+                Editing the project is blocked to maintain data integrity and ensure consistency with approved variations.
+              </p>
+              {editProjectWarningModal.existingVariations.length > 0 && (
+                <div style={{ marginBottom: '16px' }}>
+                  <p style={{ marginBottom: '8px', fontWeight: 600 }}>Existing Variations:</p>
+                  <ul style={{ marginLeft: '20px', marginBottom: '16px' }}>
+                    {editProjectWarningModal.existingVariations.map((v, idx) => (
+                      <li key={v._id || idx} style={{ marginBottom: '4px' }}>
+                        Variation #{v.variationNumber} 
+                        {v.offerReference && ` - ${v.offerReference}`}
+                        {v.managementApproval?.status && (
+                          <span className={`status-badge ${v.managementApproval.status === 'approved' ? 'approved' : v.managementApproval.status === 'rejected' ? 'rejected' : 'blue'}`} style={{ marginLeft: '8px' }}>
+                            {v.managementApproval.status}
+                          </span>
+                        )}
+                        <button 
+                          className="link-btn" 
+                          onClick={() => {
+                            try {
+                              localStorage.setItem('variationId', v._id)
+                              window.location.href = '/variation-detail'
+                            } catch {}
+                          }}
+                          style={{ marginLeft: '8px' }}
+                        >
+                          View
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              <p style={{ marginBottom: '16px', color: 'var(--text-muted)' }}>
+                To make changes to this project, you must first delete or remove all associated variations. 
+                Please contact a manager or administrator if you need to modify project details.
+              </p>
+              <div className="form-actions">
+                <button type="button" className="save-btn" onClick={() => setEditProjectWarningModal({ open: false, project: null, existingVariations: [] })}>Understood</button>
               </div>
             </div>
           </div>
@@ -1551,6 +1650,63 @@ function ProjectManagement() {
               <div className="form-actions">
                 <button type="button" className="cancel-btn" onClick={() => setVariationModal({ open: false, project: null, form: null })}>Cancel</button>
                 <button type="button" className="save-btn" onClick={createVariation}>Create Variation</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+      {variationWarningModal.open && variationWarningModal.project && (
+        <div className="modal-overlay" onClick={() => setVariationWarningModal({ open: false, project: null, existingVariations: [] })}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>Variation Already Exists</h2>
+              <button onClick={() => setVariationWarningModal({ open: false, project: null, existingVariations: [] })} className="close-btn">×</button>
+            </div>
+            <div className="lead-form">
+              <div style={{ padding: '16px', background: '#FEF3C7', border: '1px solid #F59E0B', borderRadius: '8px', marginBottom: '16px' }}>
+                <p style={{ margin: 0, color: '#7C2D12', fontWeight: 500 }}>
+                  ⚠️ This project already has {variationWarningModal.existingVariations.length} existing variation{variationWarningModal.existingVariations.length > 1 ? 's' : ''}.
+                </p>
+              </div>
+              <p style={{ marginBottom: '16px' }}>
+                A variation quotation already exists for project <strong>{variationWarningModal.project.name}</strong>. 
+                You cannot create another variation directly from the project.
+              </p>
+              {variationWarningModal.existingVariations.length > 0 && (
+                <div style={{ marginBottom: '16px' }}>
+                  <p style={{ marginBottom: '8px', fontWeight: 600 }}>Existing Variations:</p>
+                  <ul style={{ marginLeft: '20px', marginBottom: '16px' }}>
+                    {variationWarningModal.existingVariations.map((v, idx) => (
+                      <li key={v._id || idx} style={{ marginBottom: '4px' }}>
+                        Variation #{v.variationNumber} 
+                        {v.offerReference && ` - ${v.offerReference}`}
+                        {v.managementApproval?.status && (
+                          <span className={`status-badge ${v.managementApproval.status === 'approved' ? 'approved' : v.managementApproval.status === 'rejected' ? 'rejected' : 'blue'}`} style={{ marginLeft: '8px' }}>
+                            {v.managementApproval.status}
+                          </span>
+                        )}
+                        <button 
+                          className="link-btn" 
+                          onClick={() => {
+                            try {
+                              localStorage.setItem('variationId', v._id)
+                              window.location.href = '/variation-detail'
+                            } catch {}
+                          }}
+                          style={{ marginLeft: '8px' }}
+                        >
+                          View
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              <p style={{ marginBottom: '16px', color: 'var(--text-muted)' }}>
+                To create a new variation, you should create it from an approved variation using the "Create Another Variation" button on the variation detail page.
+              </p>
+              <div className="form-actions">
+                <button type="button" className="save-btn" onClick={() => setVariationWarningModal({ open: false, project: null, existingVariations: [] })}>Understood</button>
               </div>
             </div>
           </div>

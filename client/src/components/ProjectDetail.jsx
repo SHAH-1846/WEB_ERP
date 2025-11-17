@@ -10,6 +10,7 @@ function ProjectDetail() {
   const [variations, setVariations] = useState([])
   const [notify, setNotify] = useState({ open: false, title: '', message: '' })
   const [editModal, setEditModal] = useState({ open: false, form: { name: '', locationDetails: '', workingHours: '', manpowerCount: '', status: 'active' } })
+  const [editProjectWarningModal, setEditProjectWarningModal] = useState({ open: false, existingVariations: [] })
   const [projectEngineers, setProjectEngineers] = useState([])
   const [profileUser, setProfileUser] = useState(null)
   const [historyOpen, setHistoryOpen] = useState(true)
@@ -558,6 +559,12 @@ function ProjectDetail() {
               const resEng = await api.get('/api/projects/project-engineers')
               setProjectEngineers(Array.isArray(resEng.data) ? resEng.data : [])
             } catch {}
+            // Check if variations already exist for this project
+            if (variations && Array.isArray(variations) && variations.length > 0) {
+              // Show warning modal instead of opening edit modal
+              setEditProjectWarningModal({ open: true, existingVariations: variations })
+              return
+            }
             setEditModal({ open: true, form: { name: project.name || '', locationDetails: project.locationDetails || '', workingHours: project.workingHours || '', manpowerCount: project.manpowerCount || '', status: project.status || 'active', assignedProjectEngineer: project.assignedProjectEngineer?._id || '' } })
           }}>Edit</button>
           {lead?._id && (
@@ -806,6 +813,13 @@ function ProjectDetail() {
                 <button type="button" className="cancel-btn" onClick={() => setEditModal({ open: false, form: { name: '', locationDetails: '', workingHours: '', manpowerCount: '', status: 'active' } })}>Cancel</button>
                 <button type="button" className="save-btn" onClick={async () => {
                   try {
+                    // Safety check: verify no variations exist before saving
+                    if (variations && Array.isArray(variations) && variations.length > 0) {
+                      setEditModal({ open: false, form: { name: '', locationDetails: '', workingHours: '', manpowerCount: '', status: 'active' } })
+                      setEditProjectWarningModal({ open: true, existingVariations: variations })
+                      return
+                    }
+                    
                     const token = localStorage.getItem('token')
                     await api.put(`/api/projects/${project._id}`, editModal.form)
                     const res = await api.get(`/api/projects/${project._id}`)
@@ -816,6 +830,64 @@ function ProjectDetail() {
                     setNotify({ open: true, title: 'Save Failed', message: error.response?.data?.message || 'We could not update the project.' })
                   }
                 }}>Save Changes</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+      {editProjectWarningModal.open && (
+        <div className="modal-overlay" onClick={() => setEditProjectWarningModal({ open: false, existingVariations: [] })}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>Cannot Edit Project</h2>
+              <button onClick={() => setEditProjectWarningModal({ open: false, existingVariations: [] })} className="close-btn">×</button>
+            </div>
+            <div className="lead-form">
+              <div style={{ padding: '16px', background: '#FEF3C7', border: '1px solid #F59E0B', borderRadius: '8px', marginBottom: '16px' }}>
+                <p style={{ margin: 0, color: '#7C2D12', fontWeight: 500 }}>
+                  ⚠️ This project cannot be edited because it has {editProjectWarningModal.existingVariations.length} existing variation{editProjectWarningModal.existingVariations.length > 1 ? 's' : ''}.
+                </p>
+              </div>
+              <p style={{ marginBottom: '16px' }}>
+                This project has existing variation quotations. 
+                Editing the project is blocked to maintain data integrity and ensure consistency with approved variations.
+              </p>
+              {editProjectWarningModal.existingVariations.length > 0 && (
+                <div style={{ marginBottom: '16px' }}>
+                  <p style={{ marginBottom: '8px', fontWeight: 600 }}>Existing Variations:</p>
+                  <ul style={{ marginLeft: '20px', marginBottom: '16px' }}>
+                    {editProjectWarningModal.existingVariations.map((v, idx) => (
+                      <li key={v._id || idx} style={{ marginBottom: '4px' }}>
+                        Variation #{v.variationNumber} 
+                        {v.offerReference && ` - ${v.offerReference}`}
+                        {v.managementApproval?.status && (
+                          <span className={`status-badge ${v.managementApproval.status === 'approved' ? 'approved' : v.managementApproval.status === 'rejected' ? 'rejected' : 'blue'}`} style={{ marginLeft: '8px' }}>
+                            {v.managementApproval.status}
+                          </span>
+                        )}
+                        <button 
+                          className="link-btn" 
+                          onClick={() => {
+                            try {
+                              localStorage.setItem('variationId', v._id)
+                              window.location.href = '/variation-detail'
+                            } catch {}
+                          }}
+                          style={{ marginLeft: '8px' }}
+                        >
+                          View
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              <p style={{ marginBottom: '16px', color: 'var(--text-muted)' }}>
+                To make changes to this project, you must first delete or remove all associated variations. 
+                Please contact a manager or administrator if you need to modify project details.
+              </p>
+              <div className="form-actions">
+                <button type="button" className="save-btn" onClick={() => setEditProjectWarningModal({ open: false, existingVariations: [] })}>Understood</button>
               </div>
             </div>
           </div>

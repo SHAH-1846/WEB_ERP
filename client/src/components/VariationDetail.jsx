@@ -12,6 +12,7 @@ function VariationDetail() {
     try { return JSON.parse(localStorage.getItem('user')) } catch { return null }
   })
   const [editModal, setEditModal] = useState({ open: false, form: null })
+  const [createVariationModal, setCreateVariationModal] = useState({ open: false, form: null })
   const [showHistory, setShowHistory] = useState(false)
   const [profileUser, setProfileUser] = useState(null)
   const [notify, setNotify] = useState({ open: false, title: '', message: '' })
@@ -461,69 +462,167 @@ function VariationDetail() {
   }
 
   const formatHistoryValue = (field, value) => {
-    if (value === null || value === undefined) return ''
-    if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') return String(value)
-    try {
-      if (Array.isArray(value)) {
-        if (field === 'paymentTerms') {
-          const terms = value || []
-          return terms.map((t, i) => `${i + 1}. ${t?.milestoneDescription || '-'} — ${t?.amountPercent ?? ''}%`).join('\n')
-        }
-        if (field === 'scopeOfWork') {
-          const scopes = value || []
-          return scopes.map((s, i) => {
-            const qtyUnit = [s?.quantity ?? '', s?.unit || ''].filter(x => String(x).trim().length > 0).join(' ')
-            const remarks = s?.locationRemarks ? ` — ${s.locationRemarks}` : ''
-            return `${i + 1}. ${s?.description || '-'}${qtyUnit ? ` — Qty: ${qtyUnit}` : ''}${remarks}`
-          }).join('\n')
-        }
-        return value.map((v, i) => {
-          if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') return `${i + 1}. ${String(v)}`
-          if (v && typeof v === 'object') {
-            const parts = Object.entries(v).map(([k, val]) => `${k}: ${val}`)
-            return `${i + 1}. ${parts.join(', ')}`
+    // Handle null/undefined
+    if (value === null || value === undefined) return '(empty)'
+    
+    // Handle date strings (from diffFromParent normalization)
+    if (['offerDate', 'enquiryDate'].includes(field)) {
+      if (typeof value === 'string' && value.match(/^\d{4}-\d{2}-\d{2}$/)) {
+        try {
+          const date = new Date(value)
+          if (!isNaN(date.getTime())) {
+            return date.toLocaleDateString()
           }
-          return `${i + 1}. ${String(v)}`
+        } catch {}
+      }
+      // If it's already a Date object or ISO string
+      if (value instanceof Date || (typeof value === 'string' && value.includes('T'))) {
+        try {
+          const date = new Date(value)
+          if (!isNaN(date.getTime())) {
+            return date.toLocaleDateString()
+          }
+        } catch {}
+      }
+      // If it's a number (timestamp)
+      if (typeof value === 'number') {
+        try {
+          const date = new Date(value)
+          if (!isNaN(date.getTime())) {
+            return date.toLocaleDateString()
+          }
+        } catch {}
+      }
+    }
+    
+    // Handle arrays first (before string check, as arrays might be serialized)
+    if (Array.isArray(value)) {
+      if (value.length === 0) return '(empty)'
+      
+      if (field === 'paymentTerms') {
+        return value.map((t, i) => {
+          if (typeof t === 'string') return `${i + 1}. ${t}`
+          if (!t || typeof t !== 'object') return `${i + 1}. ${String(t)}`
+          return `${i + 1}. ${t?.milestoneDescription || '-'} — ${t?.amountPercent ?? ''}%`
         }).join('\n')
       }
-      if (typeof value === 'object') {
-        if (field === 'priceSchedule') {
-          const ps = value || {}
-          const lines = []
-          if (ps?.currency) lines.push(`Currency: ${ps.currency}`)
-          const items = Array.isArray(ps?.items) ? ps.items : []
-          if (items.length > 0) {
-            lines.push('Items:')
-            items.forEach((it, i) => {
-              const qtyUnit = [it?.quantity ?? '', it?.unit || ''].filter(x => String(x).trim().length > 0).join(' ')
-              const unitRate = (it?.unitRate ?? '') !== '' ? ` x ${it.unitRate}` : ''
-              const amount = (it?.totalAmount ?? '') !== '' ? ` = ${it.totalAmount}` : ''
-              lines.push(`  ${i + 1}. ${it?.description || '-'}${qtyUnit ? ` — Qty: ${qtyUnit}` : ''}${unitRate}${amount}`)
-            })
-          }
-          if (ps?.subTotal !== undefined) lines.push(`Sub Total: ${ps.subTotal}`)
-          if (ps?.taxDetails?.vatRate !== undefined || ps?.taxDetails?.vatAmount !== undefined) {
-            const rate = ps?.taxDetails?.vatRate ?? ''
-            const amt = ps?.taxDetails?.vatAmount ?? ''
+      
+      if (field === 'scopeOfWork') {
+        return value.map((s, i) => {
+          if (typeof s === 'string') return `${i + 1}. ${s}`
+          if (!s || typeof s !== 'object') return `${i + 1}. ${String(s)}`
+          const qtyUnit = [s?.quantity ?? '', s?.unit || ''].filter(x => String(x).trim().length > 0).join(' ')
+          const remarks = s?.locationRemarks ? ` — ${s.locationRemarks}` : ''
+          return `${i + 1}. ${s?.description || '-'}${qtyUnit ? ` — Qty: ${qtyUnit}` : ''}${remarks}`
+        }).join('\n')
+      }
+      
+      if (field === 'exclusions') {
+        return value.map((v, i) => `${i + 1}. ${String(v)}`).join('\n')
+      }
+      
+      // Generic array handling
+      return value.map((v, i) => {
+        if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') {
+          return `${i + 1}. ${String(v)}`
+        }
+        if (v && typeof v === 'object') {
+          const parts = Object.entries(v).map(([k, val]) => `${k}: ${val}`)
+          return `${i + 1}. ${parts.join(', ')}`
+        }
+        return `${i + 1}. ${String(v)}`
+      }).join('\n')
+    }
+    
+    // Handle objects (before string check)
+    if (typeof value === 'object' && value !== null && !(value instanceof Date)) {
+      if (field === 'priceSchedule') {
+        const ps = value || {}
+        const lines = []
+        if (ps?.currency) lines.push(`Currency: ${ps.currency}`)
+        const items = Array.isArray(ps?.items) ? ps.items : []
+        if (items.length > 0) {
+          lines.push('Items:')
+          items.forEach((it, i) => {
+            const qtyUnit = [it?.quantity ?? '', it?.unit || ''].filter(x => String(x).trim().length > 0).join(' ')
+            const unitRate = (it?.unitRate ?? '') !== '' ? ` x ${it.unitRate}` : ''
+            const amount = (it?.totalAmount ?? '') !== '' ? ` = ${it.totalAmount}` : ''
+            lines.push(`  ${i + 1}. ${it?.description || '-'}${qtyUnit ? ` — Qty: ${qtyUnit}` : ''}${unitRate}${amount}`)
+          })
+        }
+        if (ps?.subTotal !== undefined && ps?.subTotal !== null) lines.push(`Sub Total: ${ps.subTotal}`)
+        if (ps?.taxDetails) {
+          const rate = ps?.taxDetails?.vatRate ?? ''
+          const amt = ps?.taxDetails?.vatAmount ?? ''
+          if (rate !== '' || amt !== '') {
             lines.push(`VAT: ${rate}%${amt !== '' ? ` = ${amt}` : ''}`)
           }
-          if (ps?.grandTotal !== undefined) lines.push(`Grand Total: ${ps.grandTotal}`)
-          return lines.join('\n')
         }
-        if (field === 'deliveryCompletionWarrantyValidity') {
-          const d = value || {}
-          const lines = []
-          if (d?.deliveryTimeline) lines.push(`Delivery Timeline: ${d.deliveryTimeline}`)
-          if (d?.warrantyPeriod) lines.push(`Warranty Period: ${d.warrantyPeriod}`)
-          if (d?.offerValidity !== undefined) lines.push(`Offer Validity: ${d.offerValidity} days`)
-          if (d?.authorizedSignatory) lines.push(`Authorized Signatory: ${d.authorizedSignatory}`)
-          return lines.join('\n')
-        }
-        const entries = Object.entries(value).map(([k, v]) => `${k}: ${typeof v === 'object' ? JSON.stringify(v) : String(v)}`)
-        return entries.join('\n')
+        if (ps?.grandTotal !== undefined && ps?.grandTotal !== null) lines.push(`Grand Total: ${ps.grandTotal}`)
+        return lines.length > 0 ? lines.join('\n') : '(empty)'
       }
-    } catch {}
-    return String(value)
+      
+      if (field === 'deliveryCompletionWarrantyValidity') {
+        const d = value || {}
+        const lines = []
+        if (d?.deliveryTimeline) lines.push(`Delivery Timeline: ${d.deliveryTimeline}`)
+        if (d?.warrantyPeriod) lines.push(`Warranty Period: ${d.warrantyPeriod}`)
+        if (d?.offerValidity !== undefined && d?.offerValidity !== null) lines.push(`Offer Validity: ${d.offerValidity} days`)
+        if (d?.authorizedSignatory) lines.push(`Authorized Signatory: ${d.authorizedSignatory}`)
+        return lines.length > 0 ? lines.join('\n') : '(empty)'
+      }
+      
+      if (field === 'companyInfo') {
+        const ci = value || {}
+        const lines = []
+        if (ci?.name) lines.push(`Name: ${ci.name}`)
+        if (ci?.address) lines.push(`Address: ${ci.address}`)
+        if (ci?.phone) lines.push(`Phone: ${ci.phone}`)
+        if (ci?.email) lines.push(`Email: ${ci.email}`)
+        return lines.length > 0 ? lines.join('\n') : '(empty)'
+      }
+      
+      // Generic object handling
+      const entries = Object.entries(value).map(([k, v]) => {
+        if (v === null || v === undefined) return `${k}: (empty)`
+        if (typeof v === 'object') {
+          try {
+            return `${k}: ${JSON.stringify(v, null, 2)}`
+          } catch {
+            return `${k}: ${String(v)}`
+          }
+        }
+        return `${k}: ${String(v)}`
+      })
+      return entries.length > 0 ? entries.join('\n') : '(empty)'
+    }
+    
+    // Handle primitive types
+    if (typeof value === 'string') {
+      // Try to parse JSON string if value looks like JSON
+      if ((value.startsWith('{') || value.startsWith('[')) && value.length > 1) {
+        try {
+          const parsed = JSON.parse(value)
+          // Recursively format the parsed value
+          return formatHistoryValue(field, parsed)
+        } catch {
+          // Not valid JSON, return as string
+          return value.trim() || '(empty)'
+        }
+      }
+      return value.trim() || '(empty)'
+    }
+    
+    if (typeof value === 'number' || typeof value === 'boolean') {
+      return String(value)
+    }
+    
+    // Fallback - try to stringify
+    try {
+      return JSON.stringify(value, null, 2)
+    } catch {
+      return String(value) || '(empty)'
+    }
   }
 
   if (!variation) return (
@@ -621,6 +720,41 @@ function VariationDetail() {
               <button className="reject-btn" onClick={() => setApprovalModal({ open: true, action: 'rejected', note: '' })}>Reject</button>
             </>
           )}
+          {approvalStatus === 'approved' && (currentUser?.roles?.includes('estimation_engineer') || variation?.createdBy?._id === currentUser?.id) && (
+            <button className="save-btn" onClick={async () => {
+              try {
+                // Check if a child variation already exists
+                const res = await apiFetch(`/api/project-variations?parentVariation=${variation._id}`)
+                const childVariations = await res.json()
+                if (Array.isArray(childVariations) && childVariations.length > 0) {
+                  setNotify({ open: true, title: 'Not Allowed', message: 'A child variation already exists for this variation.' })
+                  return
+                }
+                // Open create variation modal with pre-populated form
+                const originalOfferDate = variation.offerDate ? String(variation.offerDate).slice(0,10) : ''
+                const originalEnquiryDate = variation.enquiryDate ? String(variation.enquiryDate).slice(0,10) : ''
+                setCreateVariationModal({ open: true, form: {
+                  companyInfo: variation.companyInfo || {},
+                  submittedTo: variation.submittedTo || '',
+                  attention: variation.attention || '',
+                  offerReference: variation.offerReference || '',
+                  enquiryNumber: variation.enquiryNumber || '',
+                  offerDate: originalOfferDate,
+                  enquiryDate: originalEnquiryDate,
+                  projectTitle: variation.projectTitle || variation.lead?.projectTitle || project?.name || '',
+                  introductionText: variation.introductionText || '',
+                  scopeOfWork: variation.scopeOfWork?.length ? variation.scopeOfWork : [{ description: '', quantity: '', unit: '', locationRemarks: '' }],
+                  priceSchedule: variation.priceSchedule || { items: [], subTotal: 0, grandTotal: 0, currency: 'AED', taxDetails: { vatRate: 5, vatAmount: 0 } },
+                  ourViewpoints: variation.ourViewpoints || '',
+                  exclusions: variation.exclusions?.length ? variation.exclusions : [''],
+                  paymentTerms: variation.paymentTerms?.length ? variation.paymentTerms : [{ milestoneDescription: '', amountPercent: ''}],
+                  deliveryCompletionWarrantyValidity: variation.deliveryCompletionWarrantyValidity || { deliveryTimeline: '', warrantyPeriod: '', offerValidity: 30, authorizedSignatory: currentUser?.name || '' }
+                } })
+              } catch (e) {
+                setNotify({ open: true, title: 'Error', message: 'Could not check for existing child variations. Please try again.' })
+              }
+            }}>Create Another Variation</button>
+          )}
         </div>
       </div>
 
@@ -699,6 +833,100 @@ function VariationDetail() {
             )}</p>
           )}
         </div>
+
+        {variation.diffFromParent && Array.isArray(variation.diffFromParent) && variation.diffFromParent.length > 0 && (
+          <div className="ld-card ld-section">
+            <h3>Changes from Parent</h3>
+            <p style={{ marginBottom: '16px', color: 'var(--text-muted)' }}>
+              This variation includes the following changes from the parent {variation.parentVariation ? 'variation' : 'project'}:
+            </p>
+            <div className="table">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Field</th>
+                    <th>Previous Value</th>
+                    <th>New Value</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {variation.diffFromParent.map((diff, idx) => {
+                    const fieldNameMap = {
+                      'companyInfo': 'Company Info',
+                      'submittedTo': 'Submitted To',
+                      'attention': 'Attention',
+                      'offerReference': 'Offer Reference',
+                      'enquiryNumber': 'Enquiry Number',
+                      'offerDate': 'Offer Date',
+                      'enquiryDate': 'Enquiry Date',
+                      'projectTitle': 'Project Title',
+                      'introductionText': 'Introduction',
+                      'scopeOfWork': 'Scope of Work',
+                      'priceSchedule': 'Price Schedule',
+                      'ourViewpoints': 'Our Viewpoints',
+                      'exclusions': 'Exclusions',
+                      'paymentTerms': 'Payment Terms',
+                      'deliveryCompletionWarrantyValidity': 'Delivery & Warranty'
+                    }
+                    const fieldName = fieldNameMap[diff.field] || diff.field.replace(/([A-Z])/g, ' $1').replace(/^./, str => str.toUpperCase())
+                    
+                    // Format the values for display - ensure we're accessing the correct properties
+                    const fromVal = diff.from !== undefined ? diff.from : (diff.fromValue !== undefined ? diff.fromValue : null)
+                    const toVal = diff.to !== undefined ? diff.to : (diff.toValue !== undefined ? diff.toValue : null)
+                    const fromValue = formatHistoryValue(diff.field, fromVal)
+                    const toValue = formatHistoryValue(diff.field, toVal)
+                    
+                    return (
+                      <tr key={idx}>
+                        <td data-label="Field"><strong>{fieldName}</strong></td>
+                        <td data-label="Previous Value">
+                          <pre style={{ 
+                            margin: 0, 
+                            padding: '10px 12px', 
+                            background: '#FEF2F2', 
+                            border: '1px solid #FECACA', 
+                            borderRadius: '6px',
+                            whiteSpace: 'pre-wrap',
+                            wordBreak: 'break-word',
+                            fontSize: '13px',
+                            lineHeight: '1.5',
+                            maxHeight: '200px',
+                            overflow: 'auto',
+                            color: '#991B1B',
+                            fontFamily: 'inherit',
+                            fontWeight: 400
+                          }}>
+                            {fromValue || '(empty)'}
+                          </pre>
+                        </td>
+                        <td data-label="New Value">
+                          <pre style={{ 
+                            margin: 0, 
+                            padding: '10px 12px', 
+                            background: '#F0FDF4', 
+                            border: '1px solid #BBF7D0', 
+                            borderRadius: '6px',
+                            whiteSpace: 'pre-wrap',
+                            wordBreak: 'break-word',
+                            fontSize: '13px',
+                            lineHeight: '1.5',
+                            maxHeight: '200px',
+                            overflow: 'auto',
+                            color: '#166534',
+                            fontFamily: 'inherit',
+                            fontWeight: 400
+                          }}>
+                            {toValue || '(empty)'}
+                          </pre>
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
 
         {variation.introductionText && (
           <div className="ld-card ld-section">
@@ -1323,6 +1551,318 @@ function VariationDetail() {
                 </div>
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {createVariationModal.open && createVariationModal.form && (
+        <div className="modal-overlay" onClick={() => setCreateVariationModal({ open: false, form: null })}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>Create Another Variation</h2>
+              <button onClick={() => setCreateVariationModal({ open: false, form: null })} className="close-btn">×</button>
+            </div>
+            <div className="lead-form" style={{ maxHeight: '70vh', overflow: 'auto' }}>
+              <div className="form-section">
+                <div className="section-header">
+                  <h3>Cover & Basic Details</h3>
+                </div>
+                <div className="form-group">
+                  <label>Submitted To (Client Company)</label>
+                  <input type="text" value={createVariationModal.form.submittedTo} onChange={e => setCreateVariationModal({ ...createVariationModal, form: { ...createVariationModal.form, submittedTo: e.target.value } })} />
+                </div>
+                <div className="form-group">
+                  <label>Attention (Contact Person)</label>
+                  <input type="text" value={createVariationModal.form.attention} onChange={e => setCreateVariationModal({ ...createVariationModal, form: { ...createVariationModal.form, attention: e.target.value } })} />
+                </div>
+                <div className="form-row">
+                  <div className="form-group" style={{ flex: 1 }}>
+                    <label>Offer Reference</label>
+                    <input type="text" value={createVariationModal.form.offerReference} onChange={e => setCreateVariationModal({ ...createVariationModal, form: { ...createVariationModal.form, offerReference: e.target.value } })} />
+                  </div>
+                  <div className="form-group" style={{ flex: 1 }}>
+                    <label>Enquiry Number</label>
+                    <input type="text" value={createVariationModal.form.enquiryNumber} onChange={e => setCreateVariationModal({ ...createVariationModal, form: { ...createVariationModal.form, enquiryNumber: e.target.value } })} />
+                  </div>
+                </div>
+                <div className="form-row">
+                  <div className="form-group" style={{ flex: 1 }}>
+                    <label>Offer Date</label>
+                    <input type="date" value={createVariationModal.form.offerDate} onChange={e => setCreateVariationModal({ ...createVariationModal, form: { ...createVariationModal.form, offerDate: e.target.value } })} />
+                  </div>
+                  <div className="form-group" style={{ flex: 1 }}>
+                    <label>Enquiry Date</label>
+                    <input type="date" value={createVariationModal.form.enquiryDate} onChange={e => setCreateVariationModal({ ...createVariationModal, form: { ...createVariationModal.form, enquiryDate: e.target.value } })} />
+                  </div>
+                </div>
+              </div>
+
+              <div className="form-section">
+                <div className="section-header">
+                  <h3>Project Details</h3>
+                </div>
+                <div className="form-group">
+                  <label>Project Title</label>
+                  <input type="text" value={createVariationModal.form.projectTitle} onChange={e => setCreateVariationModal({ ...createVariationModal, form: { ...createVariationModal.form, projectTitle: e.target.value } })} />
+                </div>
+                <div className="form-group">
+                  <label>Introduction</label>
+                  <textarea value={createVariationModal.form.introductionText} onChange={e => setCreateVariationModal({ ...createVariationModal, form: { ...createVariationModal.form, introductionText: e.target.value } })} />
+                </div>
+              </div>
+
+              <div className="form-section">
+                <div className="section-header">
+                  <h3>Scope of Work</h3>
+                </div>
+                {createVariationModal.form.scopeOfWork.map((s, i) => (
+                  <div key={i} className="item-card">
+                    <div className="item-header">
+                      <span>Item {i + 1}</span>
+                      <button type="button" className="cancel-btn" onClick={() => setCreateVariationModal({ ...createVariationModal, form: { ...createVariationModal.form, scopeOfWork: createVariationModal.form.scopeOfWork.filter((_, idx) => idx !== i) } })}>Remove</button>
+                    </div>
+                    <div className="form-row">
+                      <div className="form-group" style={{ flex: 3 }}>
+                        <label>Description</label>
+                        <textarea value={s.description} onChange={e => setCreateVariationModal({ ...createVariationModal, form: { ...createVariationModal.form, scopeOfWork: createVariationModal.form.scopeOfWork.map((x, idx) => idx === i ? { ...x, description: e.target.value } : x) } })} />
+                      </div>
+                      <div className="form-group" style={{ flex: 1 }}>
+                        <label>Qty</label>
+                        <input type="number" value={s.quantity} onChange={e => setCreateVariationModal({ ...createVariationModal, form: { ...createVariationModal.form, scopeOfWork: createVariationModal.form.scopeOfWork.map((x, idx) => idx === i ? { ...x, quantity: e.target.value } : x) } })} />
+                      </div>
+                      <div className="form-group" style={{ flex: 1 }}>
+                        <label>Unit</label>
+                        <input type="text" value={s.unit} onChange={e => setCreateVariationModal({ ...createVariationModal, form: { ...createVariationModal.form, scopeOfWork: createVariationModal.form.scopeOfWork.map((x, idx) => idx === i ? { ...x, unit: e.target.value } : x) } })} />
+                      </div>
+                      <div className="form-group" style={{ flex: 2 }}>
+                        <label>Location/Remarks</label>
+                        <input type="text" value={s.locationRemarks} onChange={e => setCreateVariationModal({ ...createVariationModal, form: { ...createVariationModal.form, scopeOfWork: createVariationModal.form.scopeOfWork.map((x, idx) => idx === i ? { ...x, locationRemarks: e.target.value } : x) } })} />
+                      </div>
+                    </div>
+                  </div>
+                ))}
+                <div className="section-actions">
+                  <button type="button" className="link-btn" onClick={() => setCreateVariationModal({ ...createVariationModal, form: { ...createVariationModal.form, scopeOfWork: [...createVariationModal.form.scopeOfWork, { description: '', quantity: '', unit: '', locationRemarks: '' }] } })}>+ Add Scope Item</button>
+                </div>
+              </div>
+
+              <div className="form-section">
+                <div className="section-header">
+                  <h3>Price Schedule</h3>
+                </div>
+                <div className="form-row">
+                  <div className="form-group" style={{ flex: 1 }}>
+                    <label>Currency</label>
+                    <input type="text" value={createVariationModal.form.priceSchedule.currency} onChange={e => setCreateVariationModal({ ...createVariationModal, form: { ...createVariationModal.form, priceSchedule: { ...createVariationModal.form.priceSchedule, currency: e.target.value } } })} />
+                  </div>
+                  <div className="form-group" style={{ flex: 1 }}>
+                    <label>VAT %</label>
+                    <input type="number" value={createVariationModal.form.priceSchedule.taxDetails.vatRate} onChange={e => {
+                      const items = createVariationModal.form.priceSchedule.items
+                      const sub = items.reduce((sum, it) => sum + (Number(it.quantity || 0) * Number(it.unitRate || 0)), 0)
+                      const vat = sub * (Number(e.target.value || 0) / 100)
+                      const grand = sub + vat
+                      setCreateVariationModal({ ...createVariationModal, form: { ...createVariationModal.form, priceSchedule: { ...createVariationModal.form.priceSchedule, subTotal: Number(sub.toFixed(2)), grandTotal: Number(grand.toFixed(2)), taxDetails: { ...createVariationModal.form.priceSchedule.taxDetails, vatRate: e.target.value, vatAmount: Number(vat.toFixed(2)) } } } })
+                    }} />
+                  </div>
+                </div>
+                {createVariationModal.form.priceSchedule.items.map((it, i) => (
+                  <div key={i} className="item-card">
+                    <div className="item-header">
+                      <span>Item {i + 1}</span>
+                      <button type="button" className="cancel-btn" onClick={() => {
+                        const items = createVariationModal.form.priceSchedule.items.filter((_, idx) => idx !== i)
+                        const sub = items.reduce((sum, it) => sum + (Number(it.quantity || 0) * Number(it.unitRate || 0)), 0)
+                        const vat = sub * (Number(createVariationModal.form.priceSchedule.taxDetails.vatRate || 0) / 100)
+                        const grand = sub + vat
+                        setCreateVariationModal({ ...createVariationModal, form: { ...createVariationModal.form, priceSchedule: { ...createVariationModal.form.priceSchedule, items, subTotal: Number(sub.toFixed(2)), grandTotal: Number(grand.toFixed(2)), taxDetails: { ...createVariationModal.form.priceSchedule.taxDetails, vatAmount: Number(vat.toFixed(2)) } } } })
+                      }}>Remove</button>
+                    </div>
+                    <div className="form-row">
+                      <div className="form-group" style={{ flex: 3 }}>
+                        <label>Description</label>
+                        <input type="text" value={it.description} onChange={e => {
+                          const items = createVariationModal.form.priceSchedule.items.map((x, idx) => idx === i ? { ...x, description: e.target.value } : x)
+                          setCreateVariationModal({ ...createVariationModal, form: { ...createVariationModal.form, priceSchedule: { ...createVariationModal.form.priceSchedule, items } } })
+                        }} />
+                      </div>
+                      <div className="form-group" style={{ flex: 1 }}>
+                        <label>Qty</label>
+                        <input type="number" value={it.quantity} onChange={e => {
+                          const items = createVariationModal.form.priceSchedule.items.map((x, idx) => idx === i ? { ...x, quantity: e.target.value, totalAmount: Number((Number(e.target.value || 0) * Number(x.unitRate || 0)).toFixed(2)) } : x)
+                          const sub = items.reduce((sum, it) => sum + (Number(it.quantity || 0) * Number(it.unitRate || 0)), 0)
+                          const vat = sub * (Number(createVariationModal.form.priceSchedule.taxDetails.vatRate || 0) / 100)
+                          const grand = sub + vat
+                          setCreateVariationModal({ ...createVariationModal, form: { ...createVariationModal.form, priceSchedule: { ...createVariationModal.form.priceSchedule, items, subTotal: Number(sub.toFixed(2)), grandTotal: Number(grand.toFixed(2)), taxDetails: { ...createVariationModal.form.priceSchedule.taxDetails, vatAmount: Number(vat.toFixed(2)) } } } })
+                        }} />
+                      </div>
+                      <div className="form-group" style={{ flex: 1 }}>
+                        <label>Unit</label>
+                        <input type="text" value={it.unit} onChange={e => {
+                          const items = createVariationModal.form.priceSchedule.items.map((x, idx) => idx === i ? { ...x, unit: e.target.value } : x)
+                          setCreateVariationModal({ ...createVariationModal, form: { ...createVariationModal.form, priceSchedule: { ...createVariationModal.form.priceSchedule, items } } })
+                        }} />
+                      </div>
+                      <div className="form-group" style={{ flex: 1 }}>
+                        <label>Unit Rate</label>
+                        <input type="number" value={it.unitRate} onChange={e => {
+                          const items = createVariationModal.form.priceSchedule.items.map((x, idx) => idx === i ? { ...x, unitRate: e.target.value, totalAmount: Number((Number(x.quantity || 0) * Number(e.target.value || 0)).toFixed(2)) } : x)
+                          const sub = items.reduce((sum, it) => sum + (Number(it.quantity || 0) * Number(it.unitRate || 0)), 0)
+                          const vat = sub * (Number(createVariationModal.form.priceSchedule.taxDetails.vatRate || 0) / 100)
+                          const grand = sub + vat
+                          setCreateVariationModal({ ...createVariationModal, form: { ...createVariationModal.form, priceSchedule: { ...createVariationModal.form.priceSchedule, items, subTotal: Number(sub.toFixed(2)), grandTotal: Number(grand.toFixed(2)), taxDetails: { ...createVariationModal.form.priceSchedule.taxDetails, vatAmount: Number(vat.toFixed(2)) } } } })
+                        }} />
+                      </div>
+                      <div className="form-group" style={{ flex: 1 }}>
+                        <label>Amount</label>
+                        <input type="number" value={Number(it.totalAmount || 0)} readOnly />
+                      </div>
+                    </div>
+                  </div>
+                ))}
+                <div className="section-actions">
+                  <button type="button" className="link-btn" onClick={() => setCreateVariationModal({ ...createVariationModal, form: { ...createVariationModal.form, priceSchedule: { ...createVariationModal.form.priceSchedule, items: [...createVariationModal.form.priceSchedule.items, { description: '', quantity: 0, unit: '', unitRate: 0, totalAmount: 0 }] } } })}>+ Add Item</button>
+                </div>
+
+                <div className="totals-card">
+                  <div className="form-row">
+                    <div className="form-group" style={{ flex: 1 }}>
+                      <label>Sub Total</label>
+                      <input type="number" readOnly value={Number(createVariationModal.form.priceSchedule.subTotal || 0)} />
+                    </div>
+                    <div className="form-group" style={{ flex: 1 }}>
+                      <label>VAT Amount</label>
+                      <input type="number" readOnly value={Number(createVariationModal.form.priceSchedule.taxDetails.vatAmount || 0)} />
+                    </div>
+                    <div className="form-group" style={{ flex: 1 }}>
+                      <label>Grand Total</label>
+                      <input type="number" readOnly value={Number(createVariationModal.form.priceSchedule.grandTotal || 0)} />
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="form-section">
+                <div className="section-header">
+                  <h3>Our Viewpoints / Special Terms</h3>
+                </div>
+                <div className="form-group">
+                  <label>Our Viewpoints / Special Terms</label>
+                  <textarea value={createVariationModal.form.ourViewpoints} onChange={e => setCreateVariationModal({ ...createVariationModal, form: { ...createVariationModal.form, ourViewpoints: e.target.value } })} />
+                </div>
+              </div>
+
+              <div className="form-section">
+                <div className="section-header">
+                  <h3>Exclusions</h3>
+                </div>
+                {createVariationModal.form.exclusions.map((ex, i) => (
+                  <div key={i} className="item-card">
+                    <div className="item-header">
+                      <span>Item {i + 1}</span>
+                      <button type="button" className="cancel-btn" onClick={() => setCreateVariationModal({ ...createVariationModal, form: { ...createVariationModal.form, exclusions: createVariationModal.form.exclusions.filter((_, idx) => idx !== i) } })}>Remove</button>
+                    </div>
+                    <div className="form-row">
+                      <div className="form-group" style={{ flex: 1 }}>
+                        <input type="text" value={ex} onChange={e => setCreateVariationModal({ ...createVariationModal, form: { ...createVariationModal.form, exclusions: createVariationModal.form.exclusions.map((x, idx) => idx === i ? e.target.value : x) } })} />
+                      </div>
+                    </div>
+                  </div>
+                ))}
+                <div className="section-actions">
+                  <button type="button" className="link-btn" onClick={() => setCreateVariationModal({ ...createVariationModal, form: { ...createVariationModal.form, exclusions: [...createVariationModal.form.exclusions, ''] } })}>+ Add Exclusion</button>
+                </div>
+              </div>
+
+              <div className="form-section">
+                <div className="section-header">
+                  <h3>Payment Terms</h3>
+                </div>
+                {createVariationModal.form.paymentTerms.map((p, i) => (
+                  <div key={i} className="item-card">
+                    <div className="item-header">
+                      <span>Term {i + 1}</span>
+                      <button type="button" className="cancel-btn" onClick={() => setCreateVariationModal({ ...createVariationModal, form: { ...createVariationModal.form, paymentTerms: createVariationModal.form.paymentTerms.filter((_, idx) => idx !== i) } })}>Remove</button>
+                    </div>
+                    <div className="form-row">
+                      <div className="form-group" style={{ flex: 3 }}>
+                        <label>Milestone</label>
+                        <input type="text" value={p.milestoneDescription} onChange={e => setCreateVariationModal({ ...createVariationModal, form: { ...createVariationModal.form, paymentTerms: createVariationModal.form.paymentTerms.map((x, idx) => idx === i ? { ...x, milestoneDescription: e.target.value } : x) } })} />
+                      </div>
+                      <div className="form-group" style={{ flex: 1 }}>
+                        <label>Amount %</label>
+                        <input type="number" value={p.amountPercent} onChange={e => setCreateVariationModal({ ...createVariationModal, form: { ...createVariationModal.form, paymentTerms: createVariationModal.form.paymentTerms.map((x, idx) => idx === i ? { ...x, amountPercent: e.target.value } : x) } })} />
+                      </div>
+                    </div>
+                  </div>
+                ))}
+                <div className="section-actions">
+                  <button type="button" className="link-btn" onClick={() => setCreateVariationModal({ ...createVariationModal, form: { ...createVariationModal.form, paymentTerms: [...createVariationModal.form.paymentTerms, { milestoneDescription: '', amountPercent: '' }] } })}>+ Add Payment Term</button>
+                </div>
+              </div>
+
+              <div className="form-section">
+                <div className="section-header">
+                  <h3>Delivery, Completion, Warranty & Validity</h3>
+                </div>
+                <div className="form-group">
+                  <label>Delivery / Completion Timeline</label>
+                  <input type="text" value={createVariationModal.form.deliveryCompletionWarrantyValidity.deliveryTimeline} onChange={e => setCreateVariationModal({ ...createVariationModal, form: { ...createVariationModal.form, deliveryCompletionWarrantyValidity: { ...createVariationModal.form.deliveryCompletionWarrantyValidity, deliveryTimeline: e.target.value } } })} />
+                </div>
+                <div className="form-row">
+                  <div className="form-group" style={{ flex: 1 }}>
+                    <label>Warranty Period</label>
+                    <input type="text" value={createVariationModal.form.deliveryCompletionWarrantyValidity.warrantyPeriod} onChange={e => setCreateVariationModal({ ...createVariationModal, form: { ...createVariationModal.form, deliveryCompletionWarrantyValidity: { ...createVariationModal.form.deliveryCompletionWarrantyValidity, warrantyPeriod: e.target.value } } })} />
+                  </div>
+                  <div className="form-group" style={{ flex: 1 }}>
+                    <label>Offer Validity (Days)</label>
+                    <input type="number" value={createVariationModal.form.deliveryCompletionWarrantyValidity.offerValidity} onChange={e => setCreateVariationModal({ ...createVariationModal, form: { ...createVariationModal.form, deliveryCompletionWarrantyValidity: { ...createVariationModal.form.deliveryCompletionWarrantyValidity, offerValidity: e.target.value } } })} />
+                  </div>
+                </div>
+                <div className="form-group">
+                  <label>Authorized Signatory</label>
+                  <input type="text" value={createVariationModal.form.deliveryCompletionWarrantyValidity.authorizedSignatory} onChange={e => setCreateVariationModal({ ...createVariationModal, form: { ...createVariationModal.form, deliveryCompletionWarrantyValidity: { ...createVariationModal.form.deliveryCompletionWarrantyValidity, authorizedSignatory: e.target.value } } })} />
+                </div>
+              </div>
+
+              <div className="form-actions">
+                <button type="button" className="cancel-btn" onClick={() => setCreateVariationModal({ open: false, form: null })}>Cancel</button>
+                <button type="button" className="save-btn" onClick={async () => {
+                  try {
+                    // Check if there are changes from the parent variation
+                    const fields = ['companyInfo','submittedTo','attention','offerReference','enquiryNumber','offerDate','enquiryDate','projectTitle','introductionText','scopeOfWork','priceSchedule','ourViewpoints','exclusions','paymentTerms','deliveryCompletionWarrantyValidity']
+                    let changed = false
+                    for (const f of fields) {
+                      if (JSON.stringify(variation?.[f] ?? null) !== JSON.stringify(createVariationModal.form?.[f] ?? null)) { changed = true; break }
+                    }
+                    if (!changed) {
+                      setNotify({ open: true, title: 'No Changes', message: 'No changes detected. Please modify data before creating a variation.' })
+                      return
+                    }
+                    
+                    const res = await apiFetch('/api/project-variations', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ parentVariationId: variation._id, data: createVariationModal.form })
+                    })
+                    if (!res.ok) {
+                      const errorData = await res.json().catch(() => ({}))
+                      throw new Error(errorData.message || 'Failed to create variation')
+                    }
+                    const newVariation = await res.json()
+                    setCreateVariationModal({ open: false, form: null })
+                    setNotify({ open: true, title: 'Variation Created', message: 'The new variation has been created successfully.' })
+                    // Navigate to the new variation
+                    try {
+                      localStorage.setItem('variationId', newVariation._id)
+                      window.location.href = '/variation-detail'
+                    } catch {}
+                  } catch (e) {
+                    setNotify({ open: true, title: 'Creation Failed', message: e.message || 'We could not create the variation. Please try again.' })
+                  }
+                }}>Create Variation</button>
+              </div>
+            </div>
           </div>
         </div>
       )}
