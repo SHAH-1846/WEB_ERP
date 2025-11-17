@@ -16,6 +16,7 @@ function ProjectVariationManagement() {
   const [confirmDelete, setConfirmDelete] = useState({ open: false, variation: null })
   const [approvalsView, setApprovalsView] = useState(null)
   const [approvalModal, setApprovalModal] = useState({ open: false, variation: null, action: null, note: '' })
+  const [sendApprovalConfirmModal, setSendApprovalConfirmModal] = useState({ open: false, variation: null })
   const [viewMode, setViewMode] = useState(() => {
     const saved = localStorage.getItem('variationViewMode')
     return saved === 'table' ? 'table' : 'card' // default to 'card' if not set
@@ -80,6 +81,29 @@ function ProjectVariationManagement() {
     } catch {}
   }
 
+  const sendForApproval = async (variation) => {
+    try {
+      const token = localStorage.getItem('token')
+      await api.patch(`/api/project-variations/${variation._id}/approve`, { status: 'pending' })
+      await fetchVariations()
+      setNotify({ open: true, title: 'Request Sent', message: 'Approval request has been sent successfully.' })
+    } catch (e) {
+      setNotify({ open: true, title: 'Send Failed', message: e.response?.data?.message || 'We could not send for approval. Please try again.' })
+    }
+  }
+
+  const approveVariation = async (variation, status, note) => {
+    try {
+      const token = localStorage.getItem('token')
+      await api.patch(`/api/project-variations/${variation._id}/approve`, { status, note })
+      await fetchVariations()
+      setApprovalModal({ open: false, variation: null, action: null, note: '' })
+      setNotify({ open: true, title: status === 'approved' ? 'Variation Approved' : 'Variation Rejected', message: `The variation has been ${status === 'approved' ? 'approved' : 'rejected'} successfully.` })
+    } catch (e) {
+      setNotify({ open: true, title: 'Approval Failed', message: e.response?.data?.message || 'We could not update approval. Please try again.' })
+    }
+  }
+
   // Filter variations
   const filteredVariations = variations.filter(v => {
     // Apply project filter
@@ -118,8 +142,8 @@ function ProjectVariationManagement() {
         bVal = b.priceSchedule?.grandTotal || 0
         break
       case 'status':
-        aVal = a.managementApproval?.status || 'pending'
-        bVal = b.managementApproval?.status || 'pending'
+        aVal = a.managementApproval?.status || 'draft'
+        bVal = b.managementApproval?.status || 'draft'
         break
       case 'createdAt':
       default:
@@ -243,8 +267,8 @@ function ProjectVariationManagement() {
             <div key={v._id} className="lead-card">
               <div className="lead-header">
                 <h3>Variation #{v.variationNumber}</h3>
-                <span className={`status-badge ${v.managementApproval?.status === 'approved' ? 'approved' : v.managementApproval?.status === 'rejected' ? 'rejected' : 'draft'}`}>
-                  {v.managementApproval?.status || 'pending'}
+                <span className={`status-badge ${v.managementApproval?.status === 'approved' ? 'approved' : v.managementApproval?.status === 'rejected' ? 'rejected' : v.managementApproval?.status === 'pending' ? 'blue' : 'draft'}`}>
+                  {v.managementApproval?.status || 'draft'}
                 </span>
               </div>
               <div className="lead-details">
@@ -256,6 +280,20 @@ function ProjectVariationManagement() {
               </div>
               <div className="lead-actions">
                 <button className="link-btn" onClick={() => { try { localStorage.setItem('variationId', v._id) } catch {}; window.location.href = '/variation-detail' }}>View Details</button>
+                {v.managementApproval?.status === 'pending' ? (
+                  <span className="status-badge blue" style={{ marginLeft: '8px' }}>Approval Pending</span>
+                ) : (
+                  (v.managementApproval?.status !== 'approved' && (currentUser?.roles?.includes('estimation_engineer') || v.createdBy?._id === currentUser?.id)) && (
+                    <button className="save-btn" onClick={() => setSendApprovalConfirmModal({ open: true, variation: v })} style={{ marginLeft: '8px' }}>Send for Approval</button>
+                  )
+                )}
+                <button className="link-btn" onClick={() => setApprovalsView(v)} style={{ marginLeft: '8px' }}>View Approvals/Rejections</button>
+                {(currentUser?.roles?.includes('manager') || currentUser?.roles?.includes('admin')) && v.managementApproval?.status === 'pending' && (
+                  <>
+                    <button className="approve-btn" onClick={() => setApprovalModal({ open: true, variation: v, action: 'approved', note: '' })} style={{ marginLeft: '8px' }}>Approve</button>
+                    <button className="reject-btn" onClick={() => setApprovalModal({ open: true, variation: v, action: 'rejected', note: '' })} style={{ marginLeft: '8px' }}>Reject</button>
+                  </>
+                )}
               </div>
             </div>
           ))}
@@ -290,7 +328,23 @@ function ProjectVariationManagement() {
                   <td data-label="Created By">{v.createdBy?.name || 'N/A'}</td>
                   <td data-label="Created At">{v.createdAt ? new Date(v.createdAt).toLocaleDateString() : 'N/A'}</td>
                   <td data-label="Actions">
-                    <button className="link-btn" onClick={() => { try { localStorage.setItem('variationId', v._id) } catch {}; window.location.href = '/variation-detail' }}>View</button>
+                    <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                      <button className="link-btn" onClick={() => { try { localStorage.setItem('variationId', v._id) } catch {}; window.location.href = '/variation-detail' }}>View</button>
+                      {v.managementApproval?.status === 'pending' ? (
+                        <span className="status-badge blue">Approval Pending</span>
+                      ) : (
+                        (v.managementApproval?.status !== 'approved' && (currentUser?.roles?.includes('estimation_engineer') || v.createdBy?._id === currentUser?.id)) && (
+                          <button className="save-btn" onClick={() => setSendApprovalConfirmModal({ open: true, variation: v })}>Send for Approval</button>
+                        )
+                      )}
+                      <button className="link-btn" onClick={() => setApprovalsView(v)}>View Approvals/Rejections</button>
+                      {(currentUser?.roles?.includes('manager') || currentUser?.roles?.includes('admin')) && v.managementApproval?.status === 'pending' && (
+                        <>
+                          <button className="approve-btn" onClick={() => setApprovalModal({ open: true, variation: v, action: 'approved', note: '' })}>Approve</button>
+                          <button className="reject-btn" onClick={() => setApprovalModal({ open: true, variation: v, action: 'rejected', note: '' })}>Reject</button>
+                        </>
+                      )}
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -419,6 +473,180 @@ function ProjectVariationManagement() {
             >
               Next
             </button>
+          </div>
+        </div>
+      )}
+
+      {approvalsView && (
+        <div className="modal-overlay history" onClick={() => setApprovalsView(null)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>Approvals & Rejections</h2>
+              <button onClick={() => setApprovalsView(null)} className="close-btn">×</button>
+            </div>
+            <div className="lead-form" style={{ maxHeight: '65vh', overflow: 'auto' }}>
+              {(() => {
+                const v = approvalsView
+                const rawLogs = Array.isArray(v.managementApproval?.logs) ? v.managementApproval.logs.slice().sort((a, b) => new Date(a.at || 0) - new Date(b.at || 0)) : []
+                const cycles = []
+                let current = null
+                for (const entry of rawLogs) {
+                  if (entry.status === 'pending') {
+                    if (current) cycles.push(current)
+                    current = {
+                      requestedAt: entry.at,
+                      requestedBy: entry.requestedBy,
+                      requestNote: entry.note,
+                      decidedAt: null,
+                      decidedBy: null,
+                      decisionNote: null,
+                      decisionStatus: 'pending'
+                    }
+                  } else if (entry.status === 'approved' || entry.status === 'rejected') {
+                    if (!current) {
+                      current = { requestedAt: null, requestedBy: null, requestNote: null, decidedAt: null, decidedBy: null, decisionNote: null, decisionStatus: null }
+                    }
+                    if (!current.decidedAt) {
+                      current.decidedAt = entry.at
+                      current.decidedBy = entry.decidedBy
+                      current.decisionNote = entry.note
+                      current.decisionStatus = entry.status
+                      cycles.push(current)
+                      current = null
+                    } else {
+                      cycles.push({ requestedAt: null, requestedBy: null, requestNote: null, decidedAt: entry.at, decidedBy: entry.decidedBy, decisionNote: entry.note, decisionStatus: entry.status })
+                    }
+                  }
+                }
+                if (current) cycles.push(current)
+
+                if (cycles.length === 0 && (v.managementApproval?.requestedBy || v.managementApproval?.approvedBy)) {
+                  cycles.push({
+                    requestedAt: v.updatedAt || v.createdAt,
+                    requestedBy: v.managementApproval?.requestedBy,
+                    requestNote: v.managementApproval?.comments,
+                    decidedAt: v.managementApproval?.approvedAt,
+                    decidedBy: v.managementApproval?.approvedBy,
+                    decisionNote: v.managementApproval?.comments,
+                    decisionStatus: v.managementApproval?.status
+                  })
+                }
+
+                if (cycles.length === 0) return <p>No approval records.</p>
+
+                return (
+                  <div>
+                    {cycles.map((c, idx) => (
+                      <div key={idx} className="edit-item" style={{ marginTop: idx === 0 ? 0 : 12 }}>
+                        <div className="edit-header">
+                          <span>Approval Cycle {idx + 1} — {c.decisionStatus ? c.decisionStatus.toUpperCase() : 'PENDING'}</span>
+                        </div>
+                        <div style={{ whiteSpace: 'pre-wrap' }}>
+                          <div><strong>Requested:</strong> {c.requestedAt ? new Date(c.requestedAt).toLocaleString() : '—'} {c.requestedBy?.name && (<> by {c.requestedBy?._id === currentUser?.id ? 'YOU' : c.requestedBy.name}
+                            {c.requestedBy?._id && c.requestedBy._id !== currentUser?.id && (
+                              <button className="link-btn" onClick={() => setProfileUser(c.requestedBy)} style={{ marginLeft: 6 }}>View Profile</button>
+                            )}
+                          </>)}
+                          </div>
+                          {c.requestNote && <div><strong>Request note:</strong> {c.requestNote}</div>}
+                          <div style={{ marginTop: 6 }}><strong>Decision:</strong> {c.decidedAt ? new Date(c.decidedAt).toLocaleString() : '—'} {c.decidedBy?.name && (<> by {c.decidedBy?._id === currentUser?.id ? 'YOU' : c.decidedBy.name}
+                            {c.decidedBy?._id && c.decidedBy._id !== currentUser?.id && (
+                              <button className="link-btn" onClick={() => setProfileUser(c.decidedBy)} style={{ marginLeft: 6 }}>View Profile</button>
+                            )}
+                          </>)} {c.decisionStatus && <span style={{ marginLeft: 6, textTransform: 'uppercase' }}>({c.decisionStatus})</span>}
+                          </div>
+                          {c.decisionNote && <div><strong>Decision note:</strong> {c.decisionNote}</div>}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )
+              })()}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {approvalModal.open && (
+        <div className="modal-overlay" onClick={() => setApprovalModal({ open: false, variation: null, action: null, note: '' })}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>{approvalModal.action === 'approved' ? 'Approve Variation' : 'Reject Variation'}</h2>
+              <button onClick={() => setApprovalModal({ open: false, variation: null, action: null, note: '' })} className="close-btn">×</button>
+            </div>
+            <div className="lead-form">
+              <div className="form-group">
+                <label>Note</label>
+                <textarea value={approvalModal.note} onChange={e => setApprovalModal({ ...approvalModal, note: e.target.value })} />
+              </div>
+              <div className="form-actions">
+                <button type="button" className="cancel-btn" onClick={() => setApprovalModal({ open: false, variation: null, action: null, note: '' })}>Cancel</button>
+                <button type="button" className="save-btn" onClick={async () => {
+                  if (!approvalModal.variation || !approvalModal.action) return
+                  await approveVariation(approvalModal.variation, approvalModal.action, approvalModal.note)
+                }}>Confirm</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {sendApprovalConfirmModal.open && sendApprovalConfirmModal.variation && (
+        <div className="modal-overlay" onClick={() => setSendApprovalConfirmModal({ open: false, variation: null })}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>Send for Approval</h2>
+              <button onClick={() => setSendApprovalConfirmModal({ open: false, variation: null })} className="close-btn">×</button>
+            </div>
+            <div className="lead-form">
+              <p style={{ marginBottom: '16px' }}>
+                Are you sure you want to send this variation for management approval?
+              </p>
+              <p style={{ marginBottom: '16px', color: 'var(--text-muted)' }}>
+                Once sent, the variation will be marked as "Pending Approval" and managers or administrators will be able to review and approve or reject it.
+              </p>
+              {sendApprovalConfirmModal.variation && (
+                <div style={{ padding: '12px', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: '8px', marginBottom: '16px' }}>
+                  <p style={{ margin: 0, fontSize: '14px', fontWeight: 500 }}>Variation #{sendApprovalConfirmModal.variation.variationNumber}</p>
+                  {sendApprovalConfirmModal.variation.projectTitle && (
+                    <p style={{ margin: '4px 0 0 0', fontSize: '14px', color: 'var(--text-muted)' }}>{sendApprovalConfirmModal.variation.projectTitle}</p>
+                  )}
+                  {sendApprovalConfirmModal.variation.parentProject?.name && (
+                    <p style={{ margin: '4px 0 0 0', fontSize: '14px', color: 'var(--text-muted)' }}>Project: {sendApprovalConfirmModal.variation.parentProject.name}</p>
+                  )}
+                </div>
+              )}
+              <div className="form-actions">
+                <button type="button" className="cancel-btn" onClick={() => setSendApprovalConfirmModal({ open: false, variation: null })}>Cancel</button>
+                <button type="button" className="save-btn" onClick={async () => {
+                  if (sendApprovalConfirmModal.variation) {
+                    setSendApprovalConfirmModal({ open: false, variation: null })
+                    await sendForApproval(sendApprovalConfirmModal.variation)
+                  }
+                }}>Confirm</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {profileUser && (
+        <div className="modal-overlay profile" onClick={() => setProfileUser(null)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>User Profile</h2>
+              <button onClick={() => setProfileUser(null)} className="close-btn">×</button>
+            </div>
+            <div className="lead-form">
+              <div className="form-group">
+                <label>Name</label>
+                <input type="text" value={profileUser?.name || ''} readOnly />
+              </div>
+              <div className="form-group">
+                <label>Email</label>
+                <input type="text" value={profileUser?.email || ''} readOnly />
+              </div>
+            </div>
           </div>
         </div>
       )}

@@ -613,7 +613,7 @@ function ProjectDetail() {
                   {variations.sort((a,b)=> (a.variationNumber||0)-(b.variationNumber||0)).map(v => (
                     <tr key={v._id}>
                       <td data-label="#">{v.variationNumber}</td>
-                      <td data-label="Status">{v.managementApproval?.status || 'pending'}</td>
+                      <td data-label="Status">{v.managementApproval?.status || 'draft'}</td>
                       <td data-label="Grand Total">{(v.priceSchedule?.currency || 'AED')} {Number(v.priceSchedule?.grandTotal || 0).toFixed(2)}</td>
                       <td data-label="Actions">
                         <button className="link-btn" onClick={() => { try { localStorage.setItem('variationId', v._id) } catch {}; window.location.href = '/variation-detail' }}>View</button>

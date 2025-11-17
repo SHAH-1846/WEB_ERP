@@ -31,8 +31,10 @@ router.get('/', auth, async (req, res) => {
       .populate('lead')
       .populate('createdBy', 'name email')
       .populate('edits.editedBy', 'name')
-      .populate('managementApproval.requestedBy', 'name')
-      .populate('managementApproval.approvedBy', 'name')
+      .populate('managementApproval.requestedBy', 'name email')
+      .populate('managementApproval.approvedBy', 'name email')
+      .populate('managementApproval.logs.requestedBy', 'name email')
+      .populate('managementApproval.logs.decidedBy', 'name email')
       .sort({ createdAt: -1 });
     res.json(variations);
   } catch (error) {
@@ -48,8 +50,10 @@ router.get('/:id', auth, async (req, res) => {
       .populate('lead')
       .populate('createdBy', 'name email')
       .populate('edits.editedBy', 'name')
-      .populate('managementApproval.requestedBy', 'name')
-      .populate('managementApproval.approvedBy', 'name');
+      .populate('managementApproval.requestedBy', 'name email')
+      .populate('managementApproval.approvedBy', 'name email')
+      .populate('managementApproval.logs.requestedBy', 'name email')
+      .populate('managementApproval.logs.decidedBy', 'name email');
     if (!variation) return res.status(404).json({ message: 'Variation not found' });
     res.json(variation);
   } catch (error) {
@@ -181,8 +185,10 @@ router.post('/', auth, async (req, res) => {
       .populate('lead')
       .populate('createdBy', 'name email')
       .populate('edits.editedBy', 'name')
-      .populate('managementApproval.requestedBy', 'name')
-      .populate('managementApproval.approvedBy', 'name');
+      .populate('managementApproval.requestedBy', 'name email')
+      .populate('managementApproval.approvedBy', 'name email')
+      .populate('managementApproval.logs.requestedBy', 'name email')
+      .populate('managementApproval.logs.decidedBy', 'name email');
 
     res.status(201).json(populated);
   } catch (error) {
@@ -201,6 +207,11 @@ router.put('/:id', auth, async (req, res) => {
 
     const variation = await ProjectVariation.findById(req.params.id);
     if (!variation) return res.status(404).json({ message: 'Variation not found' });
+
+    // Prevent editing approved variations
+    if (variation.managementApproval?.status === 'approved') {
+      return res.status(403).json({ message: 'Cannot edit an approved variation. The variation must be rejected or have its approval status reverted first.' });
+    }
 
     const oldData = variation.toObject();
     const updates = req.body;
@@ -229,8 +240,10 @@ router.put('/:id', auth, async (req, res) => {
       .populate('lead')
       .populate('createdBy', 'name email')
       .populate('edits.editedBy', 'name')
-      .populate('managementApproval.requestedBy', 'name')
-      .populate('managementApproval.approvedBy', 'name');
+      .populate('managementApproval.requestedBy', 'name email')
+      .populate('managementApproval.approvedBy', 'name email')
+      .populate('managementApproval.logs.requestedBy', 'name email')
+      .populate('managementApproval.logs.decidedBy', 'name email');
     res.json(populated);
   } catch (error) {
     res.status(500).json({ message: 'Server error' });
@@ -261,63 +274,62 @@ router.delete('/:id', auth, async (req, res) => {
   }
 });
 
-// Request approval for variation
-router.post('/:id/request-approval', auth, async (req, res) => {
-  try {
-    const variation = await ProjectVariation.findById(req.params.id);
-    if (!variation) return res.status(404).json({ message: 'Variation not found' });
-
-    variation.managementApproval = variation.managementApproval || {};
-    variation.managementApproval.status = 'pending';
-    variation.managementApproval.requestedBy = req.user.userId;
-    variation.managementApproval.logs = variation.managementApproval.logs || [];
-    variation.managementApproval.logs.push({
-      status: 'pending',
-      requestedBy: req.user.userId,
-      note: req.body.note || ''
-    });
-
-    await variation.save();
-    const populated = await ProjectVariation.findById(variation._id)
-      .populate('parentProject', 'name')
-      .populate('lead')
-      .populate('createdBy', 'name email')
-      .populate('edits.editedBy', 'name')
-      .populate('managementApproval.requestedBy', 'name')
-      .populate('managementApproval.approvedBy', 'name');
-    res.json(populated);
-  } catch (error) {
-    res.status(500).json({ message: 'Server error' });
-  }
-});
-
-// Approve/reject variation
+// Management approval for variations (mirrors revisions module)
 router.patch('/:id/approve', auth, async (req, res) => {
   try {
-    const roles = req.user.roles || [];
-    if (!(roles.includes('manager') || roles.includes('admin'))) {
-      return res.status(403).json({ message: 'Not authorized to approve variations' });
-    }
-
-    const { status, note } = req.body;
-    if (!['approved', 'rejected'].includes(status)) {
+    const { status } = req.body;
+    const note = req.body.note ?? req.body.comments;
+    if (!['pending', 'approved', 'rejected'].includes(status)) {
       return res.status(400).json({ message: 'Invalid status' });
     }
 
     const variation = await ProjectVariation.findById(req.params.id);
     if (!variation) return res.status(404).json({ message: 'Variation not found' });
 
-    variation.managementApproval = variation.managementApproval || {};
-    variation.managementApproval.status = status;
-    variation.managementApproval.approvedBy = req.user.userId;
-    variation.managementApproval.approvedAt = new Date();
-    variation.managementApproval.comments = note || '';
-    variation.managementApproval.logs = variation.managementApproval.logs || [];
-    variation.managementApproval.logs.push({
-      status,
-      decidedBy: req.user.userId,
-      note: note || ''
-    });
+    const roles = req.user.roles || [];
+    const isCreator = variation.createdBy?.toString?.() === req.user.userId;
+
+    if (status === 'pending') {
+      if (!(isCreator || roles.includes('estimation_engineer'))) {
+        return res.status(403).json({ message: 'Not authorized to request approval' });
+      }
+      const prev = variation.managementApproval || {};
+      variation.managementApproval = {
+        ...prev,
+        status: 'pending',
+        requestedBy: req.user.userId,
+        approvedBy: undefined,
+        approvedAt: undefined,
+        comments: note || prev.comments
+      };
+      variation.managementApproval.logs = Array.isArray(prev.logs) ? prev.logs : [];
+      variation.managementApproval.logs.push({ 
+        status: 'pending', 
+        at: new Date(),
+        requestedBy: req.user.userId, 
+        note: note || '' 
+      });
+    } else {
+      if (!(roles.includes('manager') || roles.includes('admin'))) {
+        return res.status(403).json({ message: 'Not authorized to approve/reject' });
+      }
+      const prev = variation.managementApproval || {};
+      variation.managementApproval = {
+        ...prev,
+        status,
+        approvedBy: req.user.userId,
+        approvedAt: new Date(),
+        comments: note || prev.comments,
+        requestedBy: prev.requestedBy
+      };
+      variation.managementApproval.logs = Array.isArray(prev.logs) ? prev.logs : [];
+      variation.managementApproval.logs.push({ 
+        status, 
+        at: new Date(),
+        decidedBy: req.user.userId, 
+        note: note || '' 
+      });
+    }
 
     await variation.save();
     const populated = await ProjectVariation.findById(variation._id)
@@ -325,8 +337,10 @@ router.patch('/:id/approve', auth, async (req, res) => {
       .populate('lead')
       .populate('createdBy', 'name email')
       .populate('edits.editedBy', 'name')
-      .populate('managementApproval.requestedBy', 'name')
-      .populate('managementApproval.approvedBy', 'name');
+      .populate('managementApproval.requestedBy', 'name email')
+      .populate('managementApproval.approvedBy', 'name email')
+      .populate('managementApproval.logs.requestedBy', 'name email')
+      .populate('managementApproval.logs.decidedBy', 'name email');
     res.json(populated);
   } catch (error) {
     res.status(500).json({ message: 'Server error' });
