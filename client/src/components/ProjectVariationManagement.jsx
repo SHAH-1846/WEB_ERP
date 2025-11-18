@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, useRef } from 'react'
 import { api } from '../lib/api'
 import './LeadManagement.css'
 import './LoadingComponents.css'
@@ -20,6 +20,13 @@ function ProjectVariationManagement() {
   const [selectedProjectFilter, setSelectedProjectFilter] = useState('')
   const [search, setSearch] = useState('')
   const [sortKey, setSortKey] = useState('createdAt_desc')
+  // New filter states
+  const [nameFilter, setNameFilter] = useState('')
+  const [dateModifiedFilter, setDateModifiedFilter] = useState('')
+  const [dateCreatedFilter, setDateCreatedFilter] = useState('')
+  // New sort states
+  const [sortField, setSortField] = useState('dateCreated') // 'name', 'dateModified', 'dateCreated'
+  const [sortDirection, setSortDirection] = useState('desc') // 'asc', 'desc'
   const [editModal, setEditModal] = useState({ open: false, variation: null, form: null, mode: 'edit' })
   const [createVariationModal, setCreateVariationModal] = useState({ open: false, variation: null, form: null })
   const [profileUser, setProfileUser] = useState(null)
@@ -38,6 +45,44 @@ function ProjectVariationManagement() {
   const [isLoading, setIsLoading] = useState(true)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [loadingAction, setLoadingAction] = useState(null) // Track which action is loading
+  const [isFiltering, setIsFiltering] = useState(false) // Track filter operations
+  const [filtersExpanded, setFiltersExpanded] = useState(false) // Mobile: collapsible filters
+  const [isMobile, setIsMobile] = useState(false) // Track mobile viewport
+  const [headerHeight, setHeaderHeight] = useState(80) // Header height for sticky positioning
+  const headerRef = useRef(null)
+  // Debounced filter values for performance
+  const [debouncedNameFilter, setDebouncedNameFilter] = useState('')
+  const [debouncedDateModifiedFilter, setDebouncedDateModifiedFilter] = useState('')
+  const [debouncedDateCreatedFilter, setDebouncedDateCreatedFilter] = useState('')
+
+  // Detect mobile viewport and measure header height
+  useEffect(() => {
+    const checkMobile = () => {
+      setIsMobile(window.innerWidth < 768)
+      // Auto-expand filters on desktop
+      if (window.innerWidth >= 768) {
+        setFiltersExpanded(true)
+      }
+    }
+    checkMobile()
+    window.addEventListener('resize', checkMobile)
+    return () => window.removeEventListener('resize', checkMobile)
+  }, [])
+
+  // Measure header height for sticky positioning
+  useEffect(() => {
+    const updateHeaderHeight = () => {
+      if (headerRef.current) {
+        setHeaderHeight(headerRef.current.offsetHeight)
+      }
+    }
+    // Use requestAnimationFrame to ensure DOM is ready
+    requestAnimationFrame(() => {
+      updateHeaderHeight()
+    })
+    window.addEventListener('resize', updateHeaderHeight)
+    return () => window.removeEventListener('resize', updateHeaderHeight)
+  }, [])
 
   const defaultCompany = useMemo(() => ({
     logo,
@@ -156,74 +201,67 @@ function ProjectVariationManagement() {
       if (!matches) return false
     }
     
+    // Apply name filter (project name or variation number) - using debounced value
+    if (debouncedNameFilter.trim()) {
+      const term = debouncedNameFilter.toLowerCase()
+      const projectName = (v.parentProject?.name || '').toLowerCase()
+      const variationNumber = String(v.variationNumber || '').toLowerCase()
+      if (!projectName.includes(term) && !variationNumber.includes(term)) return false
+    }
+    
+    // Apply date modified filter - using debounced value
+    if (debouncedDateModifiedFilter) {
+      const filterDate = new Date(debouncedDateModifiedFilter)
+      filterDate.setHours(0, 0, 0, 0)
+      const variationDate = v.updatedAt ? new Date(v.updatedAt) : null
+      if (!variationDate || variationDate.toDateString() !== filterDate.toDateString()) return false
+    }
+    
+    // Apply date created filter - using debounced value
+    if (debouncedDateCreatedFilter) {
+      const filterDate = new Date(debouncedDateCreatedFilter)
+      filterDate.setHours(0, 0, 0, 0)
+      const variationDate = v.createdAt ? new Date(v.createdAt) : null
+      if (!variationDate || variationDate.toDateString() !== filterDate.toDateString()) return false
+    }
+    
     return true
   })
 
-  // Sort variations - primarily by Project, secondarily by Variation number
+  // Sort variations by selected field and direction
   const sortedVariations = [...filteredVariations].sort((a, b) => {
-    // Primary sort: by Project (ID or name)
-    const aProjectId = a.parentProject?._id || a.parentProject || ''
-    const bProjectId = b.parentProject?._id || b.parentProject || ''
-    const aProjectName = a.parentProject?.name || ''
-    const bProjectName = b.parentProject?.name || ''
+    let compareResult = 0
     
-    // Compare by project ID first, then by project name if IDs are equal
-    let projectCompare = 0
-    if (aProjectId && bProjectId) {
-      // Compare by ID (string comparison)
-      projectCompare = String(aProjectId).localeCompare(String(bProjectId))
-    } else if (aProjectName && bProjectName) {
-      // Fallback to name comparison if IDs not available
-      projectCompare = aProjectName.localeCompare(bProjectName)
-    } else if (aProjectId && !bProjectId) {
-      projectCompare = -1
-    } else if (!aProjectId && bProjectId) {
-      projectCompare = 1
-    }
-    
-    // If projects are different, return the project comparison
-    if (projectCompare !== 0) {
-      return projectCompare
-    }
-    
-    // Secondary sort: by Variation number (within the same project)
-    const aVarNum = a.variationNumber || ''
-    const bVarNum = b.variationNumber || ''
-    const varNumCompare = String(aVarNum).localeCompare(String(bVarNum), undefined, { numeric: true, sensitivity: 'base' })
-    
-    // If variation numbers are different, return the variation number comparison
-    if (varNumCompare !== 0) {
-      return varNumCompare
-    }
-    
-    // Tertiary sort: by the selected sort key (if any other than project/variation)
-    const [key, direction] = sortKey.split('_')
-    let aVal, bVal
-    
-    switch (key) {
-      case 'variationNumber':
-        // Already sorted above, so no additional sorting needed
-        return 0
-      case 'grandTotal':
-        aVal = a.priceSchedule?.grandTotal || 0
-        bVal = b.priceSchedule?.grandTotal || 0
+    switch (sortField) {
+      case 'name':
+        // Sort by project name, then variation number
+        const aProjectName = (a.parentProject?.name || '').toLowerCase()
+        const bProjectName = (b.parentProject?.name || '').toLowerCase()
+        const projectNameCompare = aProjectName.localeCompare(bProjectName)
+        if (projectNameCompare !== 0) {
+          compareResult = projectNameCompare
+        } else {
+          // If project names are equal, sort by variation number
+          const aVarNum = String(a.variationNumber || '').toLowerCase()
+          const bVarNum = String(b.variationNumber || '').toLowerCase()
+          compareResult = aVarNum.localeCompare(bVarNum, undefined, { numeric: true, sensitivity: 'base' })
+        }
         break
-      case 'status':
-        aVal = a.managementApproval?.status || 'draft'
-        bVal = b.managementApproval?.status || 'draft'
+      case 'dateModified':
+        const aModified = a.updatedAt ? new Date(a.updatedAt).getTime() : 0
+        const bModified = b.updatedAt ? new Date(b.updatedAt).getTime() : 0
+        compareResult = aModified > bModified ? 1 : aModified < bModified ? -1 : 0
         break
-      case 'createdAt':
+      case 'dateCreated':
       default:
-        aVal = new Date(a.createdAt || 0).getTime()
-        bVal = new Date(b.createdAt || 0).getTime()
+        const aCreated = a.createdAt ? new Date(a.createdAt).getTime() : 0
+        const bCreated = b.createdAt ? new Date(b.createdAt).getTime() : 0
+        compareResult = aCreated > bCreated ? 1 : aCreated < bCreated ? -1 : 0
         break
     }
     
-    if (direction === 'asc') {
-      return aVal > bVal ? 1 : aVal < bVal ? -1 : 0
-    } else {
-      return aVal < bVal ? 1 : aVal > bVal ? -1 : 0
-    }
+    // Apply sort direction
+    return sortDirection === 'asc' ? compareResult : -compareResult
   })
 
   // Pagination calculations
@@ -232,10 +270,32 @@ function ProjectVariationManagement() {
   const endIndex = startIndex + itemsPerPage
   const paginatedVariations = sortedVariations.slice(startIndex, endIndex)
 
-  // Reset to page 1 when filters change
+  // Debounce name filter (300ms delay)
+  useEffect(() => {
+    setIsFiltering(true)
+    const timer = setTimeout(() => {
+      setDebouncedNameFilter(nameFilter)
+      setIsFiltering(false)
+    }, 300)
+    return () => {
+      clearTimeout(timer)
+      setIsFiltering(false)
+    }
+  }, [nameFilter])
+
+  // Date filters don't need debouncing (they're date inputs)
+  useEffect(() => {
+    setDebouncedDateModifiedFilter(dateModifiedFilter)
+  }, [dateModifiedFilter])
+
+  useEffect(() => {
+    setDebouncedDateCreatedFilter(dateCreatedFilter)
+  }, [dateCreatedFilter])
+
+  // Reset to page 1 when filters or sorting change
   useEffect(() => {
     setCurrentPage(1)
-  }, [search, selectedProjectFilter, sortKey])
+  }, [search, selectedProjectFilter, debouncedNameFilter, debouncedDateModifiedFilter, debouncedDateCreatedFilter, sortField, sortDirection])
 
   const totalVariations = variations.length
   const displayedVariations = filteredVariations.length
@@ -440,7 +500,7 @@ function ProjectVariationManagement() {
 
   return (
     <div className="lead-management">
-      <div className="header">
+      <div className="header" ref={headerRef}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
           <h1>Project Variations</h1>
           {selectedProjectFilter && (() => {
@@ -546,6 +606,213 @@ function ProjectVariationManagement() {
             </button>
           </div>
         </div>
+      </div>
+
+      {/* Filters and Sorting Section - Sticky */}
+      <div style={{ 
+        position: 'sticky',
+        top: `${headerHeight}px`,
+        zIndex: 99,
+        marginTop: '16px',
+        marginBottom: '16px',
+        padding: '16px', 
+        background: 'var(--card)', 
+        borderRadius: '8px', 
+        border: '1px solid var(--border)',
+        boxShadow: '0 2px 8px rgba(0, 0, 0, 0.1)',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '16px',
+        alignSelf: 'flex-start',
+        width: '100%'
+      }}>
+        {/* Mobile: Collapsible Header */}
+        {isMobile && (
+          <div style={{ 
+            display: 'flex', 
+            justifyContent: 'space-between', 
+            alignItems: 'center'
+          }}>
+            <h3 style={{ margin: 0, fontSize: '16px', fontWeight: 600 }}>Filters & Sorting</h3>
+            <button
+              onClick={() => setFiltersExpanded(!filtersExpanded)}
+              style={{
+                padding: '6px 12px',
+                border: '1px solid var(--border)',
+                borderRadius: '6px',
+                background: 'var(--bg)',
+                color: 'var(--text)',
+                fontSize: '14px',
+                cursor: 'pointer'
+              }}
+              aria-expanded={filtersExpanded}
+              aria-label={filtersExpanded ? 'Collapse filters' : 'Expand filters'}
+            >
+              {filtersExpanded ? '▼' : '▶'} {filtersExpanded ? 'Hide' : 'Show'} Filters
+            </button>
+          </div>
+        )}
+        
+        {/* Filter Content - Hidden on mobile when collapsed */}
+        {(!isMobile || filtersExpanded) && (
+          <>
+            <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-start', flexWrap: 'wrap', position: 'relative' }}>
+              {isFiltering && (
+                <div style={{
+                  position: 'absolute',
+                  top: '-8px',
+                  right: '8px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  fontSize: '12px',
+                  color: 'var(--text-muted)',
+                  background: 'var(--card)',
+                  padding: '4px 8px',
+                  borderRadius: '4px',
+                  border: '1px solid var(--border)',
+                  zIndex: 1
+                }}>
+                  <DotsLoader />
+                  <span>Filtering...</span>
+                </div>
+              )}
+              <label style={{ display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '13px', fontWeight: 500 }}>
+                Filter by Name:
+                <div style={{ position: 'relative', display: 'inline-block' }}>
+                  <input 
+                    type="text"
+                    placeholder="Project name or variation number..."
+                    value={nameFilter} 
+                    onChange={e => setNameFilter(e.target.value)}
+                    style={{
+                      padding: '6px 12px',
+                      border: '1px solid var(--border)',
+                      borderRadius: '6px',
+                      background: 'var(--bg)',
+                      color: 'var(--text)',
+                      fontSize: '14px',
+                      minWidth: isMobile ? '100%' : '200px',
+                      width: isMobile ? '100%' : 'auto'
+                    }}
+                    aria-label="Filter by project name or variation number"
+                  />
+                </div>
+              </label>
+              <label style={{ display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '13px', fontWeight: 500 }}>
+                Filter by Date Modified:
+                <input 
+                  type="date"
+                  value={dateModifiedFilter} 
+                  onChange={e => setDateModifiedFilter(e.target.value)}
+                  style={{
+                    padding: '6px 12px',
+                    border: '1px solid var(--border)',
+                    borderRadius: '6px',
+                    background: 'var(--bg)',
+                    color: 'var(--text)',
+                    fontSize: '14px',
+                    minWidth: isMobile ? '100%' : '160px',
+                    width: isMobile ? '100%' : 'auto'
+                  }}
+                  aria-label="Filter by date modified"
+                />
+              </label>
+              <label style={{ display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '13px', fontWeight: 500 }}>
+                Filter by Date Created:
+                <input 
+                  type="date"
+                  value={dateCreatedFilter} 
+                  onChange={e => setDateCreatedFilter(e.target.value)}
+                  style={{
+                    padding: '6px 12px',
+                    border: '1px solid var(--border)',
+                    borderRadius: '6px',
+                    background: 'var(--bg)',
+                    color: 'var(--text)',
+                    fontSize: '14px',
+                    minWidth: isMobile ? '100%' : '160px',
+                    width: isMobile ? '100%' : 'auto'
+                  }}
+                  aria-label="Filter by date created"
+                />
+              </label>
+              {(nameFilter || dateModifiedFilter || dateCreatedFilter) && (
+                <button
+                  onClick={() => {
+                    setNameFilter('')
+                    setDateModifiedFilter('')
+                    setDateCreatedFilter('')
+                  }}
+                  style={{
+                    padding: '6px 12px',
+                    border: '1px solid var(--border)',
+                    borderRadius: '6px',
+                    background: 'var(--bg)',
+                    color: 'var(--text)',
+                    fontSize: '14px',
+                    cursor: 'pointer',
+                    marginTop: isMobile ? '8px' : '20px',
+                    alignSelf: isMobile ? 'stretch' : 'flex-end',
+                    width: isMobile ? '100%' : 'auto'
+                  }}
+                  aria-label="Clear all filters"
+                >
+                  Clear Filters
+                </button>
+              )}
+            </div>
+            <div style={{ display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap', paddingTop: '8px', borderTop: '1px solid var(--border)' }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', fontWeight: 500, flex: isMobile ? '1 1 100%' : '0 0 auto' }}>
+                Sort by:
+                <select
+                  value={sortField}
+                  onChange={(e) => setSortField(e.target.value)}
+                  style={{
+                    padding: '6px 12px',
+                    border: '1px solid var(--border)',
+                    borderRadius: '6px',
+                    background: 'var(--bg)',
+                    color: 'var(--text)',
+                    fontSize: '14px',
+                    cursor: 'pointer',
+                    minWidth: isMobile ? '100%' : '150px',
+                    width: isMobile ? '100%' : 'auto',
+                    flex: isMobile ? '1' : '0 0 auto'
+                  }}
+                  aria-label="Sort by field"
+                >
+                  <option value="name">Name</option>
+                  <option value="dateModified">Date Modified</option>
+                  <option value="dateCreated">Date Created</option>
+                </select>
+              </label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', fontWeight: 500, flex: isMobile ? '1 1 100%' : '0 0 auto' }}>
+                Order:
+                <select
+                  value={sortDirection}
+                  onChange={(e) => setSortDirection(e.target.value)}
+                  style={{
+                    padding: '6px 12px',
+                    border: '1px solid var(--border)',
+                    borderRadius: '6px',
+                    background: 'var(--bg)',
+                    color: 'var(--text)',
+                    fontSize: '14px',
+                    cursor: 'pointer',
+                    minWidth: isMobile ? '100%' : '120px',
+                    width: isMobile ? '100%' : 'auto',
+                    flex: isMobile ? '1' : '0 0 auto'
+                  }}
+                  aria-label="Sort order"
+                >
+                  <option value="asc">Ascending</option>
+                  <option value="desc">Descending</option>
+                </select>
+              </label>
+            </div>
+          </>
+        )}
       </div>
 
       {isLoading ? (

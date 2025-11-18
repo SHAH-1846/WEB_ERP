@@ -624,40 +624,6 @@ function ProjectDetail() {
           </div>
         </div>
 
-        <div className="ld-card ld-section">
-          <h3>Project Variations ({variations && Array.isArray(variations) ? variations.length : 0})</h3>
-          {variations && Array.isArray(variations) && variations.length > 0 ? (
-            <div className="table">
-              <table>
-                <thead>
-                  <tr>
-                    <th>#</th>
-                    <th>Status</th>
-                    <th>Grand Total</th>
-                    <th>Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {variations.sort((a,b)=> (a.variationNumber||0)-(b.variationNumber||0)).map(v => (
-                    <tr key={v._id}>
-                      <td data-label="#">{v.variationNumber}</td>
-                      <td data-label="Status">{v.managementApproval?.status || 'draft'}</td>
-                      <td data-label="Grand Total">{(v.priceSchedule?.currency || 'AED')} {Number(v.priceSchedule?.grandTotal || 0).toFixed(2)}</td>
-                      <td data-label="Actions">
-                        <button className="link-btn" onClick={() => { try { localStorage.setItem('variationId', v._id) } catch {}; window.location.href = '/variation-detail' }}>View</button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          ) : (
-            <div style={{ padding: '12px 0' }}>
-              <p style={{ color: 'var(--text-muted)', margin: 0 }}>No variations created yet.</p>
-            </div>
-          )}
-        </div>
-
         {lead && (
           <div className="ld-card ld-section">
             <h3>Lead Details</h3>
@@ -701,6 +667,36 @@ function ProjectDetail() {
                       <td data-label="Grand Total">{(r.priceSchedule?.currency || 'AED')} {Number(r.priceSchedule?.grandTotal || 0).toFixed(2)}</td>
                       <td data-label="Actions">
                         <button className="link-btn" onClick={() => { try { localStorage.setItem('revisionId', r._id) } catch {}; window.location.href = '/revision-detail' }}>View</button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {Array.isArray(variations) && variations.length > 0 && (
+          <div className="ld-card ld-section">
+            <h3>Related Variations ({variations.length})</h3>
+            <div className="table">
+              <table>
+                <thead>
+                  <tr>
+                    <th>#</th>
+                    <th>Status</th>
+                    <th>Grand Total</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {variations.sort((a,b)=> (a.variationNumber||0)-(b.variationNumber||0)).map(v => (
+                    <tr key={v._id}>
+                      <td data-label="#">{v.variationNumber}</td>
+                      <td data-label="Status">{v.managementApproval?.status || 'draft'}</td>
+                      <td data-label="Grand Total">{(v.priceSchedule?.currency || 'AED')} {Number(v.priceSchedule?.grandTotal || 0).toFixed(2)}</td>
+                      <td data-label="Actions">
+                        <button className="link-btn" onClick={() => { try { localStorage.setItem('variationId', v._id) } catch {}; window.location.href = '/variation-detail' }}>View</button>
                       </td>
                     </tr>
                   ))}
