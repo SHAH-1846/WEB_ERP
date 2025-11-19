@@ -35,6 +35,7 @@ function Dashboard() {
     orders: 342,
     growth: 12.5
   })
+  const [showLogoutModal, setShowLogoutModal] = useState(false)
 
   useEffect(() => {
     const userData = JSON.parse(localStorage.getItem('user'))
@@ -75,11 +76,13 @@ function Dashboard() {
   }, [isDark])
 
   const handleLogout = () => {
-    if (confirm('Are you sure you want to logout?')) {
-      localStorage.removeItem('token')
-      localStorage.removeItem('user')
-      window.location.href = '/'
-    }
+    setShowLogoutModal(true)
+  }
+
+  const confirmLogout = () => {
+    localStorage.removeItem('token')
+    localStorage.removeItem('user')
+    window.location.href = '/'
   }
 
   return (
@@ -323,6 +326,29 @@ function Dashboard() {
         <Routes location={location}>
           <Route path="/leads/create-quotation/:leadId" element={<QuotationModal />} />
         </Routes>
+      )}
+
+      {/* Logout Confirmation Modal */}
+      {showLogoutModal && (
+        <div className="modal-overlay" onClick={() => setShowLogoutModal(false)} style={{ zIndex: 10000 }}>
+          <div className="modal" onClick={e => e.stopPropagation()} style={{ zIndex: 10001 }}>
+            <div className="modal-header">
+              <h2>Confirm Logout</h2>
+              <button onClick={() => setShowLogoutModal(false)} className="close-btn">×</button>
+            </div>
+            <div className="lead-form">
+              <p>Are you sure you want to logout?</p>
+              <div className="form-actions">
+                <button type="button" className="cancel-btn" onClick={() => setShowLogoutModal(false)}>
+                  Cancel
+                </button>
+                <button type="button" className="reject-btn" onClick={confirmLogout}>
+                  Logout
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )

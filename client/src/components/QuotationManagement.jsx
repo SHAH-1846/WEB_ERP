@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, useRef } from 'react'
 import { api } from '../lib/api'
 import './LeadManagement.css'
 import './LoadingComponents.css'
@@ -35,10 +35,31 @@ function QuotationManagement() {
   const [currentPage, setCurrentPage] = useState(1)
   const [itemsPerPage, setItemsPerPage] = useState(10)
   const [search, setSearch] = useState('')
+  // New filter states
+  const [nameFilter, setNameFilter] = useState('')
+  const [dateModifiedFilter, setDateModifiedFilter] = useState('')
+  const [dateCreatedFilter, setDateCreatedFilter] = useState('')
+  // New sort states
+  const [sortField, setSortField] = useState('dateCreated') // 'name', 'dateModified', 'dateCreated'
+  const [sortDirection, setSortDirection] = useState('desc') // 'asc', 'desc'
+  // Debounced filter values for performance
+  const [debouncedNameFilter, setDebouncedNameFilter] = useState('')
+  const [debouncedDateModifiedFilter, setDebouncedDateModifiedFilter] = useState('')
+  const [debouncedDateCreatedFilter, setDebouncedDateCreatedFilter] = useState('')
+  const [isFiltering, setIsFiltering] = useState(false) // Track filter operations
+  const [filtersExpanded, setFiltersExpanded] = useState(false) // Mobile: collapsible filters
+  const [isMobile, setIsMobile] = useState(false) // Track mobile viewport
+  const [headerHeight, setHeaderHeight] = useState(80) // Header height for sticky positioning
+  const headerRef = useRef(null)
   const [revisionProjectMap, setRevisionProjectMap] = useState({}) // Map revision ID to project info
   const [expandedProjectRows, setExpandedProjectRows] = useState({}) // Track which revision rows have expanded projects
   const [revisionProjectDetailsMap, setRevisionProjectDetailsMap] = useState({}) // Store full project details per revision ID
   const [projectModal, setProjectModal] = useState({ open: false, project: null })
+  const [expandedVariationRows, setExpandedVariationRows] = useState({}) // Track which rows have expanded variations
+  const [projectVariationsMap, setProjectVariationsMap] = useState({}) // Store variations per project ID
+  const [variationsForProject, setVariationsForProject] = useState([])
+  const [selectedProjectForList, setSelectedProjectForList] = useState(null)
+  const [showVariationsListModal, setShowVariationsListModal] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [loadingAction, setLoadingAction] = useState(null)
@@ -80,6 +101,35 @@ function QuotationManagement() {
       authorizedSignatory: ''
     }
   })
+
+  // Detect mobile viewport and measure header height
+  useEffect(() => {
+    const checkMobile = () => {
+      setIsMobile(window.innerWidth < 768)
+      // Auto-expand filters on desktop
+      if (window.innerWidth >= 768) {
+        setFiltersExpanded(true)
+      }
+    }
+    checkMobile()
+    window.addEventListener('resize', checkMobile)
+    return () => window.removeEventListener('resize', checkMobile)
+  }, [])
+
+  // Measure header height for sticky positioning
+  useEffect(() => {
+    const updateHeaderHeight = () => {
+      if (headerRef.current) {
+        setHeaderHeight(headerRef.current.offsetHeight)
+      }
+    }
+    // Use requestAnimationFrame to ensure DOM is ready
+    requestAnimationFrame(() => {
+      updateHeaderHeight()
+    })
+    window.addEventListener('resize', updateHeaderHeight)
+    return () => window.removeEventListener('resize', updateHeaderHeight)
+  }, [])
 
   useEffect(() => {
     setCurrentUser(JSON.parse(localStorage.getItem('user')) || null)
@@ -736,6 +786,33 @@ function QuotationManagement() {
     }
   }
 
+  // Handler for View Variations in table view (accordion)
+  const handleViewVariationsTable = async (projectId) => {
+    const isExpanded = expandedVariationRows[projectId]
+    
+    if (isExpanded) {
+      // Collapse: remove from expanded rows
+      setExpandedVariationRows(prev => {
+        const next = { ...prev }
+        delete next[projectId]
+        return next
+      })
+    } else {
+      // Expand: fetch variations if not already loaded
+      if (!projectVariationsMap[projectId]) {
+        try {
+          const res = await api.get(`/api/project-variations?parentProject=${projectId}`)
+          const list = Array.isArray(res.data) ? res.data : []
+          setProjectVariationsMap(prev => ({ ...prev, [projectId]: list }))
+        } catch (e) {
+          setNotify({ open: true, title: 'Load Failed', message: 'We could not load the variations. Please try again.' })
+          return
+        }
+      }
+      setExpandedVariationRows(prev => ({ ...prev, [projectId]: true }))
+    }
+  }
+
   // Helper function to render quotation actions (used in both card and table views)
   const renderQuotationActions = (q, isTableView = false) => (
     <div className="lead-actions">
@@ -842,6 +919,28 @@ function QuotationManagement() {
     </div>
   )
 
+  // Debounce name filter (300ms delay)
+  useEffect(() => {
+    setIsFiltering(true)
+    const timer = setTimeout(() => {
+      setDebouncedNameFilter(nameFilter)
+      setIsFiltering(false)
+    }, 300)
+    return () => {
+      clearTimeout(timer)
+      setIsFiltering(false)
+    }
+  }, [nameFilter])
+
+  // Date filters don't need debouncing (they're date inputs)
+  useEffect(() => {
+    setDebouncedDateModifiedFilter(dateModifiedFilter)
+  }, [dateModifiedFilter])
+
+  useEffect(() => {
+    setDebouncedDateCreatedFilter(dateCreatedFilter)
+  }, [dateCreatedFilter])
+
   // Calculate filtered quotations count
   const filteredQuotations = quotations.filter(q => {
     // Apply "My Quotations" filter
@@ -865,25 +964,86 @@ function QuotationManagement() {
       if (!matches) return false
     }
     
+    // Apply name filter (project title or offer reference) - using debounced value
+    if (debouncedNameFilter.trim()) {
+      const term = debouncedNameFilter.toLowerCase()
+      const projectTitle = (q.projectTitle || q.lead?.projectTitle || '').toLowerCase()
+      const offerRef = (q.offerReference || '').toLowerCase()
+      if (!projectTitle.includes(term) && !offerRef.includes(term)) return false
+    }
+    
+    // Apply date modified filter - using debounced value
+    if (debouncedDateModifiedFilter) {
+      const filterDate = new Date(debouncedDateModifiedFilter)
+      filterDate.setHours(0, 0, 0, 0)
+      const quotationDate = q.updatedAt ? new Date(q.updatedAt) : null
+      if (!quotationDate || quotationDate.toDateString() !== filterDate.toDateString()) return false
+    }
+    
+    // Apply date created filter - using debounced value
+    if (debouncedDateCreatedFilter) {
+      const filterDate = new Date(debouncedDateCreatedFilter)
+      filterDate.setHours(0, 0, 0, 0)
+      const quotationDate = q.createdAt ? new Date(q.createdAt) : null
+      if (!quotationDate || quotationDate.toDateString() !== filterDate.toDateString()) return false
+    }
+    
     return true
   })
+
+  // Sort quotations by selected field and direction
+  const sortedQuotations = [...filteredQuotations].sort((a, b) => {
+    let compareResult = 0
+    
+    switch (sortField) {
+      case 'name':
+        // Sort by project title, then offer reference
+        const aProjectTitle = (a.projectTitle || a.lead?.projectTitle || '').toLowerCase()
+        const bProjectTitle = (b.projectTitle || b.lead?.projectTitle || '').toLowerCase()
+        const projectTitleCompare = aProjectTitle.localeCompare(bProjectTitle)
+        if (projectTitleCompare !== 0) {
+          compareResult = projectTitleCompare
+        } else {
+          // If project titles are equal, sort by offer reference
+          const aOfferRef = (a.offerReference || '').toLowerCase()
+          const bOfferRef = (b.offerReference || '').toLowerCase()
+          compareResult = aOfferRef.localeCompare(bOfferRef)
+        }
+        break
+      case 'dateModified':
+        const aModified = a.updatedAt ? new Date(a.updatedAt).getTime() : 0
+        const bModified = b.updatedAt ? new Date(b.updatedAt).getTime() : 0
+        compareResult = aModified > bModified ? 1 : aModified < bModified ? -1 : 0
+        break
+      case 'dateCreated':
+      default:
+        const aCreated = a.createdAt ? new Date(a.createdAt).getTime() : 0
+        const bCreated = b.createdAt ? new Date(b.createdAt).getTime() : 0
+        compareResult = aCreated > bCreated ? 1 : aCreated < bCreated ? -1 : 0
+        break
+    }
+    
+    // Apply sort direction
+    return sortDirection === 'asc' ? compareResult : -compareResult
+  })
+
   const totalQuotations = quotations.length
-  const displayedQuotations = filteredQuotations.length
+  const displayedQuotations = sortedQuotations.length
 
   // Pagination calculations
-  const totalPages = Math.ceil(filteredQuotations.length / itemsPerPage)
+  const totalPages = Math.ceil(sortedQuotations.length / itemsPerPage)
   const startIndex = (currentPage - 1) * itemsPerPage
   const endIndex = startIndex + itemsPerPage
-  const paginatedQuotations = filteredQuotations.slice(startIndex, endIndex)
+  const paginatedQuotations = sortedQuotations.slice(startIndex, endIndex)
 
-  // Reset to page 1 when filters change
+  // Reset to page 1 when filters or sorting change
   useEffect(() => {
     setCurrentPage(1)
-  }, [myQuotationsOnly, selectedLeadFilter, search])
+  }, [myQuotationsOnly, selectedLeadFilter, search, debouncedNameFilter, debouncedDateModifiedFilter, debouncedDateCreatedFilter, sortField, sortDirection])
 
   return (
     <div className="lead-management">
-      <div className="header">
+      <div className="header" ref={headerRef}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
           <h1>Quotation Management</h1>
           <span style={{ 
@@ -895,7 +1055,7 @@ function QuotationManagement() {
             fontWeight: 600,
             border: '1px solid var(--border)'
           }}>
-            {(myQuotationsOnly || selectedLeadFilter || search) ? `${displayedQuotations} of ${totalQuotations}` : totalQuotations} {totalQuotations === 1 ? 'Quotation' : 'Quotations'}
+            {(myQuotationsOnly || selectedLeadFilter || search || debouncedNameFilter || debouncedDateModifiedFilter || debouncedDateCreatedFilter) ? `${displayedQuotations} of ${totalQuotations}` : totalQuotations} {totalQuotations === 1 ? 'Quotation' : 'Quotations'}
           </span>
         </div>
         <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
@@ -977,6 +1137,212 @@ function QuotationManagement() {
             <button className="add-btn" onClick={openCreate}>Create Quotation</button>
           )}
         </div>
+      </div>
+
+      {/* Filters and Sorting Section - Sticky */}
+      <div style={{ 
+        position: 'sticky',
+        top: `${headerHeight}px`,
+        zIndex: 99,
+        marginTop: '16px',
+        marginBottom: '16px',
+        padding: '16px', 
+        background: 'var(--card)', 
+        borderRadius: '8px', 
+        border: '1px solid var(--border)',
+        boxShadow: '0 2px 8px rgba(0, 0, 0, 0.1)',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '16px',
+        alignSelf: 'flex-start',
+        width: '100%'
+      }}>
+        {/* Mobile: Collapsible Header */}
+        {isMobile && (
+          <div style={{ 
+            display: 'flex', 
+            justifyContent: 'space-between', 
+            alignItems: 'center'
+          }}>
+            <h3 style={{ margin: 0, fontSize: '16px', fontWeight: 600 }}>Filters & Sorting</h3>
+            <button
+              onClick={() => setFiltersExpanded(!filtersExpanded)}
+              style={{
+                padding: '6px 12px',
+                border: '1px solid var(--border)',
+                borderRadius: '6px',
+                background: 'var(--bg)',
+                color: 'var(--text)',
+                fontSize: '14px',
+                cursor: 'pointer'
+              }}
+              aria-expanded={filtersExpanded}
+              aria-label={filtersExpanded ? 'Collapse filters' : 'Expand filters'}
+            >
+              {filtersExpanded ? '▼' : '▶'} {filtersExpanded ? 'Hide' : 'Show'} Filters
+            </button>
+          </div>
+        )}
+        
+        {/* Filter Content - Hidden on mobile when collapsed */}
+        {(!isMobile || filtersExpanded) && (
+          <>
+            <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-start', flexWrap: 'wrap', position: 'relative' }}>
+              {isFiltering && (
+                <div style={{
+                  position: 'absolute',
+                  top: '-8px',
+                  right: '8px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  fontSize: '12px',
+                  color: 'var(--text-muted)',
+                  background: 'var(--card)',
+                  padding: '4px 8px',
+                  borderRadius: '4px',
+                  border: '1px solid var(--border)',
+                  zIndex: 1
+                }}>
+                  <span>Filtering...</span>
+                </div>
+              )}
+              <label style={{ display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '13px', fontWeight: 500 }}>
+                Filter by Name:
+                <div style={{ position: 'relative', display: 'inline-block' }}>
+                  <input 
+                    type="text"
+                    placeholder="Project title or offer reference..."
+                    value={nameFilter} 
+                    onChange={e => setNameFilter(e.target.value)}
+                    style={{
+                      padding: '6px 12px',
+                      border: '1px solid var(--border)',
+                      borderRadius: '6px',
+                      background: 'var(--bg)',
+                      color: 'var(--text)',
+                      fontSize: '14px',
+                      minWidth: isMobile ? '100%' : '200px',
+                      width: isMobile ? '100%' : 'auto'
+                    }}
+                    aria-label="Filter by project title or offer reference"
+                  />
+                </div>
+              </label>
+              <label style={{ display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '13px', fontWeight: 500 }}>
+                Filter by Date Modified:
+                <input 
+                  type="date"
+                  value={dateModifiedFilter} 
+                  onChange={e => setDateModifiedFilter(e.target.value)}
+                  style={{
+                    padding: '6px 12px',
+                    border: '1px solid var(--border)',
+                    borderRadius: '6px',
+                    background: 'var(--bg)',
+                    color: 'var(--text)',
+                    fontSize: '14px',
+                    minWidth: isMobile ? '100%' : '160px',
+                    width: isMobile ? '100%' : 'auto'
+                  }}
+                  aria-label="Filter by date modified"
+                />
+              </label>
+              <label style={{ display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '13px', fontWeight: 500 }}>
+                Filter by Date Created:
+                <input 
+                  type="date"
+                  value={dateCreatedFilter} 
+                  onChange={e => setDateCreatedFilter(e.target.value)}
+                  style={{
+                    padding: '6px 12px',
+                    border: '1px solid var(--border)',
+                    borderRadius: '6px',
+                    background: 'var(--bg)',
+                    color: 'var(--text)',
+                    fontSize: '14px',
+                    minWidth: isMobile ? '100%' : '160px',
+                    width: isMobile ? '100%' : 'auto'
+                  }}
+                  aria-label="Filter by date created"
+                />
+              </label>
+              {(nameFilter || dateModifiedFilter || dateCreatedFilter) && (
+                <button
+                  onClick={() => {
+                    setNameFilter('')
+                    setDateModifiedFilter('')
+                    setDateCreatedFilter('')
+                  }}
+                  style={{
+                    padding: '6px 12px',
+                    border: '1px solid var(--border)',
+                    borderRadius: '6px',
+                    background: 'var(--bg)',
+                    color: 'var(--text)',
+                    fontSize: '14px',
+                    cursor: 'pointer',
+                    marginTop: isMobile ? '8px' : '20px',
+                    alignSelf: isMobile ? 'stretch' : 'flex-end',
+                    width: isMobile ? '100%' : 'auto'
+                  }}
+                  aria-label="Clear all filters"
+                >
+                  Clear Filters
+                </button>
+              )}
+            </div>
+            <div style={{ display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap', paddingTop: '8px', borderTop: '1px solid var(--border)' }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', fontWeight: 500, flex: isMobile ? '1 1 100%' : '0 0 auto' }}>
+                Sort by:
+                <select
+                  value={sortField}
+                  onChange={(e) => setSortField(e.target.value)}
+                  style={{
+                    padding: '6px 12px',
+                    border: '1px solid var(--border)',
+                    borderRadius: '6px',
+                    background: 'var(--bg)',
+                    color: 'var(--text)',
+                    fontSize: '14px',
+                    cursor: 'pointer',
+                    minWidth: isMobile ? '100%' : '150px',
+                    width: isMobile ? '100%' : 'auto',
+                    flex: isMobile ? '1' : '0 0 auto'
+                  }}
+                  aria-label="Sort by field"
+                >
+                  <option value="name">Name</option>
+                  <option value="dateModified">Date Modified</option>
+                  <option value="dateCreated">Date Created</option>
+                </select>
+              </label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', fontWeight: 500, flex: isMobile ? '1 1 100%' : '0 0 auto' }}>
+                Order:
+                <select
+                  value={sortDirection}
+                  onChange={(e) => setSortDirection(e.target.value)}
+                  style={{
+                    padding: '6px 12px',
+                    border: '1px solid var(--border)',
+                    borderRadius: '6px',
+                    background: 'var(--bg)',
+                    color: 'var(--text)',
+                    fontSize: '14px',
+                    cursor: 'pointer',
+                    minWidth: isMobile ? '100%' : '120px',
+                    width: isMobile ? '100%' : 'auto',
+                    flex: isMobile ? '1' : '0 0 auto'
+                  }}
+                  aria-label="Sort order"
+                >
+                  <option value="asc">Ascending</option>
+                  <option value="desc">Descending</option>
+                </select>
+              </label>
+            </div>
+          </>
+        )}
       </div>
 
       {viewMode === 'card' ? (
@@ -1140,7 +1506,7 @@ function QuotationManagement() {
                                                   <p><strong>Created At:</strong> {revisionProjectDetailsMap[r._id].createdAt ? new Date(revisionProjectDetailsMap[r._id].createdAt).toLocaleString() : 'N/A'}</p>
                                                   <p><strong>Created By:</strong> {revisionProjectDetailsMap[r._id].createdBy?.name || 'N/A'}</p>
                                                 </div>
-                                                <div style={{ marginTop: '16px' }}>
+                                                <div style={{ marginTop: '16px', display: 'flex', gap: '8px' }}>
                                                   <button className="assign-btn" onClick={() => {
                                                     try {
                                                       localStorage.setItem('projectsFocusId', revisionProjectDetailsMap[r._id]._id)
@@ -1150,7 +1516,75 @@ function QuotationManagement() {
                                                   }}>
                                                     View Full Project Details
                                                   </button>
+                                                  <button
+                                                    className="link-btn"
+                                                    onClick={() => handleViewVariationsTable(revisionProjectDetailsMap[r._id]._id)}
+                                                  >
+                                                    View Variations
+                                                  </button>
                                                 </div>
+                                              </div>
+                                            </td>
+                                          </tr>
+                                        )}
+                                        {revisionProjectDetailsMap[r._id] && expandedVariationRows[revisionProjectDetailsMap[r._id]._id] && (
+                                          <tr key={`${r._id}-variations`} className="accordion-row">
+                                            <td colSpan={7} style={{ padding: '0', borderTop: 'none' }}>
+                                              <div className="accordion-content" style={{ padding: '16px', background: 'var(--bg)' }}>
+                                                <h4 style={{ marginTop: '0', marginBottom: '12px', fontSize: '16px', fontWeight: 600 }}>Variations ({(projectVariationsMap[revisionProjectDetailsMap[r._id]._id] || []).length})</h4>
+                                                {(projectVariationsMap[revisionProjectDetailsMap[r._id]._id] || []).length === 0 ? (
+                                                  <p style={{ margin: 0, color: 'var(--text-muted)' }}>No variations found for this project.</p>
+                                                ) : (
+                                                  <div className="table">
+                                                    <table>
+                                                      <thead>
+                                                        <tr>
+                                                          <th>Variation #</th>
+                                                          <th>Offer Ref</th>
+                                                          <th>Status</th>
+                                                          <th>Grand Total</th>
+                                                          <th>Created By</th>
+                                                          <th>Created At</th>
+                                                          <th>Actions</th>
+                                                        </tr>
+                                                      </thead>
+                                                      <tbody>
+                                                        {(projectVariationsMap[revisionProjectDetailsMap[r._id]._id] || []).sort((a,b)=> (a.variationNumber||0)-(b.variationNumber||0)).map((v) => (
+                                                          <tr key={v._id}>
+                                                            <td data-label="Variation #">{v.variationNumber || 'N/A'}</td>
+                                                            <td data-label="Offer Ref">{v.offerReference || 'N/A'}</td>
+                                                            <td data-label="Status">
+                                                              <span className={`status-badge ${v.managementApproval?.status === 'approved' ? 'approved' : v.managementApproval?.status === 'rejected' ? 'rejected' : 'blue'}`}>
+                                                                {v.managementApproval?.status || 'draft'}
+                                                              </span>
+                                                            </td>
+                                                            <td data-label="Grand Total">{(v.priceSchedule?.currency || 'AED')} {Number(v.priceSchedule?.grandTotal || 0).toFixed(2)}</td>
+                                                            <td data-label="Created By">
+                                                              {v.createdBy?._id === currentUser?.id ? 'You' : (v.createdBy?.name || 'N/A')}
+                                                              {v.createdBy?._id !== currentUser?.id && v.createdBy && (
+                                                                <button className="link-btn" onClick={() => setProfileUser(v.createdBy)} style={{ marginLeft: 6 }}>View Profile</button>
+                                                              )}
+                                                            </td>
+                                                            <td data-label="Created At">{v.createdAt ? new Date(v.createdAt).toLocaleDateString() : 'N/A'}</td>
+                                                            <td data-label="Actions">
+                                                              <button
+                                                                className="save-btn"
+                                                                onClick={() => {
+                                                                  try {
+                                                                    localStorage.setItem('variationId', v._id)
+                                                                  } catch {}
+                                                                  window.location.href = '/variation-detail'
+                                                                }}
+                                                              >
+                                                                View
+                                                              </button>
+                                                            </td>
+                                                          </tr>
+                                                        ))}
+                                                      </tbody>
+                                                    </table>
+                                                  </div>
+                                                )}
                                               </div>
                                             </td>
                                           </tr>
@@ -2126,7 +2560,7 @@ function QuotationManagement() {
                 <p><strong>Created At:</strong> {projectModal.project.createdAt ? new Date(projectModal.project.createdAt).toLocaleString() : 'N/A'}</p>
                 <p><strong>Created By:</strong> {projectModal.project.createdBy?.name || 'N/A'}</p>
               </div>
-              <div style={{ marginTop: '20px' }}>
+              <div style={{ marginTop: '20px', display: 'flex', gap: '8px' }}>
                 <button className="assign-btn" onClick={() => {
                   try {
                     localStorage.setItem('projectsFocusId', projectModal.project._id)
@@ -2136,7 +2570,101 @@ function QuotationManagement() {
                 }}>
                   View Full Project Details
                 </button>
+                <button
+                  className="link-btn"
+                  onClick={async () => {
+                    try {
+                      const res = await api.get(`/api/project-variations?parentProject=${projectModal.project._id}`)
+                      const list = Array.isArray(res.data) ? res.data : []
+                      if (list.length === 0) {
+                        setNotify({ open: true, title: 'No Variations', message: 'No variations found for this project.' })
+                        return
+                      }
+                      setVariationsForProject(list)
+                      setSelectedProjectForList(projectModal.project)
+                      setShowVariationsListModal(true)
+                    } catch (e) {
+                      setNotify({ open: true, title: 'Open Failed', message: 'We could not load the variations. Please try again.' })
+                    }
+                  }}
+                >
+                  View Variations
+                </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showVariationsListModal && selectedProjectForList && (
+        <div className="modal-overlay" onClick={() => {
+          setShowVariationsListModal(false)
+          setSelectedProjectForList(null)
+          setVariationsForProject([])
+        }}>
+          <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: '90vw', width: '900px' }}>
+            <div className="modal-header">
+              <h2>Variations for {selectedProjectForList.name}</h2>
+              <button onClick={() => {
+                setShowVariationsListModal(false)
+                setSelectedProjectForList(null)
+                setVariationsForProject([])
+              }} className="close-btn">×</button>
+            </div>
+            <div className="lead-form" style={{ maxHeight: '70vh', overflow: 'auto' }}>
+              {variationsForProject.length === 0 ? (
+                <p>No variations found for this project.</p>
+              ) : (
+                <div className="table">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Variation #</th>
+                        <th>Offer Ref</th>
+                        <th>Status</th>
+                        <th>Grand Total</th>
+                        <th>Created By</th>
+                        <th>Created At</th>
+                        <th>Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {variationsForProject.sort((a,b)=> (a.variationNumber||0)-(b.variationNumber||0)).map((v) => (
+                        <tr key={v._id}>
+                          <td data-label="Variation #">{v.variationNumber || 'N/A'}</td>
+                          <td data-label="Offer Ref">{v.offerReference || 'N/A'}</td>
+                          <td data-label="Status">
+                            <span className={`status-badge ${v.managementApproval?.status === 'approved' ? 'approved' : v.managementApproval?.status === 'rejected' ? 'rejected' : 'blue'}`}>
+                              {v.managementApproval?.status || 'draft'}
+                            </span>
+                          </td>
+                          <td data-label="Grand Total">{(v.priceSchedule?.currency || 'AED')} {Number(v.priceSchedule?.grandTotal || 0).toFixed(2)}</td>
+                          <td data-label="Created By">
+                            {v.createdBy?._id === currentUser?.id ? 'You' : (v.createdBy?.name || 'N/A')}
+                            {v.createdBy?._id !== currentUser?.id && v.createdBy && (
+                              <button className="link-btn" onClick={() => setProfileUser(v.createdBy)} style={{ marginLeft: 6 }}>View Profile</button>
+                            )}
+                          </td>
+                          <td data-label="Created At">{v.createdAt ? new Date(v.createdAt).toLocaleDateString() : 'N/A'}</td>
+                          <td data-label="Actions">
+                            <button
+                              className="save-btn"
+                              onClick={() => {
+                                try {
+                                  localStorage.setItem('variationId', v._id)
+                                } catch {}
+                                window.location.href = '/variation-detail'
+                              }}
+                            >
+                              View
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
           </div>
         </div>

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { api } from '../lib/api'
 import { CreateQuotationModal } from './CreateQuotationModal'
@@ -44,18 +44,75 @@ function LeadManagement() {
   const [showQuotationsListModal, setShowQuotationsListModal] = useState(false)
   const [quotationsForLead, setQuotationsForLead] = useState([])
   const [selectedLeadForList, setSelectedLeadForList] = useState(null)
+  const [showRevisionsModal, setShowRevisionsModal] = useState({ open: false, quotation: null })
   const [viewMode, setViewMode] = useState(() => {
     const saved = localStorage.getItem('leadViewMode')
     return saved === 'table' ? 'table' : 'card' // default to 'card' if not set
   })
   const [expandedQuotationRows, setExpandedQuotationRows] = useState({}) // Track which rows have expanded quotations
   const [leadQuotationsMap, setLeadQuotationsMap] = useState({}) // Store quotations per lead ID
+  const [expandedRevisionRows, setExpandedRevisionRows] = useState({}) // Track which rows have expanded revisions
+  const [quotationRevisionsMap, setQuotationRevisionsMap] = useState({}) // Store revisions per quotation ID
+  const [revisionProjectMap, setRevisionProjectMap] = useState({}) // Map revision ID to project info
+  const [expandedProjectRows, setExpandedProjectRows] = useState({}) // Track which revision rows have expanded projects
+  const [revisionProjectDetailsMap, setRevisionProjectDetailsMap] = useState({}) // Store full project details per revision ID
+  const [expandedVariationRows, setExpandedVariationRows] = useState({}) // Track which rows have expanded variations
+  const [projectVariationsMap, setProjectVariationsMap] = useState({}) // Store variations per project ID
+  const [projectModal, setProjectModal] = useState({ open: false, project: null })
+  const [variationsForProject, setVariationsForProject] = useState([])
+  const [selectedProjectForList, setSelectedProjectForList] = useState(null)
+  const [showVariationsListModal, setShowVariationsListModal] = useState(false)
   const [currentPage, setCurrentPage] = useState(1)
   const [itemsPerPage, setItemsPerPage] = useState(10)
   const [search, setSearch] = useState('')
+  // New filter states
+  const [nameFilter, setNameFilter] = useState('')
+  const [dateModifiedFilter, setDateModifiedFilter] = useState('')
+  const [dateCreatedFilter, setDateCreatedFilter] = useState('')
+  // New sort states
+  const [sortField, setSortField] = useState('dateCreated') // 'name', 'dateModified', 'dateCreated'
+  const [sortDirection, setSortDirection] = useState('desc') // 'asc', 'desc'
+  // Debounced filter values for performance
+  const [debouncedNameFilter, setDebouncedNameFilter] = useState('')
+  const [debouncedDateModifiedFilter, setDebouncedDateModifiedFilter] = useState('')
+  const [debouncedDateCreatedFilter, setDebouncedDateCreatedFilter] = useState('')
+  const [isFiltering, setIsFiltering] = useState(false) // Track filter operations
+  const [filtersExpanded, setFiltersExpanded] = useState(false) // Mobile: collapsible filters
+  const [isMobile, setIsMobile] = useState(false) // Track mobile viewport
+  const [headerHeight, setHeaderHeight] = useState(80) // Header height for sticky positioning
+  const headerRef = useRef(null)
   const [isLoading, setIsLoading] = useState(true)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [loadingAction, setLoadingAction] = useState(null)
+
+  // Detect mobile viewport and measure header height
+  useEffect(() => {
+    const checkMobile = () => {
+      setIsMobile(window.innerWidth < 768)
+      // Auto-expand filters on desktop
+      if (window.innerWidth >= 768) {
+        setFiltersExpanded(true)
+      }
+    }
+    checkMobile()
+    window.addEventListener('resize', checkMobile)
+    return () => window.removeEventListener('resize', checkMobile)
+  }, [])
+
+  // Measure header height for sticky positioning
+  useEffect(() => {
+    const updateHeaderHeight = () => {
+      if (headerRef.current) {
+        setHeaderHeight(headerRef.current.offsetHeight)
+      }
+    }
+    // Use requestAnimationFrame to ensure DOM is ready
+    requestAnimationFrame(() => {
+      updateHeaderHeight()
+    })
+    window.addEventListener('resize', updateHeaderHeight)
+    return () => window.removeEventListener('resize', updateHeaderHeight)
+  }, [])
 
   useEffect(() => {
     const userData = JSON.parse(localStorage.getItem('user'))
@@ -228,12 +285,132 @@ function LeadManagement() {
             return qLeadId === leadId
           })
           setLeadQuotationsMap(prev => ({ ...prev, [leadId]: list }))
+          
+          // Check which quotations have revisions with projects
+          const projectChecks = {}
+          for (const q of list) {
+            try {
+              const revRes = await api.get(`/api/revisions?parentQuotation=${q._id}`)
+              const revisions = Array.isArray(revRes.data) ? revRes.data : []
+              for (const rev of revisions) {
+                try {
+                  const projectRes = await api.get(`/api/projects/by-revision/${rev._id}`)
+                  projectChecks[rev._id] = projectRes.data
+                } catch {
+                  // No project for this revision
+                }
+              }
+            } catch {
+              // No revisions for this quotation
+            }
+          }
+          setRevisionProjectMap(prev => ({ ...prev, ...projectChecks }))
         } catch (e) {
           setNotify({ open: true, title: 'Load Failed', message: 'We could not load the quotations. Please try again.' })
           return
         }
       }
       setExpandedQuotationRows(prev => ({ ...prev, [leadId]: true }))
+    }
+  }
+
+  // Handler for View Revisions in table view (accordion)
+  const handleViewRevisionsTable = async (q) => {
+    const quotationId = q._id
+    const isExpanded = expandedRevisionRows[quotationId]
+    
+    if (isExpanded) {
+      // Collapse: remove from expanded rows
+      setExpandedRevisionRows(prev => {
+        const next = { ...prev }
+        delete next[quotationId]
+        return next
+      })
+    } else {
+      // Expand: fetch revisions if not already loaded
+      if (!quotationRevisionsMap[quotationId]) {
+        try {
+          const revRes = await api.get(`/api/revisions?parentQuotation=${quotationId}`)
+          const revisions = Array.isArray(revRes.data) ? revRes.data : []
+          setQuotationRevisionsMap(prev => ({ ...prev, [quotationId]: revisions }))
+          
+          // Check which revisions have projects
+          const projectChecks = {}
+          for (const rev of revisions) {
+            try {
+              const projectRes = await api.get(`/api/projects/by-revision/${rev._id}`)
+              projectChecks[rev._id] = projectRes.data
+            } catch {
+              // No project for this revision
+            }
+          }
+          setRevisionProjectMap(prev => ({ ...prev, ...projectChecks }))
+        } catch (e) {
+          setNotify({ open: true, title: 'Load Failed', message: 'We could not load the revisions. Please try again.' })
+          return
+        }
+      }
+      setExpandedRevisionRows(prev => ({ ...prev, [quotationId]: true }))
+    }
+  }
+
+  const fetchRevisionProjectDetails = async (revisionId) => {
+    try {
+      const projectInfo = revisionProjectMap[revisionId]
+      if (!projectInfo?._id) return null
+      
+      const res = await api.get(`/api/projects/${projectInfo._id}`)
+      const project = res.data
+      setRevisionProjectDetailsMap(prev => ({ ...prev, [revisionId]: project }))
+      return project
+    } catch {
+      return null
+    }
+  }
+
+  const handleViewProjectFromRevision = async (revision, isTable = false) => {
+    if (isTable) {
+      // Toggle accordion in table view
+      const isExpanded = expandedProjectRows[revision._id]
+      setExpandedProjectRows(prev => ({ ...prev, [revision._id]: !isExpanded }))
+      
+      // Fetch project details if not already loaded
+      if (!isExpanded && !revisionProjectDetailsMap[revision._id]) {
+        await fetchRevisionProjectDetails(revision._id)
+      }
+    } else {
+      // Open modal in card view
+      const project = await fetchRevisionProjectDetails(revision._id)
+      if (project) {
+        setProjectModal({ open: true, project })
+      }
+    }
+  }
+
+  // Handler for View Variations in table view (accordion)
+  const handleViewVariationsTable = async (projectId) => {
+    const isExpanded = expandedVariationRows[projectId]
+    
+    if (isExpanded) {
+      // Collapse: remove from expanded rows
+      setExpandedVariationRows(prev => {
+        const next = { ...prev }
+        delete next[projectId]
+        return next
+      })
+    } else {
+      // Expand: fetch variations if not already loaded
+      if (!projectVariationsMap[projectId]) {
+        try {
+          const res = await api.get(`/api/project-variations?parentProject=${projectId}`)
+          const list = Array.isArray(res.data) ? res.data : []
+          setProjectVariationsMap(prev => ({ ...prev, [projectId]: list }))
+        } catch (e) {
+          setNotify({ open: true, title: 'Load Failed', message: 'We could not load the variations. Please try again.' })
+          return
+        }
+      }
+      setExpandedVariationRows(prev => ({ ...prev, [projectId]: true }))
     }
   }
 
@@ -346,6 +523,28 @@ function LeadManagement() {
 
   // Approvals removed from lead module
 
+  // Debounce name filter (300ms delay)
+  useEffect(() => {
+    setIsFiltering(true)
+    const timer = setTimeout(() => {
+      setDebouncedNameFilter(nameFilter)
+      setIsFiltering(false)
+    }, 300)
+    return () => {
+      clearTimeout(timer)
+      setIsFiltering(false)
+    }
+  }, [nameFilter])
+
+  // Date filters don't need debouncing (they're date inputs)
+  useEffect(() => {
+    setDebouncedDateModifiedFilter(dateModifiedFilter)
+  }, [dateModifiedFilter])
+
+  useEffect(() => {
+    setDebouncedDateCreatedFilter(dateCreatedFilter)
+  }, [dateCreatedFilter])
+
   // Calculate filtered leads count
   const filteredLeads = leads.filter(lead => {
     // Apply "My Leads" filter
@@ -363,25 +562,86 @@ function LeadManagement() {
       if (!matches) return false
     }
     
+    // Apply name filter (project title or customer name) - using debounced value
+    if (debouncedNameFilter.trim()) {
+      const term = debouncedNameFilter.toLowerCase()
+      const projectTitle = (lead.projectTitle || lead.name || '').toLowerCase()
+      const customerName = (lead.customerName || '').toLowerCase()
+      if (!projectTitle.includes(term) && !customerName.includes(term)) return false
+    }
+    
+    // Apply date modified filter - using debounced value
+    if (debouncedDateModifiedFilter) {
+      const filterDate = new Date(debouncedDateModifiedFilter)
+      filterDate.setHours(0, 0, 0, 0)
+      const leadDate = lead.updatedAt ? new Date(lead.updatedAt) : null
+      if (!leadDate || leadDate.toDateString() !== filterDate.toDateString()) return false
+    }
+    
+    // Apply date created filter - using debounced value
+    if (debouncedDateCreatedFilter) {
+      const filterDate = new Date(debouncedDateCreatedFilter)
+      filterDate.setHours(0, 0, 0, 0)
+      const leadDate = lead.createdAt ? new Date(lead.createdAt) : null
+      if (!leadDate || leadDate.toDateString() !== filterDate.toDateString()) return false
+    }
+    
     return true
   })
+
+  // Sort leads by selected field and direction
+  const sortedLeads = [...filteredLeads].sort((a, b) => {
+    let compareResult = 0
+    
+    switch (sortField) {
+      case 'name':
+        // Sort by project title, then customer name
+        const aProjectTitle = (a.projectTitle || a.name || '').toLowerCase()
+        const bProjectTitle = (b.projectTitle || b.name || '').toLowerCase()
+        const projectTitleCompare = aProjectTitle.localeCompare(bProjectTitle)
+        if (projectTitleCompare !== 0) {
+          compareResult = projectTitleCompare
+        } else {
+          // If project titles are equal, sort by customer name
+          const aCustomerName = (a.customerName || '').toLowerCase()
+          const bCustomerName = (b.customerName || '').toLowerCase()
+          compareResult = aCustomerName.localeCompare(bCustomerName)
+        }
+        break
+      case 'dateModified':
+        const aModified = a.updatedAt ? new Date(a.updatedAt).getTime() : 0
+        const bModified = b.updatedAt ? new Date(b.updatedAt).getTime() : 0
+        compareResult = aModified > bModified ? 1 : aModified < bModified ? -1 : 0
+        break
+      case 'dateCreated':
+      default:
+        const aCreated = a.createdAt ? new Date(a.createdAt).getTime() : 0
+        const bCreated = b.createdAt ? new Date(b.createdAt).getTime() : 0
+        compareResult = aCreated > bCreated ? 1 : aCreated < bCreated ? -1 : 0
+        break
+    }
+    
+    // Apply sort direction
+    return sortDirection === 'asc' ? compareResult : -compareResult
+  })
+
   const totalLeads = leads.length
-  const displayedLeads = filteredLeads.length
+  const displayedLeads = sortedLeads.length
 
   // Pagination calculations
-  const totalPages = Math.ceil(filteredLeads.length / itemsPerPage)
+  const totalPages = Math.ceil(sortedLeads.length / itemsPerPage)
   const startIndex = (currentPage - 1) * itemsPerPage
   const endIndex = startIndex + itemsPerPage
-  const paginatedLeads = filteredLeads.slice(startIndex, endIndex)
+  const paginatedLeads = sortedLeads.slice(startIndex, endIndex)
 
-  // Reset to page 1 when filters change
+  // Reset to page 1 when filters or sorting change
   useEffect(() => {
     setCurrentPage(1)
-  }, [myOnly, search])
+  }, [myOnly, search, debouncedNameFilter, debouncedDateModifiedFilter, debouncedDateCreatedFilter, sortField, sortDirection])
 
   return (
     <div className="lead-management">
-      <div className="header">
+      <div className="header" ref={headerRef}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
           <h1>Lead Management</h1>
           <span style={{ 
@@ -393,7 +653,7 @@ function LeadManagement() {
             fontWeight: 600,
             border: '1px solid var(--border)'
           }}>
-            {(myOnly || search) ? `${displayedLeads} of ${totalLeads}` : totalLeads} {totalLeads === 1 ? 'Lead' : 'Leads'}
+            {(myOnly || search || debouncedNameFilter || debouncedDateModifiedFilter || debouncedDateCreatedFilter) ? `${displayedLeads} of ${totalLeads}` : totalLeads} {totalLeads === 1 ? 'Lead' : 'Leads'}
           </span>
         </div>
         <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
@@ -455,6 +715,212 @@ function LeadManagement() {
             </button>
           )}
         </div>
+      </div>
+
+      {/* Filters and Sorting Section - Sticky */}
+      <div style={{ 
+        position: 'sticky',
+        top: `${headerHeight}px`,
+        zIndex: 99,
+        marginTop: '16px',
+        marginBottom: '16px',
+        padding: '16px', 
+        background: 'var(--card)', 
+        borderRadius: '8px', 
+        border: '1px solid var(--border)',
+        boxShadow: '0 2px 8px rgba(0, 0, 0, 0.1)',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '16px',
+        alignSelf: 'flex-start',
+        width: '100%'
+      }}>
+        {/* Mobile: Collapsible Header */}
+        {isMobile && (
+          <div style={{ 
+            display: 'flex', 
+            justifyContent: 'space-between', 
+            alignItems: 'center'
+          }}>
+            <h3 style={{ margin: 0, fontSize: '16px', fontWeight: 600 }}>Filters & Sorting</h3>
+            <button
+              onClick={() => setFiltersExpanded(!filtersExpanded)}
+              style={{
+                padding: '6px 12px',
+                border: '1px solid var(--border)',
+                borderRadius: '6px',
+                background: 'var(--bg)',
+                color: 'var(--text)',
+                fontSize: '14px',
+                cursor: 'pointer'
+              }}
+              aria-expanded={filtersExpanded}
+              aria-label={filtersExpanded ? 'Collapse filters' : 'Expand filters'}
+            >
+              {filtersExpanded ? '▼' : '▶'} {filtersExpanded ? 'Hide' : 'Show'} Filters
+            </button>
+          </div>
+        )}
+        
+        {/* Filter Content - Hidden on mobile when collapsed */}
+        {(!isMobile || filtersExpanded) && (
+          <>
+            <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-start', flexWrap: 'wrap', position: 'relative' }}>
+              {isFiltering && (
+                <div style={{
+                  position: 'absolute',
+                  top: '-8px',
+                  right: '8px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  fontSize: '12px',
+                  color: 'var(--text-muted)',
+                  background: 'var(--card)',
+                  padding: '4px 8px',
+                  borderRadius: '4px',
+                  border: '1px solid var(--border)',
+                  zIndex: 1
+                }}>
+                  <span>Filtering...</span>
+                </div>
+              )}
+              <label style={{ display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '13px', fontWeight: 500 }}>
+                Filter by Name:
+                <div style={{ position: 'relative', display: 'inline-block' }}>
+                  <input 
+                    type="text"
+                    placeholder="Project title or customer name..."
+                    value={nameFilter} 
+                    onChange={e => setNameFilter(e.target.value)}
+                    style={{
+                      padding: '6px 12px',
+                      border: '1px solid var(--border)',
+                      borderRadius: '6px',
+                      background: 'var(--bg)',
+                      color: 'var(--text)',
+                      fontSize: '14px',
+                      minWidth: isMobile ? '100%' : '200px',
+                      width: isMobile ? '100%' : 'auto'
+                    }}
+                    aria-label="Filter by project title or customer name"
+                  />
+                </div>
+              </label>
+              <label style={{ display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '13px', fontWeight: 500 }}>
+                Filter by Date Modified:
+                <input 
+                  type="date"
+                  value={dateModifiedFilter} 
+                  onChange={e => setDateModifiedFilter(e.target.value)}
+                  style={{
+                    padding: '6px 12px',
+                    border: '1px solid var(--border)',
+                    borderRadius: '6px',
+                    background: 'var(--bg)',
+                    color: 'var(--text)',
+                    fontSize: '14px',
+                    minWidth: isMobile ? '100%' : '160px',
+                    width: isMobile ? '100%' : 'auto'
+                  }}
+                  aria-label="Filter by date modified"
+                />
+              </label>
+              <label style={{ display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '13px', fontWeight: 500 }}>
+                Filter by Date Created:
+                <input 
+                  type="date"
+                  value={dateCreatedFilter} 
+                  onChange={e => setDateCreatedFilter(e.target.value)}
+                  style={{
+                    padding: '6px 12px',
+                    border: '1px solid var(--border)',
+                    borderRadius: '6px',
+                    background: 'var(--bg)',
+                    color: 'var(--text)',
+                    fontSize: '14px',
+                    minWidth: isMobile ? '100%' : '160px',
+                    width: isMobile ? '100%' : 'auto'
+                  }}
+                  aria-label="Filter by date created"
+                />
+              </label>
+              {(nameFilter || dateModifiedFilter || dateCreatedFilter) && (
+                <button
+                  onClick={() => {
+                    setNameFilter('')
+                    setDateModifiedFilter('')
+                    setDateCreatedFilter('')
+                  }}
+                  style={{
+                    padding: '6px 12px',
+                    border: '1px solid var(--border)',
+                    borderRadius: '6px',
+                    background: 'var(--bg)',
+                    color: 'var(--text)',
+                    fontSize: '14px',
+                    cursor: 'pointer',
+                    marginTop: isMobile ? '8px' : '20px',
+                    alignSelf: isMobile ? 'stretch' : 'flex-end',
+                    width: isMobile ? '100%' : 'auto'
+                  }}
+                  aria-label="Clear all filters"
+                >
+                  Clear Filters
+                </button>
+              )}
+            </div>
+            <div style={{ display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap', paddingTop: '8px', borderTop: '1px solid var(--border)' }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', fontWeight: 500, flex: isMobile ? '1 1 100%' : '0 0 auto' }}>
+                Sort by:
+                <select
+                  value={sortField}
+                  onChange={(e) => setSortField(e.target.value)}
+                  style={{
+                    padding: '6px 12px',
+                    border: '1px solid var(--border)',
+                    borderRadius: '6px',
+                    background: 'var(--bg)',
+                    color: 'var(--text)',
+                    fontSize: '14px',
+                    cursor: 'pointer',
+                    minWidth: isMobile ? '100%' : '150px',
+                    width: isMobile ? '100%' : 'auto',
+                    flex: isMobile ? '1' : '0 0 auto'
+                  }}
+                  aria-label="Sort by field"
+                >
+                  <option value="name">Name</option>
+                  <option value="dateModified">Date Modified</option>
+                  <option value="dateCreated">Date Created</option>
+                </select>
+              </label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', fontWeight: 500, flex: isMobile ? '1 1 100%' : '0 0 auto' }}>
+                Order:
+                <select
+                  value={sortDirection}
+                  onChange={(e) => setSortDirection(e.target.value)}
+                  style={{
+                    padding: '6px 12px',
+                    border: '1px solid var(--border)',
+                    borderRadius: '6px',
+                    background: 'var(--bg)',
+                    color: 'var(--text)',
+                    fontSize: '14px',
+                    cursor: 'pointer',
+                    minWidth: isMobile ? '100%' : '120px',
+                    width: isMobile ? '100%' : 'auto',
+                    flex: isMobile ? '1' : '0 0 auto'
+                  }}
+                  aria-label="Sort order"
+                >
+                  <option value="asc">Ascending</option>
+                  <option value="desc">Descending</option>
+                </select>
+              </label>
+            </div>
+          </>
+        )}
       </div>
 
       {isLoading ? (
@@ -605,28 +1071,204 @@ function LeadManagement() {
                                   </thead>
                                   <tbody>
                                     {(leadQuotationsMap[lead._id] || []).map((q) => (
-                                      <tr key={q._id}>
-                                        <td data-label="Offer Ref">{q.offerReference || 'N/A'}</td>
-                                        <td data-label="Offer Date">{q.offerDate ? new Date(q.offerDate).toLocaleDateString() : 'N/A'}</td>
-                                        <td data-label="Grand Total">{(q.priceSchedule?.currency || 'AED')} {Number(q.priceSchedule?.grandTotal || 0).toFixed(2)}</td>
-                                        <td data-label="Status">{q.managementApproval?.status || 'pending'}</td>
-                                        <td data-label="Created By">{q.createdBy?._id === currentUser?.id ? 'You' : (q.createdBy?.name || 'N/A')}</td>
-                                        <td data-label="Actions">
-                                          <button
-                                            className="save-btn"
-                                            onClick={() => {
-                                              try {
-                                                localStorage.setItem('quotationId', q._id)
-                                                localStorage.setItem('quotationDetail', JSON.stringify(q))
-                                                localStorage.setItem('leadId', lead._id)
-                                              } catch {}
-                                              window.location.href = '/quotation-detail'
-                                            }}
-                                          >
-                                            View
-                                          </button>
-                                        </td>
-                                      </tr>
+                                      <>
+                                        <tr key={q._id}>
+                                          <td data-label="Offer Ref">{q.offerReference || 'N/A'}</td>
+                                          <td data-label="Offer Date">{q.offerDate ? new Date(q.offerDate).toLocaleDateString() : 'N/A'}</td>
+                                          <td data-label="Grand Total">{(q.priceSchedule?.currency || 'AED')} {Number(q.priceSchedule?.grandTotal || 0).toFixed(2)}</td>
+                                          <td data-label="Status">{q.managementApproval?.status || 'pending'}</td>
+                                          <td data-label="Created By">{q.createdBy?._id === currentUser?.id ? 'You' : (q.createdBy?.name || 'N/A')}</td>
+                                          <td data-label="Actions">
+                                            <button
+                                              className="save-btn"
+                                              onClick={() => {
+                                                try {
+                                                  localStorage.setItem('quotationId', q._id)
+                                                  localStorage.setItem('quotationDetail', JSON.stringify(q))
+                                                  localStorage.setItem('leadId', lead._id)
+                                                } catch {}
+                                                window.location.href = '/quotation-detail'
+                                              }}
+                                            >
+                                              View
+                                            </button>
+                                            <button
+                                              className="link-btn"
+                                              onClick={() => handleViewRevisionsTable(q)}
+                                              style={{ marginLeft: '6px' }}
+                                            >
+                                              View Revisions
+                                            </button>
+                                          </td>
+                                        </tr>
+                                        {expandedRevisionRows[q._id] && (
+                                          <tr key={`${q._id}-revisions`} className="history-row accordion-row">
+                                            <td colSpan={6} style={{ padding: '0' }}>
+                                              <div className="history-panel accordion-content" style={{ padding: '16px' }}>
+                                                <h4 style={{ marginTop: '0', marginBottom: '12px', fontSize: '16px', fontWeight: 600 }}>Revisions ({(quotationRevisionsMap[q._id] || []).length})</h4>
+                                                {(quotationRevisionsMap[q._id] || []).length === 0 ? (
+                                                  <p style={{ margin: 0, color: 'var(--text-muted)' }}>No revisions found for this quotation.</p>
+                                                ) : (
+                                                  <div className="table">
+                                                    <table>
+                                                      <thead>
+                                                        <tr>
+                                                          <th>Revision #</th>
+                                                          <th>Offer Ref</th>
+                                                          <th>Offer Date</th>
+                                                          <th>Grand Total</th>
+                                                          <th>Status</th>
+                                                          <th>Created By</th>
+                                                          <th>Actions</th>
+                                                        </tr>
+                                                      </thead>
+                                                      <tbody>
+                                                        {(quotationRevisionsMap[q._id] || []).map((r) => (
+                                                          <>
+                                                            <tr key={r._id}>
+                                                              <td data-label="Revision #">{r.revisionNumber || 'N/A'}</td>
+                                                              <td data-label="Offer Ref">{r.offerReference || 'N/A'}</td>
+                                                              <td data-label="Offer Date">{r.offerDate ? new Date(r.offerDate).toLocaleDateString() : 'N/A'}</td>
+                                                              <td data-label="Grand Total">{(r.priceSchedule?.currency || 'AED')} {Number(r.priceSchedule?.grandTotal || 0).toFixed(2)}</td>
+                                                              <td data-label="Status">{r.managementApproval?.status || 'pending'}</td>
+                                                              <td data-label="Created By">{r.createdBy?._id === currentUser?.id ? 'You' : (r.createdBy?.name || 'N/A')}</td>
+                                                              <td data-label="Actions">
+                                                                <button
+                                                                  className="save-btn"
+                                                                  onClick={() => {
+                                                                    try {
+                                                                      localStorage.setItem('revisionId', r._id)
+                                                                      localStorage.setItem('revisionDetail', JSON.stringify(r))
+                                                                      const leadId = typeof r.lead === 'object' ? r.lead?._id : r.lead
+                                                                      if (leadId) localStorage.setItem('leadId', leadId)
+                                                                    } catch {}
+                                                                    window.location.href = '/revision-detail'
+                                                                  }}
+                                                                >
+                                                                  View
+                                                                </button>
+                                                                {revisionProjectMap[r._id] && (
+                                                                  <button
+                                                                    className="link-btn"
+                                                                    onClick={() => handleViewProjectFromRevision(r, true)}
+                                                                    style={{ marginLeft: '6px' }}
+                                                                  >
+                                                                    View Project
+                                                                  </button>
+                                                                )}
+                                                              </td>
+                                                            </tr>
+                                                            {expandedProjectRows[r._id] && revisionProjectDetailsMap[r._id] && (
+                                                              <tr className="accordion-row">
+                                                                <td colSpan="7" style={{ padding: '0', borderTop: 'none' }}>
+                                                                  <div className="accordion-content" style={{ padding: '20px', background: 'var(--bg)' }}>
+                                                                    <h4 style={{ marginTop: 0, marginBottom: '16px' }}>Project Details</h4>
+                                                                    <div className="ld-kv" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px 16px' }}>
+                                                                      <p><strong>Project Name:</strong> {revisionProjectDetailsMap[r._id].name || 'N/A'}</p>
+                                                                      <p><strong>Status:</strong> {revisionProjectDetailsMap[r._id].status || 'N/A'}</p>
+                                                                      <p><strong>Location:</strong> {revisionProjectDetailsMap[r._id].locationDetails || 'N/A'}</p>
+                                                                      <p><strong>Working Hours:</strong> {revisionProjectDetailsMap[r._id].workingHours || 'N/A'}</p>
+                                                                      <p><strong>Manpower Count:</strong> {revisionProjectDetailsMap[r._id].manpowerCount || 'N/A'}</p>
+                                                                      <p><strong>Budget:</strong> {revisionProjectDetailsMap[r._id].budget ? `${revisionProjectDetailsMap[r._id].budget}` : 'N/A'}</p>
+                                                                      <p><strong>Site Engineer:</strong> {revisionProjectDetailsMap[r._id].assignedSiteEngineer?.name || 'Not Assigned'}</p>
+                                                                      <p><strong>Project Engineer:</strong> {revisionProjectDetailsMap[r._id].assignedProjectEngineer?.name || 'Not Assigned'}</p>
+                                                                      <p><strong>Created At:</strong> {revisionProjectDetailsMap[r._id].createdAt ? new Date(revisionProjectDetailsMap[r._id].createdAt).toLocaleString() : 'N/A'}</p>
+                                                                      <p><strong>Created By:</strong> {revisionProjectDetailsMap[r._id].createdBy?.name || 'N/A'}</p>
+                                                                    </div>
+                                                                    <div style={{ marginTop: '16px', display: 'flex', gap: '8px' }}>
+                                                                      <button className="assign-btn" onClick={() => {
+                                                                        try {
+                                                                          localStorage.setItem('projectsFocusId', revisionProjectDetailsMap[r._id]._id)
+                                                                          localStorage.setItem('projectId', revisionProjectDetailsMap[r._id]._id)
+                                                                        } catch {}
+                                                                        window.location.href = '/project-detail'
+                                                                      }}>
+                                                                        View Full Project Details
+                                                                      </button>
+                                                                      <button
+                                                                        className="link-btn"
+                                                                        onClick={() => handleViewVariationsTable(revisionProjectDetailsMap[r._id]._id)}
+                                                                      >
+                                                                        View Variations
+                                                                      </button>
+                                                                    </div>
+                                                                  </div>
+                                                                </td>
+                                                              </tr>
+                                                            )}
+                                                            {revisionProjectDetailsMap[r._id] && expandedVariationRows[revisionProjectDetailsMap[r._id]._id] && (
+                                                              <tr key={`${r._id}-variations`} className="accordion-row">
+                                                                <td colSpan={7} style={{ padding: '0', borderTop: 'none' }}>
+                                                                  <div className="accordion-content" style={{ padding: '16px', background: 'var(--bg)' }}>
+                                                                    <h4 style={{ marginTop: '0', marginBottom: '12px', fontSize: '16px', fontWeight: 600 }}>Variations ({(projectVariationsMap[revisionProjectDetailsMap[r._id]._id] || []).length})</h4>
+                                                                    {(projectVariationsMap[revisionProjectDetailsMap[r._id]._id] || []).length === 0 ? (
+                                                                      <p style={{ margin: 0, color: 'var(--text-muted)' }}>No variations found for this project.</p>
+                                                                    ) : (
+                                                                      <div className="table">
+                                                                        <table>
+                                                                          <thead>
+                                                                            <tr>
+                                                                              <th>Variation #</th>
+                                                                              <th>Offer Ref</th>
+                                                                              <th>Status</th>
+                                                                              <th>Grand Total</th>
+                                                                              <th>Created By</th>
+                                                                              <th>Created At</th>
+                                                                              <th>Actions</th>
+                                                                            </tr>
+                                                                          </thead>
+                                                                          <tbody>
+                                                                            {(projectVariationsMap[revisionProjectDetailsMap[r._id]._id] || []).sort((a,b)=> (a.variationNumber||0)-(b.variationNumber||0)).map((v) => (
+                                                                              <tr key={v._id}>
+                                                                                <td data-label="Variation #">{v.variationNumber || 'N/A'}</td>
+                                                                                <td data-label="Offer Ref">{v.offerReference || 'N/A'}</td>
+                                                                                <td data-label="Status">
+                                                                                  <span className={`status-badge ${v.managementApproval?.status === 'approved' ? 'approved' : v.managementApproval?.status === 'rejected' ? 'rejected' : 'blue'}`}>
+                                                                                    {v.managementApproval?.status || 'draft'}
+                                                                                  </span>
+                                                                                </td>
+                                                                                <td data-label="Grand Total">{(v.priceSchedule?.currency || 'AED')} {Number(v.priceSchedule?.grandTotal || 0).toFixed(2)}</td>
+                                                                                <td data-label="Created By">
+                                                                                  {v.createdBy?._id === currentUser?.id ? 'You' : (v.createdBy?.name || 'N/A')}
+                                                                                  {v.createdBy?._id !== currentUser?.id && v.createdBy && (
+                                                                                    <button className="link-btn" onClick={() => setProfileUser(v.createdBy)} style={{ marginLeft: 6 }}>View Profile</button>
+                                                                                  )}
+                                                                                </td>
+                                                                                <td data-label="Created At">{v.createdAt ? new Date(v.createdAt).toLocaleDateString() : 'N/A'}</td>
+                                                                                <td data-label="Actions">
+                                                                                  <button
+                                                                                    className="save-btn"
+                                                                                    onClick={() => {
+                                                                                      try {
+                                                                                        localStorage.setItem('variationId', v._id)
+                                                                                      } catch {}
+                                                                                      window.location.href = '/variation-detail'
+                                                                                    }}
+                                                                                  >
+                                                                                    View
+                                                                                  </button>
+                                                                                </td>
+                                                                              </tr>
+                                                                            ))}
+                                                                          </tbody>
+                                                                        </table>
+                                                                      </div>
+                                                                    )}
+                                                                  </div>
+                                                                </td>
+                                                              </tr>
+                                                            )}
+                                                          </>
+                                                        ))}
+                                                      </tbody>
+                                                    </table>
+                                                  </div>
+                                                )}
+                                              </div>
+                                            </td>
+                                          </tr>
+                                        )}
+                                      </>
                                     ))}
                                   </tbody>
                                 </table>
@@ -996,8 +1638,8 @@ function LeadManagement() {
             notify.onOk()
           }
           setNotify({ open: false, title: '', message: '' })
-        }}>
-          <div className="modal" onClick={e => e.stopPropagation()}>
+        }} style={{ zIndex: 10000 }}>
+          <div className="modal" onClick={e => e.stopPropagation()} style={{ zIndex: 10001 }}>
             <div className="modal-header">
               <h2>{notify.title || 'Notice'}</h2>
               <button onClick={() => {
@@ -1027,8 +1669,8 @@ function LeadManagement() {
           setShowQuotationsListModal(false)
           setSelectedLeadForList(null)
           setQuotationsForLead([])
-        }}>
-          <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: '900px', width: '90%' }}>
+        }} style={{ zIndex: 9998 }}>
+          <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: '900px', width: '90%', zIndex: 9999 }}>
             <div className="modal-header">
               <h2>Quotations for {selectedLeadForList.projectTitle || selectedLeadForList.name || 'Lead'}</h2>
               <button onClick={() => {
@@ -1071,6 +1713,241 @@ function LeadManagement() {
                                   localStorage.setItem('leadId', selectedLeadForList._id)
                                 } catch {}
                                 window.location.href = '/quotation-detail'
+                              }}
+                            >
+                              View
+                            </button>
+                            <button
+                              className="link-btn"
+                              onClick={async () => {
+                                try {
+                                  const revRes = await api.get(`/api/revisions?parentQuotation=${q._id}`)
+                                  const revisions = Array.isArray(revRes.data) ? revRes.data : []
+                                  if (revisions.length === 0) {
+                                    setNotify({ open: true, title: 'No Revisions', message: 'No revisions found for this quotation.' })
+                                    return
+                                  }
+                                  setQuotationRevisionsMap(prev => ({ ...prev, [q._id]: revisions }))
+                                  
+                                  // Check which revisions have projects
+                                  const projectChecks = {}
+                                  for (const rev of revisions) {
+                                    try {
+                                      const projectRes = await api.get(`/api/projects/by-revision/${rev._id}`)
+                                      projectChecks[rev._id] = projectRes.data
+                                    } catch {
+                                      // No project for this revision
+                                    }
+                                  }
+                                  setRevisionProjectMap(prev => ({ ...prev, ...projectChecks }))
+                                  setShowRevisionsModal({ open: true, quotation: q })
+                                } catch (e) {
+                                  setNotify({ open: true, title: 'Open Failed', message: 'We could not load the revisions. Please try again.' })
+                                }
+                              }}
+                              style={{ marginLeft: '6px' }}
+                            >
+                              View Revisions
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showRevisionsModal.open && showRevisionsModal.quotation && (
+        <div className="modal-overlay" onClick={() => {
+          setShowRevisionsModal({ open: false, quotation: null })
+        }} style={{ zIndex: 10002 }}>
+          <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: '900px', width: '90%', zIndex: 10003 }}>
+            <div className="modal-header">
+              <h2>Revisions for {showRevisionsModal.quotation.projectTitle || showRevisionsModal.quotation.offerReference || 'Quotation'}</h2>
+              <button onClick={() => {
+                setShowRevisionsModal({ open: false, quotation: null })
+              }} className="close-btn">×</button>
+            </div>
+            <div className="lead-form" style={{ maxHeight: '70vh', overflow: 'auto' }}>
+              {(quotationRevisionsMap[showRevisionsModal.quotation._id] || []).length === 0 ? (
+                <p>No revisions found for this quotation.</p>
+              ) : (
+                <div className="table">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Revision #</th>
+                        <th>Offer Ref</th>
+                        <th>Offer Date</th>
+                        <th>Grand Total</th>
+                        <th>Status</th>
+                        <th>Created By</th>
+                        <th>Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(quotationRevisionsMap[showRevisionsModal.quotation._id] || []).map((r) => (
+                        <tr key={r._id}>
+                          <td data-label="Revision #">{r.revisionNumber || 'N/A'}</td>
+                          <td data-label="Offer Ref">{r.offerReference || 'N/A'}</td>
+                          <td data-label="Offer Date">{r.offerDate ? new Date(r.offerDate).toLocaleDateString() : 'N/A'}</td>
+                          <td data-label="Grand Total">{(r.priceSchedule?.currency || 'AED')} {Number(r.priceSchedule?.grandTotal || 0).toFixed(2)}</td>
+                          <td data-label="Status">{r.managementApproval?.status || 'pending'}</td>
+                          <td data-label="Created By">{r.createdBy?._id === currentUser?.id ? 'You' : (r.createdBy?.name || 'N/A')}</td>
+                          <td data-label="Actions">
+                            <button
+                              className="save-btn"
+                              onClick={() => {
+                                try {
+                                  localStorage.setItem('revisionId', r._id)
+                                  localStorage.setItem('revisionDetail', JSON.stringify(r))
+                                  const leadId = typeof r.lead === 'object' ? r.lead?._id : r.lead
+                                  if (leadId) localStorage.setItem('leadId', leadId)
+                                } catch {}
+                                window.location.href = '/revision-detail'
+                              }}
+                            >
+                              View
+                            </button>
+                            {revisionProjectMap[r._id] && (
+                              <button
+                                className="link-btn"
+                                onClick={() => handleViewProjectFromRevision(r, false)}
+                                style={{ marginLeft: '6px' }}
+                              >
+                                View Project
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {projectModal.open && projectModal.project && (
+        <div className="modal-overlay" onClick={() => setProjectModal({ open: false, project: null })} style={{ zIndex: 10004 }}>
+          <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: '800px', width: '90%', zIndex: 10005 }}>
+            <div className="modal-header">
+              <h2>Project Details</h2>
+              <button onClick={() => setProjectModal({ open: false, project: null })} className="close-btn">×</button>
+            </div>
+            <div className="lead-form" style={{ maxHeight: '70vh', overflow: 'auto' }}>
+              <div className="ld-kv" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px 16px' }}>
+                <p><strong>Project Name:</strong> {projectModal.project.name || 'N/A'}</p>
+                <p><strong>Status:</strong> {projectModal.project.status || 'N/A'}</p>
+                <p><strong>Location:</strong> {projectModal.project.locationDetails || 'N/A'}</p>
+                <p><strong>Working Hours:</strong> {projectModal.project.workingHours || 'N/A'}</p>
+                <p><strong>Manpower Count:</strong> {projectModal.project.manpowerCount || 'N/A'}</p>
+                <p><strong>Budget:</strong> {projectModal.project.budget ? `${projectModal.project.budget}` : 'N/A'}</p>
+                <p><strong>Site Engineer:</strong> {projectModal.project.assignedSiteEngineer?.name || 'Not Assigned'}</p>
+                <p><strong>Project Engineer:</strong> {projectModal.project.assignedProjectEngineer?.name || 'Not Assigned'}</p>
+                <p><strong>Created At:</strong> {projectModal.project.createdAt ? new Date(projectModal.project.createdAt).toLocaleString() : 'N/A'}</p>
+                <p><strong>Created By:</strong> {projectModal.project.createdBy?.name || 'N/A'}</p>
+              </div>
+              <div style={{ marginTop: '20px', display: 'flex', gap: '8px' }}>
+                <button className="assign-btn" onClick={() => {
+                  try {
+                    localStorage.setItem('projectsFocusId', projectModal.project._id)
+                    localStorage.setItem('projectId', projectModal.project._id)
+                  } catch {}
+                  window.location.href = '/project-detail'
+                }}>
+                  View Full Project Details
+                </button>
+                <button
+                  className="link-btn"
+                  onClick={async () => {
+                    try {
+                      const res = await api.get(`/api/project-variations?parentProject=${projectModal.project._id}`)
+                      const list = Array.isArray(res.data) ? res.data : []
+                      if (list.length === 0) {
+                        setNotify({ open: true, title: 'No Variations', message: 'No variations found for this project.' })
+                        return
+                      }
+                      setVariationsForProject(list)
+                      setSelectedProjectForList(projectModal.project)
+                      setShowVariationsListModal(true)
+                    } catch (e) {
+                      setNotify({ open: true, title: 'Open Failed', message: 'We could not load the variations. Please try again.' })
+                    }
+                  }}
+                >
+                  View Variations
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showVariationsListModal && selectedProjectForList && (
+        <div className="modal-overlay" onClick={() => {
+          setShowVariationsListModal(false)
+          setSelectedProjectForList(null)
+          setVariationsForProject([])
+        }} style={{ zIndex: 10006 }}>
+          <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: '90vw', width: '900px', zIndex: 10007 }}>
+            <div className="modal-header">
+              <h2>Variations for {selectedProjectForList.name}</h2>
+              <button onClick={() => {
+                setShowVariationsListModal(false)
+                setSelectedProjectForList(null)
+                setVariationsForProject([])
+              }} className="close-btn">×</button>
+            </div>
+            <div className="lead-form" style={{ maxHeight: '70vh', overflow: 'auto' }}>
+              {variationsForProject.length === 0 ? (
+                <p>No variations found for this project.</p>
+              ) : (
+                <div className="table">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Variation #</th>
+                        <th>Offer Ref</th>
+                        <th>Status</th>
+                        <th>Grand Total</th>
+                        <th>Created By</th>
+                        <th>Created At</th>
+                        <th>Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {variationsForProject.sort((a,b)=> (a.variationNumber||0)-(b.variationNumber||0)).map((v) => (
+                        <tr key={v._id}>
+                          <td data-label="Variation #">{v.variationNumber || 'N/A'}</td>
+                          <td data-label="Offer Ref">{v.offerReference || 'N/A'}</td>
+                          <td data-label="Status">
+                            <span className={`status-badge ${v.managementApproval?.status === 'approved' ? 'approved' : v.managementApproval?.status === 'rejected' ? 'rejected' : 'blue'}`}>
+                              {v.managementApproval?.status || 'draft'}
+                            </span>
+                          </td>
+                          <td data-label="Grand Total">{(v.priceSchedule?.currency || 'AED')} {Number(v.priceSchedule?.grandTotal || 0).toFixed(2)}</td>
+                          <td data-label="Created By">
+                            {v.createdBy?._id === currentUser?.id ? 'You' : (v.createdBy?.name || 'N/A')}
+                            {v.createdBy?._id !== currentUser?.id && v.createdBy && (
+                              <button className="link-btn" onClick={() => setProfileUser(v.createdBy)} style={{ marginLeft: 6 }}>View Profile</button>
+                            )}
+                          </td>
+                          <td data-label="Created At">{v.createdAt ? new Date(v.createdAt).toLocaleDateString() : 'N/A'}</td>
+                          <td data-label="Actions">
+                            <button
+                              className="save-btn"
+                              onClick={() => {
+                                try {
+                                  localStorage.setItem('variationId', v._id)
+                                } catch {}
+                                window.location.href = '/variation-detail'
                               }}
                             >
                               View

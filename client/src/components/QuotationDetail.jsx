@@ -553,8 +553,11 @@ function QuotationDetail() {
               const pjRes = await apiFetch(`/api/projects/by-revision/${latest._id}`)
               if (!pjRes.ok) { setNotify({ open: true, title: 'No Project', message: 'No project exists for the latest approved revision.' }); return }
               const pj = await pjRes.json()
-              try { localStorage.setItem('projectsFocusId', pj._id) } catch {}
-              window.location.href = '/projects'
+              try { 
+                localStorage.setItem('projectsFocusId', pj._id)
+                localStorage.setItem('projectId', pj._id)
+              } catch {}
+              window.location.href = '/project-detail'
             } catch { setNotify({ open: true, title: 'Open Project Failed', message: 'We could not open the linked project.' }) }
           }}>View Project</button>
           {approvalStatus === 'approved' && !hasRevisions && (

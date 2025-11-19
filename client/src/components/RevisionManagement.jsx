@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, useRef } from 'react'
 import { api } from '../lib/api'
 import './LeadManagement.css'
 import logo from '../assets/logo/WBES_Logo.png'
@@ -11,6 +11,22 @@ function RevisionManagement() {
   const [selectedApprovedQuotationFilter, setSelectedApprovedQuotationFilter] = useState('')
   const [search, setSearch] = useState('')
   const [sortKey, setSortKey] = useState('createdAt_desc')
+  // New filter states
+  const [nameFilter, setNameFilter] = useState('')
+  const [dateModifiedFilter, setDateModifiedFilter] = useState('')
+  const [dateCreatedFilter, setDateCreatedFilter] = useState('')
+  // New sort states
+  const [sortField, setSortField] = useState('dateCreated') // 'name', 'dateModified', 'dateCreated'
+  const [sortDirection, setSortDirection] = useState('desc') // 'asc', 'desc'
+  // Debounced filter values for performance
+  const [debouncedNameFilter, setDebouncedNameFilter] = useState('')
+  const [debouncedDateModifiedFilter, setDebouncedDateModifiedFilter] = useState('')
+  const [debouncedDateCreatedFilter, setDebouncedDateCreatedFilter] = useState('')
+  const [isFiltering, setIsFiltering] = useState(false) // Track filter operations
+  const [filtersExpanded, setFiltersExpanded] = useState(false) // Mobile: collapsible filters
+  const [isMobile, setIsMobile] = useState(false) // Track mobile viewport
+  const [headerHeight, setHeaderHeight] = useState(80) // Header height for sticky positioning
+  const headerRef = useRef(null)
   const [editModal, setEditModal] = useState({ open: false, revision: null, form: null, mode: 'edit' })
   const [profileUser, setProfileUser] = useState(null)
   const [notify, setNotify] = useState({ open: false, title: '', message: '' })
@@ -28,6 +44,12 @@ function RevisionManagement() {
   const [expandedProjectRows, setExpandedProjectRows] = useState({}) // Track which rows have expanded projects
   const [projectDetailsMap, setProjectDetailsMap] = useState({}) // Store full project details per revision ID
   const [projectModal, setProjectModal] = useState({ open: false, project: null })
+  const [diffModal, setDiffModal] = useState({ open: false, revision: null })
+  const [expandedVariationRows, setExpandedVariationRows] = useState({}) // Track which rows have expanded variations
+  const [projectVariationsMap, setProjectVariationsMap] = useState({}) // Store variations per project ID
+  const [variationsForProject, setVariationsForProject] = useState([])
+  const [selectedProjectForList, setSelectedProjectForList] = useState(null)
+  const [showVariationsListModal, setShowVariationsListModal] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [loadingAction, setLoadingAction] = useState(null)
@@ -383,6 +405,28 @@ function RevisionManagement() {
     }
   }
 
+  // Debounce name filter (300ms delay)
+  useEffect(() => {
+    setIsFiltering(true)
+    const timer = setTimeout(() => {
+      setDebouncedNameFilter(nameFilter)
+      setIsFiltering(false)
+    }, 300)
+    return () => {
+      clearTimeout(timer)
+      setIsFiltering(false)
+    }
+  }, [nameFilter])
+
+  // Date filters don't need debouncing (they're date inputs)
+  useEffect(() => {
+    setDebouncedDateModifiedFilter(dateModifiedFilter)
+  }, [dateModifiedFilter])
+
+  useEffect(() => {
+    setDebouncedDateCreatedFilter(dateCreatedFilter)
+  }, [dateCreatedFilter])
+
   // Filter and sort revisions
   const filteredRevisions = revisions.filter(r => {
     // Apply "My Revisions" filter
@@ -406,17 +450,67 @@ function RevisionManagement() {
       if (!matches) return false
     }
     
+    // Apply name filter (project title or revision number) - using debounced value
+    if (debouncedNameFilter.trim()) {
+      const term = debouncedNameFilter.toLowerCase()
+      const projectTitle = (r.projectTitle || r.lead?.projectTitle || '').toLowerCase()
+      const revisionNumber = String(r.revisionNumber || '').toLowerCase()
+      if (!projectTitle.includes(term) && !revisionNumber.includes(term)) return false
+    }
+    
+    // Apply date modified filter - using debounced value
+    if (debouncedDateModifiedFilter) {
+      const filterDate = new Date(debouncedDateModifiedFilter)
+      filterDate.setHours(0, 0, 0, 0)
+      const revisionDate = r.updatedAt ? new Date(r.updatedAt) : null
+      if (!revisionDate || revisionDate.toDateString() !== filterDate.toDateString()) return false
+    }
+    
+    // Apply date created filter - using debounced value
+    if (debouncedDateCreatedFilter) {
+      const filterDate = new Date(debouncedDateCreatedFilter)
+      filterDate.setHours(0, 0, 0, 0)
+      const revisionDate = r.createdAt ? new Date(r.createdAt) : null
+      if (!revisionDate || revisionDate.toDateString() !== filterDate.toDateString()) return false
+    }
+    
     return true
   })
 
-  const sortedRevisions = filteredRevisions.slice().sort((a, b) => {
-    switch (sortKey) {
-      case 'createdAt_asc': return new Date(a.createdAt) - new Date(b.createdAt)
-      case 'rev_asc': return (a.revisionNumber||0) - (b.revisionNumber||0)
-      case 'rev_desc': return (b.revisionNumber||0) - (a.revisionNumber||0)
-      case 'createdAt_desc':
-      default: return new Date(b.createdAt) - new Date(a.createdAt)
+  // Sort revisions by selected field and direction
+  const sortedRevisions = [...filteredRevisions].sort((a, b) => {
+    let compareResult = 0
+    
+    switch (sortField) {
+      case 'name':
+        // Sort by project title, then revision number
+        const aProjectTitle = (a.projectTitle || a.lead?.projectTitle || '').toLowerCase()
+        const bProjectTitle = (b.projectTitle || b.lead?.projectTitle || '').toLowerCase()
+        const projectTitleCompare = aProjectTitle.localeCompare(bProjectTitle)
+        if (projectTitleCompare !== 0) {
+          compareResult = projectTitleCompare
+        } else {
+          // If project titles are equal, sort by revision number
+          const aRevNum = String(a.revisionNumber || '').toLowerCase()
+          const bRevNum = String(b.revisionNumber || '').toLowerCase()
+          compareResult = aRevNum.localeCompare(bRevNum, undefined, { numeric: true, sensitivity: 'base' })
+        }
+        break
+      case 'dateModified':
+        const aModified = a.updatedAt ? new Date(a.updatedAt).getTime() : 0
+        const bModified = b.updatedAt ? new Date(b.updatedAt).getTime() : 0
+        compareResult = aModified > bModified ? 1 : aModified < bModified ? -1 : 0
+        break
+      case 'dateCreated':
+      default:
+        const aCreated = a.createdAt ? new Date(a.createdAt).getTime() : 0
+        const bCreated = b.createdAt ? new Date(b.createdAt).getTime() : 0
+        compareResult = aCreated > bCreated ? 1 : aCreated < bCreated ? -1 : 0
+        break
     }
+    
+    // Apply sort direction
+    return sortDirection === 'asc' ? compareResult : -compareResult
   })
 
   // Pagination calculations
@@ -425,10 +519,170 @@ function RevisionManagement() {
   const endIndex = startIndex + itemsPerPage
   const paginatedRevisions = sortedRevisions.slice(startIndex, endIndex)
 
-  // Reset to page 1 when filters change
+  // Reset to page 1 when filters or sorting change
   useEffect(() => {
     setCurrentPage(1)
-  }, [myOnly, selectedApprovedQuotationFilter, search, sortKey])
+  }, [myOnly, selectedApprovedQuotationFilter, search, debouncedNameFilter, debouncedDateModifiedFilter, debouncedDateCreatedFilter, sortField, sortDirection])
+
+  const formatHistoryValue = (field, value) => {
+    // Handle null/undefined
+    if (value === null || value === undefined) return '(empty)'
+    
+    // Handle date strings (from diffFromParent normalization)
+    if (['offerDate', 'enquiryDate'].includes(field)) {
+      if (typeof value === 'string' && value.match(/^\d{4}-\d{2}-\d{2}$/)) {
+        try {
+          const date = new Date(value)
+          if (!isNaN(date.getTime())) {
+            return date.toLocaleDateString()
+          }
+        } catch {}
+      }
+      // If it's already a Date object or ISO string
+      if (value instanceof Date || (typeof value === 'string' && value.includes('T'))) {
+        try {
+          const date = new Date(value)
+          if (!isNaN(date.getTime())) {
+            return date.toLocaleDateString()
+          }
+        } catch {}
+      }
+      // If it's a number (timestamp)
+      if (typeof value === 'number') {
+        try {
+          const date = new Date(value)
+          if (!isNaN(date.getTime())) {
+            return date.toLocaleDateString()
+          }
+        } catch {}
+      }
+    }
+    
+    // Handle arrays first (before string check, as arrays might be serialized)
+    if (Array.isArray(value)) {
+      if (value.length === 0) return '(empty)'
+      
+      if (field === 'paymentTerms') {
+        return value.map((t, i) => {
+          if (typeof t === 'string') return `${i + 1}. ${t}`
+          if (!t || typeof t !== 'object') return `${i + 1}. ${String(t)}`
+          return `${i + 1}. ${t?.milestoneDescription || '-'} — ${t?.amountPercent ?? ''}%`
+        }).join('\n')
+      }
+      
+      if (field === 'scopeOfWork') {
+        return value.map((s, i) => {
+          if (typeof s === 'string') return `${i + 1}. ${s}`
+          if (!s || typeof s !== 'object') return `${i + 1}. ${String(s)}`
+          const qtyUnit = [s?.quantity ?? '', s?.unit || ''].filter(x => String(x).trim().length > 0).join(' ')
+          const remarks = s?.locationRemarks ? ` — ${s.locationRemarks}` : ''
+          return `${i + 1}. ${s?.description || '-'}${qtyUnit ? ` — Qty: ${qtyUnit}` : ''}${remarks}`
+        }).join('\n')
+      }
+      
+      if (field === 'exclusions') {
+        return value.map((v, i) => `${i + 1}. ${String(v)}`).join('\n')
+      }
+      
+      // Generic array handling
+      return value.map((v, i) => {
+        if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') {
+          return `${i + 1}. ${String(v)}`
+        }
+        if (v && typeof v === 'object') {
+          const parts = Object.entries(v).map(([k, val]) => `${k}: ${val}`)
+          return `${i + 1}. ${parts.join(', ')}`
+        }
+        return `${i + 1}. ${String(v)}`
+      }).join('\n')
+    }
+    
+    // Handle objects (before string check)
+    if (typeof value === 'object' && value !== null && !(value instanceof Date)) {
+      if (field === 'priceSchedule') {
+        const ps = value || {}
+        const lines = []
+        if (ps?.currency) lines.push(`Currency: ${ps.currency}`)
+        const items = Array.isArray(ps?.items) ? ps.items : []
+        if (items.length > 0) {
+          lines.push('Items:')
+          items.forEach((it, i) => {
+            const qtyUnit = [it?.quantity ?? '', it?.unit || ''].filter(x => String(x).trim().length > 0).join(' ')
+            const unitRate = (it?.unitRate ?? '') !== '' ? ` x ${it.unitRate}` : ''
+            const amount = (it?.totalAmount ?? '') !== '' ? ` = ${it.totalAmount}` : ''
+            lines.push(`  ${i + 1}. ${it?.description || '-'}${qtyUnit ? ` — Qty: ${qtyUnit}` : ''}${unitRate}${amount}`)
+          })
+        }
+        if (ps?.subTotal !== undefined && ps?.subTotal !== null) lines.push(`Sub Total: ${ps.subTotal}`)
+        if (ps?.taxDetails) {
+          const rate = ps?.taxDetails?.vatRate ?? ''
+          const amt = ps?.taxDetails?.vatAmount ?? ''
+          if (rate !== '' || amt !== '') {
+            lines.push(`VAT: ${rate}%${amt !== '' ? ` = ${amt}` : ''}`)
+          }
+        }
+        if (ps?.grandTotal !== undefined && ps?.grandTotal !== null) lines.push(`Grand Total: ${ps.grandTotal}`)
+        return lines.length > 0 ? lines.join('\n') : '(empty)'
+      }
+      
+      if (field === 'deliveryCompletionWarrantyValidity') {
+        const d = value || {}
+        const lines = []
+        if (d?.deliveryTimeline) lines.push(`Delivery Timeline: ${d.deliveryTimeline}`)
+        if (d?.warrantyPeriod) lines.push(`Warranty Period: ${d.warrantyPeriod}`)
+        if (d?.offerValidity !== undefined && d?.offerValidity !== null) lines.push(`Offer Validity: ${d.offerValidity} days`)
+        if (d?.authorizedSignatory) lines.push(`Authorized Signatory: ${d.authorizedSignatory}`)
+        return lines.length > 0 ? lines.join('\n') : '(empty)'
+      }
+      
+      if (field === 'companyInfo') {
+        const ci = value || {}
+        const lines = []
+        if (ci?.name) lines.push(`Name: ${ci.name}`)
+        if (ci?.address) lines.push(`Address: ${ci.address}`)
+        if (ci?.phone) lines.push(`Phone: ${ci.phone}`)
+        if (ci?.email) lines.push(`Email: ${ci.email}`)
+        return lines.length > 0 ? lines.join('\n') : '(empty)'
+      }
+      
+      // Generic object handling
+      const entries = Object.entries(value).map(([k, v]) => {
+        if (v === null || v === undefined) return `${k}: (empty)`
+        if (typeof v === 'object') {
+          try {
+            return `${k}: ${JSON.stringify(v, null, 2)}`
+          } catch {
+            return `${k}: ${String(v)}`
+          }
+        }
+        return `${k}: ${String(v)}`
+      })
+      return entries.length > 0 ? entries.join('\n') : '(empty)'
+    }
+    
+    // Handle primitive types
+    if (typeof value === 'string') {
+      // Try to parse JSON string if value looks like JSON
+      if ((value.startsWith('{') || value.startsWith('[')) && value.length > 1) {
+        try {
+          const parsed = JSON.parse(value)
+          // Recursively format the parsed value
+          return formatHistoryValue(field, parsed)
+        } catch {
+          // Not valid JSON, return as string
+          return value.trim() || '(empty)'
+        }
+      }
+      return value.trim() || '(empty)'
+    }
+    
+    // Handle numbers and booleans
+    if (typeof value === 'number' || typeof value === 'boolean') {
+      return String(value)
+    }
+    
+    return String(value)
+  }
 
   // Helper function to render revision actions
   const fetchProjectDetails = async (revisionId) => {
@@ -463,6 +717,37 @@ function RevisionManagement() {
       if (project) {
         setProjectModal({ open: true, project })
       }
+    }
+  }
+
+  // Handler for View Variations in table view (accordion)
+  const handleViewVariationsTable = async (revision) => {
+    const projectInfo = projectMap[revision._id]
+    if (!projectInfo?._id) return
+    
+    const projectId = projectInfo._id
+    const isExpanded = expandedVariationRows[projectId]
+    
+    if (isExpanded) {
+      // Collapse: remove from expanded rows
+      setExpandedVariationRows(prev => {
+        const next = { ...prev }
+        delete next[projectId]
+        return next
+      })
+    } else {
+      // Expand: fetch variations if not already loaded
+      if (!projectVariationsMap[projectId]) {
+        try {
+          const res = await api.get(`/api/project-variations?parentProject=${projectId}`)
+          const list = Array.isArray(res.data) ? res.data : []
+          setProjectVariationsMap(prev => ({ ...prev, [projectId]: list }))
+        } catch (e) {
+          setNotify({ open: true, title: 'Load Failed', message: 'We could not load the variations. Please try again.' })
+          return
+        }
+      }
+      setExpandedVariationRows(prev => ({ ...prev, [projectId]: true }))
     }
   }
 
@@ -592,7 +877,7 @@ function RevisionManagement() {
 
   return (
     <div className="lead-management">
-      <div className="header">
+      <div className="header" ref={headerRef}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
           <h1>Revisions Management</h1>
           <span style={{ 
@@ -604,7 +889,7 @@ function RevisionManagement() {
             fontWeight: 600,
             border: '1px solid var(--border)'
           }}>
-            {(myOnly || selectedApprovedQuotationFilter || search) ? `${displayedRevisions} of ${totalRevisions}` : totalRevisions} {totalRevisions === 1 ? 'Revision' : 'Revisions'}
+            {(myOnly || selectedApprovedQuotationFilter || search || debouncedNameFilter || debouncedDateModifiedFilter || debouncedDateCreatedFilter) ? `${displayedRevisions} of ${totalRevisions}` : totalRevisions} {totalRevisions === 1 ? 'Revision' : 'Revisions'}
           </span>
         </div>
         <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
@@ -648,24 +933,6 @@ function RevisionManagement() {
               minWidth: '200px'
             }}
           />
-          <select 
-            value={sortKey} 
-            onChange={e => setSortKey(e.target.value)}
-            style={{
-              padding: '6px 12px',
-              border: '1px solid var(--border)',
-              borderRadius: '8px',
-              background: 'var(--card)',
-              color: 'var(--text)',
-              fontSize: '14px',
-              cursor: 'pointer'
-            }}
-          >
-            <option value="createdAt_desc">Newest</option>
-            <option value="createdAt_asc">Oldest</option>
-            <option value="rev_desc">Revision # desc</option>
-            <option value="rev_asc">Revision # asc</option>
-          </select>
           <div style={{ display: 'flex', gap: '4px', alignItems: 'center', border: '1px solid var(--border)', borderRadius: '8px', padding: '2px' }}>
             <button
               onClick={() => setViewMode('card')}
@@ -703,6 +970,212 @@ function RevisionManagement() {
         </div>
       </div>
 
+      {/* Filters and Sorting Section - Sticky */}
+      <div style={{ 
+        position: 'sticky',
+        top: `${headerHeight}px`,
+        zIndex: 99,
+        marginTop: '16px',
+        marginBottom: '16px',
+        padding: '16px', 
+        background: 'var(--card)', 
+        borderRadius: '8px', 
+        border: '1px solid var(--border)',
+        boxShadow: '0 2px 8px rgba(0, 0, 0, 0.1)',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '16px',
+        alignSelf: 'flex-start',
+        width: '100%'
+      }}>
+        {/* Mobile: Collapsible Header */}
+        {isMobile && (
+          <div style={{ 
+            display: 'flex', 
+            justifyContent: 'space-between', 
+            alignItems: 'center'
+          }}>
+            <h3 style={{ margin: 0, fontSize: '16px', fontWeight: 600 }}>Filters & Sorting</h3>
+            <button
+              onClick={() => setFiltersExpanded(!filtersExpanded)}
+              style={{
+                padding: '6px 12px',
+                border: '1px solid var(--border)',
+                borderRadius: '6px',
+                background: 'var(--bg)',
+                color: 'var(--text)',
+                fontSize: '14px',
+                cursor: 'pointer'
+              }}
+              aria-expanded={filtersExpanded}
+              aria-label={filtersExpanded ? 'Collapse filters' : 'Expand filters'}
+            >
+              {filtersExpanded ? '▼' : '▶'} {filtersExpanded ? 'Hide' : 'Show'} Filters
+            </button>
+          </div>
+        )}
+        
+        {/* Filter Content - Hidden on mobile when collapsed */}
+        {(!isMobile || filtersExpanded) && (
+          <>
+            <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-start', flexWrap: 'wrap', position: 'relative' }}>
+              {isFiltering && (
+                <div style={{
+                  position: 'absolute',
+                  top: '-8px',
+                  right: '8px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  fontSize: '12px',
+                  color: 'var(--text-muted)',
+                  background: 'var(--card)',
+                  padding: '4px 8px',
+                  borderRadius: '4px',
+                  border: '1px solid var(--border)',
+                  zIndex: 1
+                }}>
+                  <span>Filtering...</span>
+                </div>
+              )}
+              <label style={{ display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '13px', fontWeight: 500 }}>
+                Filter by Name:
+                <div style={{ position: 'relative', display: 'inline-block' }}>
+                  <input 
+                    type="text"
+                    placeholder="Project title or revision number..."
+                    value={nameFilter} 
+                    onChange={e => setNameFilter(e.target.value)}
+                    style={{
+                      padding: '6px 12px',
+                      border: '1px solid var(--border)',
+                      borderRadius: '6px',
+                      background: 'var(--bg)',
+                      color: 'var(--text)',
+                      fontSize: '14px',
+                      minWidth: isMobile ? '100%' : '200px',
+                      width: isMobile ? '100%' : 'auto'
+                    }}
+                    aria-label="Filter by project title or revision number"
+                  />
+                </div>
+              </label>
+              <label style={{ display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '13px', fontWeight: 500 }}>
+                Filter by Date Modified:
+                <input 
+                  type="date"
+                  value={dateModifiedFilter} 
+                  onChange={e => setDateModifiedFilter(e.target.value)}
+                  style={{
+                    padding: '6px 12px',
+                    border: '1px solid var(--border)',
+                    borderRadius: '6px',
+                    background: 'var(--bg)',
+                    color: 'var(--text)',
+                    fontSize: '14px',
+                    minWidth: isMobile ? '100%' : '160px',
+                    width: isMobile ? '100%' : 'auto'
+                  }}
+                  aria-label="Filter by date modified"
+                />
+              </label>
+              <label style={{ display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '13px', fontWeight: 500 }}>
+                Filter by Date Created:
+                <input 
+                  type="date"
+                  value={dateCreatedFilter} 
+                  onChange={e => setDateCreatedFilter(e.target.value)}
+                  style={{
+                    padding: '6px 12px',
+                    border: '1px solid var(--border)',
+                    borderRadius: '6px',
+                    background: 'var(--bg)',
+                    color: 'var(--text)',
+                    fontSize: '14px',
+                    minWidth: isMobile ? '100%' : '160px',
+                    width: isMobile ? '100%' : 'auto'
+                  }}
+                  aria-label="Filter by date created"
+                />
+              </label>
+              {(nameFilter || dateModifiedFilter || dateCreatedFilter) && (
+                <button
+                  onClick={() => {
+                    setNameFilter('')
+                    setDateModifiedFilter('')
+                    setDateCreatedFilter('')
+                  }}
+                  style={{
+                    padding: '6px 12px',
+                    border: '1px solid var(--border)',
+                    borderRadius: '6px',
+                    background: 'var(--bg)',
+                    color: 'var(--text)',
+                    fontSize: '14px',
+                    cursor: 'pointer',
+                    marginTop: isMobile ? '8px' : '20px',
+                    alignSelf: isMobile ? 'stretch' : 'flex-end',
+                    width: isMobile ? '100%' : 'auto'
+                  }}
+                  aria-label="Clear all filters"
+                >
+                  Clear Filters
+                </button>
+              )}
+            </div>
+            <div style={{ display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap', paddingTop: '8px', borderTop: '1px solid var(--border)' }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', fontWeight: 500, flex: isMobile ? '1 1 100%' : '0 0 auto' }}>
+                Sort by:
+                <select
+                  value={sortField}
+                  onChange={(e) => setSortField(e.target.value)}
+                  style={{
+                    padding: '6px 12px',
+                    border: '1px solid var(--border)',
+                    borderRadius: '6px',
+                    background: 'var(--bg)',
+                    color: 'var(--text)',
+                    fontSize: '14px',
+                    cursor: 'pointer',
+                    minWidth: isMobile ? '100%' : '150px',
+                    width: isMobile ? '100%' : 'auto',
+                    flex: isMobile ? '1' : '0 0 auto'
+                  }}
+                  aria-label="Sort by field"
+                >
+                  <option value="name">Name</option>
+                  <option value="dateModified">Date Modified</option>
+                  <option value="dateCreated">Date Created</option>
+                </select>
+              </label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', fontWeight: 500, flex: isMobile ? '1 1 100%' : '0 0 auto' }}>
+                Order:
+                <select
+                  value={sortDirection}
+                  onChange={(e) => setSortDirection(e.target.value)}
+                  style={{
+                    padding: '6px 12px',
+                    border: '1px solid var(--border)',
+                    borderRadius: '6px',
+                    background: 'var(--bg)',
+                    color: 'var(--text)',
+                    fontSize: '14px',
+                    cursor: 'pointer',
+                    minWidth: isMobile ? '100%' : '120px',
+                    width: isMobile ? '100%' : 'auto',
+                    flex: isMobile ? '1' : '0 0 auto'
+                  }}
+                  aria-label="Sort order"
+                >
+                  <option value="asc">Ascending</option>
+                  <option value="desc">Descending</option>
+                </select>
+              </label>
+            </div>
+          </>
+        )}
+      </div>
+
       {viewMode === 'card' ? (
         <div className="leads-grid">
           {paginatedRevisions.map(r => (
@@ -721,6 +1194,39 @@ function RevisionManagement() {
                 <p><strong>Offer Ref:</strong> {r.offerReference || 'N/A'}</p>
                 <p><strong>Parent Quotation:</strong> {typeof r.parentQuotation === 'object' ? (r.parentQuotation?.offerReference || 'N/A') : 'N/A'}</p>
                 <p><strong>Grand Total:</strong> {(r.priceSchedule?.currency || 'AED')} {Number(r.priceSchedule?.grandTotal || 0).toFixed(2)}</p>
+                {r.diffFromParent && Array.isArray(r.diffFromParent) && r.diffFromParent.length > 0 && (
+                  <p>
+                    <strong>Changes:</strong>
+                    <span 
+                      className="status-badge" 
+                      style={{ 
+                        marginLeft: '8px', 
+                        background: '#DBEAFE', 
+                        color: '#1E40AF', 
+                        border: '1px solid #93C5FD',
+                        cursor: 'pointer',
+                        fontWeight: 600,
+                        padding: '4px 10px',
+                        borderRadius: '6px',
+                        fontSize: '13px',
+                        transition: 'all 0.2s',
+                        userSelect: 'none'
+                      }}
+                      title="Click to view full changes"
+                      onClick={() => setDiffModal({ open: true, revision: r })}
+                      onMouseEnter={(e) => {
+                        e.target.style.background = '#BFDBFE'
+                        e.target.style.transform = 'scale(1.05)'
+                      }}
+                      onMouseLeave={(e) => {
+                        e.target.style.background = '#DBEAFE'
+                        e.target.style.transform = 'scale(1)'
+                      }}
+                    >
+                      {r.diffFromParent.length} change{r.diffFromParent.length > 1 ? 's' : ''}
+                    </span>
+                  </p>
+                )}
                 <p><strong>Created by:</strong> {r.createdBy?._id === currentUser?.id ? 'You' : (r.createdBy?.name || 'N/A')}</p>
                 {r.createdBy?._id !== currentUser?.id && r.createdBy && (
                   <button className="link-btn" onClick={() => setProfileUser(r.createdBy)}>
@@ -744,6 +1250,7 @@ function RevisionManagement() {
                 <th>Parent Quotation</th>
                 <th>Grand Total</th>
                 <th>Status</th>
+                <th>Changes</th>
                 <th>Created By</th>
                 <th>Actions</th>
               </tr>
@@ -773,6 +1280,40 @@ function RevisionManagement() {
                         {r.managementApproval?.status === 'pending' ? 'Approval Pending' : (r.managementApproval?.status || 'N/A')}
                       </span>
                     </td>
+                    <td data-label="Changes">
+                      {r.diffFromParent && Array.isArray(r.diffFromParent) && r.diffFromParent.length > 0 ? (
+                        <span 
+                          className="status-badge" 
+                          style={{ 
+                            background: '#DBEAFE', 
+                            color: '#1E40AF', 
+                            border: '1px solid #93C5FD',
+                            cursor: 'pointer',
+                            fontWeight: 600,
+                            padding: '4px 10px',
+                            borderRadius: '6px',
+                            fontSize: '13px',
+                            display: 'inline-block',
+                            transition: 'all 0.2s',
+                            userSelect: 'none'
+                          }}
+                          title="Click to view full changes"
+                          onClick={() => setDiffModal({ open: true, revision: r })}
+                          onMouseEnter={(e) => {
+                            e.target.style.background = '#BFDBFE'
+                            e.target.style.transform = 'scale(1.05)'
+                          }}
+                          onMouseLeave={(e) => {
+                            e.target.style.background = '#DBEAFE'
+                            e.target.style.transform = 'scale(1)'
+                          }}
+                        >
+                          {r.diffFromParent.length} change{r.diffFromParent.length > 1 ? 's' : ''}
+                        </span>
+                      ) : (
+                        <span style={{ color: 'var(--text-muted)', fontSize: '13px' }}>No changes</span>
+                      )}
+                    </td>
                     <td data-label="Created By">
                       {r.createdBy?._id === currentUser?.id ? 'You' : (r.createdBy?.name || 'N/A')}
                       {r.createdBy?._id !== currentUser?.id && r.createdBy && (
@@ -787,7 +1328,7 @@ function RevisionManagement() {
                   </tr>
                   {expandedProjectRows[r._id] && projectDetailsMap[r._id] && (
                     <tr className="accordion-row">
-                      <td colSpan="9" style={{ padding: '0', borderTop: 'none' }}>
+                      <td colSpan="10" style={{ padding: '0', borderTop: 'none' }}>
                         <div className="accordion-content" style={{ padding: '20px', background: 'var(--bg)' }}>
                           <h4 style={{ marginTop: 0, marginBottom: '16px' }}>Project Details</h4>
                           <div className="ld-kv" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px 16px' }}>
@@ -802,7 +1343,7 @@ function RevisionManagement() {
                             <p><strong>Created At:</strong> {projectDetailsMap[r._id].createdAt ? new Date(projectDetailsMap[r._id].createdAt).toLocaleString() : 'N/A'}</p>
                             <p><strong>Created By:</strong> {projectDetailsMap[r._id].createdBy?.name || 'N/A'}</p>
                           </div>
-                          <div style={{ marginTop: '16px' }}>
+                          <div style={{ marginTop: '16px', display: 'flex', gap: '8px' }}>
                             <button className="assign-btn" onClick={() => {
                               try {
                                 localStorage.setItem('projectsFocusId', projectDetailsMap[r._id]._id)
@@ -812,7 +1353,75 @@ function RevisionManagement() {
                             }}>
                               View Full Project Details
                             </button>
+                            <button
+                              className="link-btn"
+                              onClick={() => handleViewVariationsTable(r)}
+                            >
+                              View Variations
+                            </button>
                           </div>
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                  {projectMap[r._id] && expandedVariationRows[projectMap[r._id]._id] && (
+                    <tr key={`${r._id}-variations`} className="accordion-row">
+                      <td colSpan="10" style={{ padding: '0', borderTop: 'none' }}>
+                        <div className="accordion-content" style={{ padding: '16px', background: 'var(--bg)' }}>
+                          <h4 style={{ marginTop: '0', marginBottom: '12px', fontSize: '16px', fontWeight: 600 }}>Variations ({(projectVariationsMap[projectMap[r._id]._id] || []).length})</h4>
+                          {(projectVariationsMap[projectMap[r._id]._id] || []).length === 0 ? (
+                            <p style={{ margin: 0, color: 'var(--text-muted)' }}>No variations found for this project.</p>
+                          ) : (
+                            <div className="table">
+                              <table>
+                                <thead>
+                                  <tr>
+                                    <th>Variation #</th>
+                                    <th>Offer Ref</th>
+                                    <th>Status</th>
+                                    <th>Grand Total</th>
+                                    <th>Created By</th>
+                                    <th>Created At</th>
+                                    <th>Actions</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {(projectVariationsMap[projectMap[r._id]._id] || []).sort((a,b)=> (a.variationNumber||0)-(b.variationNumber||0)).map((v) => (
+                                    <tr key={v._id}>
+                                      <td data-label="Variation #">{v.variationNumber || 'N/A'}</td>
+                                      <td data-label="Offer Ref">{v.offerReference || 'N/A'}</td>
+                                      <td data-label="Status">
+                                        <span className={`status-badge ${v.managementApproval?.status === 'approved' ? 'approved' : v.managementApproval?.status === 'rejected' ? 'rejected' : 'blue'}`}>
+                                          {v.managementApproval?.status || 'draft'}
+                                        </span>
+                                      </td>
+                                      <td data-label="Grand Total">{(v.priceSchedule?.currency || 'AED')} {Number(v.priceSchedule?.grandTotal || 0).toFixed(2)}</td>
+                                      <td data-label="Created By">
+                                        {v.createdBy?._id === currentUser?.id ? 'You' : (v.createdBy?.name || 'N/A')}
+                                        {v.createdBy?._id !== currentUser?.id && v.createdBy && (
+                                          <button className="link-btn" onClick={() => setProfileUser(v.createdBy)} style={{ marginLeft: 6 }}>View Profile</button>
+                                        )}
+                                      </td>
+                                      <td data-label="Created At">{v.createdAt ? new Date(v.createdAt).toLocaleDateString() : 'N/A'}</td>
+                                      <td data-label="Actions">
+                                        <button
+                                          className="save-btn"
+                                          onClick={() => {
+                                            try {
+                                              localStorage.setItem('variationId', v._id)
+                                            } catch {}
+                                            window.location.href = '/variation-detail'
+                                          }}
+                                        >
+                                          View
+                                        </button>
+                                      </td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -1532,7 +2141,7 @@ function RevisionManagement() {
                 <p><strong>Created At:</strong> {projectModal.project.createdAt ? new Date(projectModal.project.createdAt).toLocaleString() : 'N/A'}</p>
                 <p><strong>Created By:</strong> {projectModal.project.createdBy?.name || 'N/A'}</p>
               </div>
-              <div style={{ marginTop: '20px' }}>
+              <div style={{ marginTop: '20px', display: 'flex', gap: '8px' }}>
                 <button className="assign-btn" onClick={() => {
                   try {
                     localStorage.setItem('projectsFocusId', projectModal.project._id)
@@ -1542,7 +2151,198 @@ function RevisionManagement() {
                 }}>
                   View Full Project Details
                 </button>
+                <button
+                  className="link-btn"
+                  onClick={async () => {
+                    try {
+                      const res = await api.get(`/api/project-variations?parentProject=${projectModal.project._id}`)
+                      const list = Array.isArray(res.data) ? res.data : []
+                      if (list.length === 0) {
+                        setNotify({ open: true, title: 'No Variations', message: 'No variations found for this project.' })
+                        return
+                      }
+                      setVariationsForProject(list)
+                      setSelectedProjectForList(projectModal.project)
+                      setShowVariationsListModal(true)
+                    } catch (e) {
+                      setNotify({ open: true, title: 'Open Failed', message: 'We could not load the variations. Please try again.' })
+                    }
+                  }}
+                >
+                  View Variations
+                </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {diffModal.open && diffModal.revision && diffModal.revision.diffFromParent && Array.isArray(diffModal.revision.diffFromParent) && diffModal.revision.diffFromParent.length > 0 && (
+        <div className="modal-overlay" onClick={() => setDiffModal({ open: false, revision: null })}>
+          <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: '900px', maxHeight: '90vh', overflow: 'auto' }}>
+            <div className="modal-header">
+              <h2>Changes from Parent</h2>
+              <button onClick={() => setDiffModal({ open: false, revision: null })} className="close-btn">×</button>
+            </div>
+            <div className="lead-form">
+              <p style={{ marginBottom: '16px', color: 'var(--text-muted)' }}>
+                Revision #{diffModal.revision.revisionNumber} includes the following changes from the parent quotation:
+              </p>
+              <div className="table">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Field</th>
+                      <th>Previous Value</th>
+                      <th>New Value</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {diffModal.revision.diffFromParent.map((diff, idx) => {
+                      const fieldNameMap = {
+                        'companyInfo': 'Company Info',
+                        'submittedTo': 'Submitted To',
+                        'attention': 'Attention',
+                        'offerReference': 'Offer Reference',
+                        'enquiryNumber': 'Enquiry Number',
+                        'offerDate': 'Offer Date',
+                        'enquiryDate': 'Enquiry Date',
+                        'projectTitle': 'Project Title',
+                        'introductionText': 'Introduction',
+                        'scopeOfWork': 'Scope of Work',
+                        'priceSchedule': 'Price Schedule',
+                        'ourViewpoints': 'Our Viewpoints',
+                        'exclusions': 'Exclusions',
+                        'paymentTerms': 'Payment Terms',
+                        'deliveryCompletionWarrantyValidity': 'Delivery & Warranty'
+                      }
+                      const fieldName = fieldNameMap[diff.field] || diff.field.replace(/([A-Z])/g, ' $1').replace(/^./, str => str.toUpperCase())
+                      
+                      // Format the values for display
+                      const fromVal = diff.from !== undefined ? diff.from : (diff.fromValue !== undefined ? diff.fromValue : null)
+                      const toVal = diff.to !== undefined ? diff.to : (diff.toValue !== undefined ? diff.toValue : null)
+                      const fromValue = formatHistoryValue(diff.field, fromVal)
+                      const toValue = formatHistoryValue(diff.field, toVal)
+                      
+                      return (
+                        <tr key={idx}>
+                          <td data-label="Field"><strong>{fieldName}</strong></td>
+                          <td data-label="Previous Value">
+                            <pre style={{ 
+                              margin: 0, 
+                              padding: '10px 12px', 
+                              background: '#FEF2F2', 
+                              border: '1px solid #FECACA', 
+                              borderRadius: '6px',
+                              whiteSpace: 'pre-wrap',
+                              wordBreak: 'break-word',
+                              fontSize: '13px',
+                              lineHeight: '1.5',
+                              maxHeight: '200px',
+                              overflow: 'auto',
+                              color: '#991B1B',
+                              fontFamily: 'inherit',
+                              fontWeight: 400
+                            }}>
+                              {fromValue || '(empty)'}
+                            </pre>
+                          </td>
+                          <td data-label="New Value">
+                            <pre style={{ 
+                              margin: 0, 
+                              padding: '10px 12px', 
+                              background: '#F0FDF4', 
+                              border: '1px solid #BBF7D0', 
+                              borderRadius: '6px',
+                              whiteSpace: 'pre-wrap',
+                              wordBreak: 'break-word',
+                              fontSize: '13px',
+                              lineHeight: '1.5',
+                              maxHeight: '200px',
+                              overflow: 'auto',
+                              color: '#166534',
+                              fontFamily: 'inherit',
+                              fontWeight: 400
+                            }}>
+                              {toValue || '(empty)'}
+                            </pre>
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              <div className="form-actions" style={{ marginTop: '20px' }}>
+                <button type="button" className="save-btn" onClick={() => setDiffModal({ open: false, revision: null })}>Close</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showVariationsListModal && selectedProjectForList && (
+        <div className="modal-overlay" onClick={() => setShowVariationsListModal(false)}>
+          <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: '90vw', width: '900px' }}>
+            <div className="modal-header">
+              <h2>Variations for {selectedProjectForList.name}</h2>
+              <button onClick={() => setShowVariationsListModal(false)} className="close-btn">×</button>
+            </div>
+            <div className="lead-form" style={{ maxHeight: '70vh', overflow: 'auto' }}>
+              {variationsForProject.length === 0 ? (
+                <p>No variations found for this project.</p>
+              ) : (
+                <div className="table">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Variation #</th>
+                        <th>Offer Ref</th>
+                        <th>Status</th>
+                        <th>Grand Total</th>
+                        <th>Created By</th>
+                        <th>Created At</th>
+                        <th>Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {variationsForProject.sort((a,b)=> (a.variationNumber||0)-(b.variationNumber||0)).map((v) => (
+                        <tr key={v._id}>
+                          <td data-label="Variation #">{v.variationNumber || 'N/A'}</td>
+                          <td data-label="Offer Ref">{v.offerReference || 'N/A'}</td>
+                          <td data-label="Status">
+                            <span className={`status-badge ${v.managementApproval?.status === 'approved' ? 'approved' : v.managementApproval?.status === 'rejected' ? 'rejected' : 'blue'}`}>
+                              {v.managementApproval?.status || 'draft'}
+                            </span>
+                          </td>
+                          <td data-label="Grand Total">{(v.priceSchedule?.currency || 'AED')} {Number(v.priceSchedule?.grandTotal || 0).toFixed(2)}</td>
+                          <td data-label="Created By">
+                            {v.createdBy?._id === currentUser?.id ? 'You' : (v.createdBy?.name || 'N/A')}
+                            {v.createdBy?._id !== currentUser?.id && v.createdBy && (
+                              <button className="link-btn" onClick={() => setProfileUser(v.createdBy)} style={{ marginLeft: 6 }}>View Profile</button>
+                            )}
+                          </td>
+                          <td data-label="Created At">{v.createdAt ? new Date(v.createdAt).toLocaleDateString() : 'N/A'}</td>
+                          <td data-label="Actions">
+                            <button
+                              className="save-btn"
+                              onClick={() => {
+                                try {
+                                  localStorage.setItem('variationId', v._id)
+                                  setShowVariationsListModal(false)
+                                } catch {}
+                                window.location.href = '/variation-detail'
+                              }}
+                            >
+                              View
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
           </div>
         </div>
