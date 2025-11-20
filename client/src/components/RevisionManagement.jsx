@@ -837,7 +837,16 @@ function RevisionManagement() {
                   return xParentId === parentId
                 })
                 const approved = groupItems.filter(x => x.managementApproval?.status === 'approved')
-                const latest = approved.slice().sort((a,b) => (b.revisionNumber||0)-(a.revisionNumber||0))[0]
+                const latest = approved.slice().sort((a,b) => {
+                  // Extract numeric part from revisionNumber (e.g., "PROJ-REV-001" -> 1)
+                  const getRevisionNum = (revNum) => {
+                    if (!revNum) return 0;
+                    if (typeof revNum === 'number') return revNum;
+                    const match = String(revNum).match(/-REV-(\d+)$/);
+                    return match ? parseInt(match[1], 10) : 0;
+                  };
+                  return getRevisionNum(b.revisionNumber) - getRevisionNum(a.revisionNumber);
+                })[0]
                 if (latest && latest._id !== r._id) {
                   setNotify({ open: true, title: 'Not Allowed', message: `Only the latest approved revision (#${latest.revisionNumber}) can be used to create a project.` })
                   return
@@ -1181,7 +1190,32 @@ function RevisionManagement() {
           {paginatedRevisions.map(r => (
             <div key={r._id} className="lead-card">
               <div className="lead-header">
-                <h3>Revision #{r.revisionNumber || 'N/A'}</h3>
+                <h3>
+                  {r.parentQuotation?._id || r.parentQuotation ? (
+                    <button
+                      className="link-btn"
+                      onClick={() => {
+                        try {
+                          const parentId = typeof r.parentQuotation === 'object' ? r.parentQuotation._id : r.parentQuotation;
+                          localStorage.setItem('quotationId', parentId);
+                          localStorage.setItem('quotationDetail', JSON.stringify(r.parentQuotation || {}));
+                        } catch {}
+                        window.location.href = '/quotation-detail';
+                      }}
+                      style={{
+                        fontSize: 'inherit',
+                        fontWeight: 'inherit',
+                        padding: 0,
+                        textDecoration: 'underline',
+                        cursor: 'pointer'
+                      }}
+                    >
+                      Revision #{r.revisionNumber || 'N/A'}
+                    </button>
+                  ) : (
+                    `Revision #${r.revisionNumber || 'N/A'}`
+                  )}
+                </h3>
                 {r.managementApproval?.status && (
                   <span className={`status-badge ${r.managementApproval.status === 'approved' ? 'green' : (r.managementApproval.status === 'rejected' ? 'red' : 'blue')}`}>
                     {r.managementApproval.status === 'pending' ? 'Approval Pending' : r.managementApproval.status}
@@ -1259,7 +1293,31 @@ function RevisionManagement() {
               {paginatedRevisions.map(r => (
                 <>
                   <tr key={r._id}>
-                    <td data-label="Revision #">{r.revisionNumber || 'N/A'}</td>
+                    <td data-label="Revision #">
+                      {r.parentQuotation?._id || r.parentQuotation ? (
+                        <button
+                          className="link-btn"
+                          onClick={() => {
+                            try {
+                              const parentId = typeof r.parentQuotation === 'object' ? r.parentQuotation._id : r.parentQuotation;
+                              localStorage.setItem('quotationId', parentId);
+                              localStorage.setItem('quotationDetail', JSON.stringify(r.parentQuotation || {}));
+                            } catch {}
+                            window.location.href = '/quotation-detail';
+                          }}
+                          style={{
+                            fontSize: 'inherit',
+                            fontWeight: 600,
+                            padding: 0,
+                            textDecoration: 'underline'
+                          }}
+                        >
+                          {r.revisionNumber || 'N/A'}
+                        </button>
+                      ) : (
+                        r.revisionNumber || 'N/A'
+                      )}
+                    </td>
                     <td data-label="Project">{r.projectTitle || r.lead?.projectTitle || 'Revision'}</td>
                     <td data-label="Customer">{r.lead?.customerName || 'N/A'}</td>
                     <td data-label="Offer Ref">{r.offerReference || 'N/A'}</td>

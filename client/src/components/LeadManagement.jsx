@@ -41,6 +41,8 @@ function LeadManagement() {
     weatherConditions: '',
     description: ''
   })
+  const [visitFiles, setVisitFiles] = useState([])
+  const [visitPreviewFiles, setVisitPreviewFiles] = useState([])
   const [notify, setNotify] = useState({ open: false, title: '', message: '', onOk: null })
   const [showQuotationModal, setShowQuotationModal] = useState(false)
   const [selectedLeadForQuotation, setSelectedLeadForQuotation] = useState(null)
@@ -1197,7 +1199,31 @@ function LeadManagement() {
                                                         {(quotationRevisionsMap[q._id] || []).map((r) => (
                                                           <>
                                                             <tr key={r._id}>
-                                                              <td data-label="Revision #">{r.revisionNumber || 'N/A'}</td>
+                                                              <td data-label="Revision #">
+                                                                {r.parentQuotation?._id || r.parentQuotation ? (
+                                                                  <button
+                                                                    className="link-btn"
+                                                                    onClick={() => {
+                                                                      try {
+                                                                        const parentId = typeof r.parentQuotation === 'object' ? r.parentQuotation._id : r.parentQuotation;
+                                                                        localStorage.setItem('quotationId', parentId);
+                                                                        localStorage.setItem('quotationDetail', JSON.stringify(r.parentQuotation || {}));
+                                                                      } catch {}
+                                                                      window.location.href = '/quotation-detail';
+                                                                    }}
+                                                                    style={{
+                                                                      fontSize: 'inherit',
+                                                                      fontWeight: 600,
+                                                                      padding: 0,
+                                                                      textDecoration: 'underline'
+                                                                    }}
+                                                                  >
+                                                                    {r.revisionNumber || 'N/A'}
+                                                                  </button>
+                                                                ) : (
+                                                                  r.revisionNumber || 'N/A'
+                                                                )}
+                                                              </td>
                                                               <td data-label="Offer Ref">{r.offerReference || 'N/A'}</td>
                                                               <td data-label="Offer Date">{r.offerDate ? new Date(r.offerDate).toLocaleDateString() : 'N/A'}</td>
                                                               <td data-label="Grand Total">{(r.priceSchedule?.currency || 'AED')} {Number(r.priceSchedule?.grandTotal || 0).toFixed(2)}</td>
@@ -1855,9 +1881,134 @@ function LeadManagement() {
                 <label>Detailed Description / Remarks *</label>
                 <textarea value={visitData.description} onChange={e => setVisitData({ ...visitData, description: e.target.value })} required />
               </div>
+
+              <div className="form-group">
+                <label>Attachments (Documents, Images & Videos)</label>
+                <input
+                  type="file"
+                  multiple
+                  accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,video/*"
+                  onChange={(e) => {
+                    const files = Array.from(e.target.files)
+                    setVisitFiles(prev => [...prev, ...files])
+                    
+                    files.forEach(file => {
+                      if (file.type.startsWith('image/')) {
+                        const reader = new FileReader()
+                        reader.onloadend = () => {
+                          setVisitPreviewFiles(prev => [...prev, { file, preview: reader.result, type: 'image' }])
+                        }
+                        reader.readAsDataURL(file)
+                      } else if (file.type.startsWith('video/')) {
+                        const reader = new FileReader()
+                        reader.onloadend = () => {
+                          setVisitPreviewFiles(prev => [...prev, { file, preview: reader.result, type: 'video' }])
+                        }
+                        reader.readAsDataURL(file)
+                      } else {
+                        setVisitPreviewFiles(prev => [...prev, { file, preview: null, type: 'document' }])
+                      }
+                    })
+                  }}
+                  className="file-input"
+                />
+                <small style={{ display: 'block', marginTop: '5px', color: '#666' }}>
+                  Accepted: Images (JPEG, PNG, GIF, WebP), Documents (PDF, DOC, DOCX, XLS, XLSX), Videos (MP4, MOV, AVI, WMV, WebM, etc.). Max 10MB per file.
+                </small>
+                
+                {/* Display new files being uploaded */}
+                {visitPreviewFiles.length > 0 && (
+                  <div style={{ marginTop: '15px' }}>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
+                      {visitPreviewFiles.map((item, index) => (
+                        <div key={index} style={{ 
+                          position: 'relative', 
+                          border: '1px solid #ddd', 
+                          borderRadius: '4px', 
+                          padding: '8px',
+                          maxWidth: '150px'
+                        }}>
+                          {item.type === 'image' && item.preview ? (
+                            <img 
+                              src={item.preview} 
+                              alt={item.file.name}
+                              style={{ width: '100%', height: '100px', objectFit: 'cover', borderRadius: '4px' }}
+                            />
+                          ) : item.type === 'video' && item.preview ? (
+                            <video 
+                              src={item.preview}
+                              style={{ width: '100%', height: '100px', objectFit: 'cover', borderRadius: '4px' }}
+                              controls={false}
+                              muted
+                            />
+                          ) : (
+                            <div style={{ 
+                              width: '100%', 
+                              height: '100px', 
+                              display: 'flex', 
+                              alignItems: 'center', 
+                              justifyContent: 'center',
+                              backgroundColor: '#f5f5f5',
+                              borderRadius: '4px'
+                            }}>
+                              <span style={{ fontSize: '12px', textAlign: 'center' }}>{item.file.name}</span>
+                            </div>
+                          )}
+                          <div style={{ marginTop: '5px', fontSize: '11px', color: '#666' }}>
+                            {item.file.name.length > 15 ? item.file.name.substring(0, 15) + '...' : item.file.name}
+                          </div>
+                          <div style={{ fontSize: '10px', color: '#999' }}>
+                            {formatFileSize(item.file.size)}
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setVisitFiles(prev => prev.filter((_, i) => i !== index))
+                              setVisitPreviewFiles(prev => prev.filter((_, i) => i !== index))
+                            }}
+                            style={{
+                              position: 'absolute',
+                              top: '5px',
+                              right: '5px',
+                              background: 'rgba(255, 0, 0, 0.7)',
+                              color: 'white',
+                              border: 'none',
+                              borderRadius: '50%',
+                              width: '20px',
+                              height: '20px',
+                              cursor: 'pointer',
+                              fontSize: '12px',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center'
+                            }}
+                          >
+                            ×
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+
               <div className="form-actions">
-                <button type="button" onClick={() => setShowVisitModal(false)} className="cancel-btn">Cancel</button>
-                <button type="submit" className="save-btn">Save Visit</button>
+                <button 
+                  type="button" 
+                  onClick={() => {
+                    setShowVisitModal(false)
+                    setVisitFiles([])
+                    setVisitPreviewFiles([])
+                  }} 
+                  className="cancel-btn"
+                >
+                  Cancel
+                </button>
+                <button type="submit" className="save-btn" disabled={isSubmitting}>
+                  <ButtonLoader loading={loadingAction === 'create-site-visit'}>
+                    {isSubmitting ? 'Saving...' : 'Save Visit'}
+                  </ButtonLoader>
+                </button>
               </div>
             </form>
           </div>

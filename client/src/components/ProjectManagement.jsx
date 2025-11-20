@@ -31,6 +31,8 @@ function ProjectManagement() {
     weatherConditions: '',
     description: ''
   })
+  const [visitFiles, setVisitFiles] = useState([])
+  const [visitPreviewFiles, setVisitPreviewFiles] = useState([])
   const [notify, setNotify] = useState({ open: false, title: '', message: '' })
   const [projectEngineers, setProjectEngineers] = useState([])
   const [profileUser, setProfileUser] = useState(null)
@@ -97,6 +99,14 @@ function ProjectManagement() {
       script.onerror = reject
       document.body.appendChild(script)
     })
+  }
+
+  const formatFileSize = (bytes) => {
+    if (bytes === 0) return '0 Bytes'
+    const k = 1024
+    const sizes = ['Bytes', 'KB', 'MB', 'GB']
+    const i = Math.floor(Math.log(bytes) / Math.log(k))
+    return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i]
   }
 
   const exportProjectPDF = async (project) => {
@@ -1813,14 +1823,26 @@ function ProjectManagement() {
                 setLoadingAction('create-site-visit')
                 setIsSubmitting(true)
                 try {
-                  const token = localStorage.getItem('token')
-                  await api.post('/api/site-visits', {
-                    projectId: selectedProject._id,
-                    ...visitData
+                  const formDataToSend = new FormData()
+                  
+                  // Append projectId and form fields
+                  formDataToSend.append('projectId', selectedProject._id)
+                  Object.keys(visitData).forEach(key => {
+                    formDataToSend.append(key, visitData[key])
                   })
+                  
+                  // Append files
+                  visitFiles.forEach(file => {
+                    formDataToSend.append('attachments', file)
+                  })
+
+                  await api.post('/api/site-visits', formDataToSend)
                   setShowVisitModal(false)
                   setVisitData({ visitAt: '', siteLocation: '', engineerName: '', workProgressSummary: '', safetyObservations: '', qualityMaterialCheck: '', issuesFound: '', actionItems: '', weatherConditions: '', description: '' })
+                  setVisitFiles([])
+                  setVisitPreviewFiles([])
                   setNotify({ open: true, title: 'Saved', message: 'Site visit saved successfully.' })
+                  await fetchProjects()
                 } catch (error) {
                   setNotify({ open: true, title: 'Create Failed', message: error.response?.data?.message || 'We could not create the site visit. Please try again.' })
                 } finally {
@@ -1874,10 +1896,125 @@ function ProjectManagement() {
                 <label>Detailed Description / Remarks *</label>
                 <textarea value={visitData.description} onChange={e => setVisitData({ ...visitData, description: e.target.value })} required />
               </div>
+
+              <div className="form-group">
+                <label>Attachments (Documents, Images & Videos)</label>
+                <input
+                  type="file"
+                  multiple
+                  accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,video/*"
+                  onChange={(e) => {
+                    const files = Array.from(e.target.files)
+                    setVisitFiles(prev => [...prev, ...files])
+                    
+                    files.forEach(file => {
+                      if (file.type.startsWith('image/')) {
+                        const reader = new FileReader()
+                        reader.onloadend = () => {
+                          setVisitPreviewFiles(prev => [...prev, { file, preview: reader.result, type: 'image' }])
+                        }
+                        reader.readAsDataURL(file)
+                      } else if (file.type.startsWith('video/')) {
+                        const reader = new FileReader()
+                        reader.onloadend = () => {
+                          setVisitPreviewFiles(prev => [...prev, { file, preview: reader.result, type: 'video' }])
+                        }
+                        reader.readAsDataURL(file)
+                      } else {
+                        setVisitPreviewFiles(prev => [...prev, { file, preview: null, type: 'document' }])
+                      }
+                    })
+                  }}
+                  className="file-input"
+                />
+                <small style={{ display: 'block', marginTop: '5px', color: '#666' }}>
+                  Accepted: Images (JPEG, PNG, GIF, WebP), Documents (PDF, DOC, DOCX, XLS, XLSX), Videos (MP4, MOV, AVI, WMV, WebM, etc.). Max 10MB per file.
+                </small>
+                
+                {/* Display new files being uploaded */}
+                {visitPreviewFiles.length > 0 && (
+                  <div style={{ marginTop: '15px' }}>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
+                      {visitPreviewFiles.map((item, index) => (
+                        <div key={index} style={{ 
+                          position: 'relative', 
+                          border: '1px solid #ddd', 
+                          borderRadius: '4px', 
+                          padding: '8px',
+                          maxWidth: '150px'
+                        }}>
+                          {item.type === 'image' && item.preview ? (
+                            <img 
+                              src={item.preview} 
+                              alt={item.file.name}
+                              style={{ width: '100%', height: '100px', objectFit: 'cover', borderRadius: '4px' }}
+                            />
+                          ) : item.type === 'video' && item.preview ? (
+                            <video 
+                              src={item.preview}
+                              style={{ width: '100%', height: '100px', objectFit: 'cover', borderRadius: '4px' }}
+                              controls={false}
+                              muted
+                            />
+                          ) : (
+                            <div style={{ 
+                              width: '100%', 
+                              height: '100px', 
+                              display: 'flex', 
+                              alignItems: 'center', 
+                              justifyContent: 'center',
+                              backgroundColor: '#f5f5f5',
+                              borderRadius: '4px'
+                            }}>
+                              <span style={{ fontSize: '12px', textAlign: 'center' }}>{item.file.name}</span>
+                            </div>
+                          )}
+                          <div style={{ marginTop: '5px', fontSize: '11px', color: '#666' }}>
+                            {item.file.name.length > 15 ? item.file.name.substring(0, 15) + '...' : item.file.name}
+                          </div>
+                          <div style={{ fontSize: '10px', color: '#999' }}>
+                            {formatFileSize(item.file.size)}
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setVisitFiles(prev => prev.filter((_, i) => i !== index))
+                              setVisitPreviewFiles(prev => prev.filter((_, i) => i !== index))
+                            }}
+                            style={{
+                              position: 'absolute',
+                              top: '5px',
+                              right: '5px',
+                              background: 'rgba(255, 0, 0, 0.7)',
+                              color: 'white',
+                              border: 'none',
+                              borderRadius: '50%',
+                              width: '20px',
+                              height: '20px',
+                              cursor: 'pointer',
+                              fontSize: '12px',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center'
+                            }}
+                          >
+                            ×
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+
               <div className="form-actions">
                 <button 
                   type="button" 
-                  onClick={() => setShowVisitModal(false)} 
+                  onClick={() => {
+                    setShowVisitModal(false)
+                    setVisitFiles([])
+                    setVisitPreviewFiles([])
+                  }} 
                   className="cancel-btn"
                   disabled={isSubmitting}
                 >

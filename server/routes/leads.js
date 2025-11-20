@@ -8,7 +8,7 @@ const Project = require('../models/Project');
 const jwt = require('jsonwebtoken');
 const router = express.Router();
 
-// Configure multer for file uploads
+// Configure multer for file uploads (leads)
 const uploadsDir = path.join(__dirname, '..', 'uploads', 'leads');
 if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir, { recursive: true });
@@ -44,6 +44,28 @@ const fileFilter = (req, file, cb) => {
 
 const upload = multer({
   storage: storage,
+  fileFilter: fileFilter,
+  limits: { fileSize: 10 * 1024 * 1024 } // 10MB limit
+});
+
+// Configure multer for site visit file uploads
+const siteVisitUploadsDir = path.join(__dirname, '..', 'uploads', 'site-visits');
+if (!fs.existsSync(siteVisitUploadsDir)) {
+  fs.mkdirSync(siteVisitUploadsDir, { recursive: true });
+}
+
+const siteVisitStorage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, siteVisitUploadsDir);
+  },
+  filename: (req, file, cb) => {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    cb(null, uniqueSuffix + path.extname(file.originalname));
+  }
+});
+
+const siteVisitUpload = multer({
+  storage: siteVisitStorage,
   fileFilter: fileFilter,
   limits: { fileSize: 10 * 1024 * 1024 } // 10MB limit
 });
@@ -304,10 +326,8 @@ router.delete('/:id', auth, async (req, res) => {
   }
 });
 
-module.exports = router;
-
 // Create a site visit for a lead (project engineers only)
-router.post('/:id/site-visits', auth, async (req, res) => {
+router.post('/:id/site-visits', auth, siteVisitUpload.array('attachments', 10), async (req, res) => {
   try {
     if (!req.user.roles.includes('project_engineer')) {
       return res.status(403).json({ message: 'Only project engineers can create site visits' });
@@ -318,6 +338,20 @@ router.post('/:id/site-visits', auth, async (req, res) => {
     const { visitAt, siteLocation, engineerName, workProgressSummary, safetyObservations, qualityMaterialCheck, issuesFound, actionItems, weatherConditions, description } = req.body;
     if (!visitAt || !siteLocation || !engineerName || !workProgressSummary || !description) {
       return res.status(400).json({ message: 'Missing required fields' });
+    }
+
+    // Process uploaded files
+    const attachments = [];
+    if (req.files && req.files.length > 0) {
+      req.files.forEach(file => {
+        attachments.push({
+          filename: file.filename,
+          originalName: file.originalname,
+          path: `/uploads/site-visits/${file.filename}`,
+          mimetype: file.mimetype,
+          size: file.size
+        });
+      });
     }
 
     const siteVisit = await SiteVisit.create({
@@ -332,12 +366,22 @@ router.post('/:id/site-visits', auth, async (req, res) => {
       actionItems,
       weatherConditions,
       description,
+      attachments,
       createdBy: req.user.userId
     });
 
     res.status(201).json(siteVisit);
   } catch (error) {
-    res.status(500).json({ message: 'Server error' });
+    // Clean up uploaded files if there's an error
+    if (req.files && req.files.length > 0) {
+      req.files.forEach(file => {
+        const filePath = path.join(siteVisitUploadsDir, file.filename);
+        if (fs.existsSync(filePath)) {
+          fs.unlinkSync(filePath);
+        }
+      });
+    }
+    res.status(500).json({ message: error.message || 'Server error' });
   }
 });
 
@@ -355,7 +399,7 @@ router.get('/:id/site-visits', auth, async (req, res) => {
 });
 
 // Update site visit (project or estimation engineers)
-router.put('/:leadId/site-visits/:visitId', auth, async (req, res) => {
+router.put('/:leadId/site-visits/:visitId', auth, siteVisitUpload.array('attachments', 10), async (req, res) => {
   try {
     const roles = req.user.roles || [];
     const canEdit = roles.includes('project_engineer') || roles.includes('estimation_engineer');
@@ -364,6 +408,7 @@ router.put('/:leadId/site-visits/:visitId', auth, async (req, res) => {
     const sv = await SiteVisit.findOne({ _id: req.params.visitId, lead: req.params.leadId });
     if (!sv) return res.status(404).json({ message: 'Site visit not found' });
 
+    const { removeAttachments } = req.body;
     const fields = ['visitAt','siteLocation','engineerName','workProgressSummary','safetyObservations','qualityMaterialCheck','issuesFound','actionItems','weatherConditions','description'];
     const changes = [];
     for (const field of fields) {
@@ -379,6 +424,43 @@ router.put('/:leadId/site-visits/:visitId', auth, async (req, res) => {
       }
     }
 
+    // Handle file uploads
+    if (req.files && req.files.length > 0) {
+      const newAttachments = req.files.map(file => ({
+        filename: file.filename,
+        originalName: file.originalname,
+        path: `/uploads/site-visits/${file.filename}`,
+        mimetype: file.mimetype,
+        size: file.size
+      }));
+      sv.attachments = [...(sv.attachments || []), ...newAttachments];
+      changes.push({ field: 'attachments', from: sv.attachments.length - newAttachments.length, to: sv.attachments.length });
+    }
+
+    // Handle attachment removal
+    if (removeAttachments) {
+      const removeIds = Array.isArray(removeAttachments) ? removeAttachments : [removeAttachments];
+      const removedCount = sv.attachments.length;
+      const attachmentsToDelete = sv.attachments.filter((att, index) => removeIds.includes(index.toString()));
+      
+      // Delete files from disk
+      attachmentsToDelete.forEach(att => {
+        const filePath = path.join(siteVisitUploadsDir, att.filename);
+        if (fs.existsSync(filePath)) {
+          try {
+            fs.unlinkSync(filePath);
+          } catch (err) {
+            console.error(`Error deleting file ${filePath}:`, err);
+          }
+        }
+      });
+      
+      sv.attachments = sv.attachments.filter((att, index) => !removeIds.includes(index.toString()));
+      if (sv.attachments.length !== removedCount) {
+        changes.push({ field: 'attachments', from: removedCount, to: sv.attachments.length });
+      }
+    }
+
     if (changes.length > 0) {
       sv.edits.push({ editedBy: req.user.userId, changes });
     }
@@ -387,6 +469,17 @@ router.put('/:leadId/site-visits/:visitId', auth, async (req, res) => {
     await sv.populate('edits.editedBy', 'name email');
     res.json(sv);
   } catch (error) {
-    res.status(500).json({ message: 'Server error' });
+    // Clean up uploaded files if there's an error
+    if (req.files && req.files.length > 0) {
+      req.files.forEach(file => {
+        const filePath = path.join(siteVisitUploadsDir, file.filename);
+        if (fs.existsSync(filePath)) {
+          fs.unlinkSync(filePath);
+        }
+      });
+    }
+    res.status(500).json({ message: error.message || 'Server error' });
   }
 });
+
+module.exports = router;

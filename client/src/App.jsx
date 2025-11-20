@@ -9,6 +9,7 @@ import QuotationDetail from './components/QuotationDetail'
 import RevisionDetail from './components/RevisionDetail'
 import ProjectDetail from './components/ProjectDetail'
 import VariationDetail from './components/VariationDetail'
+import SiteVisitDetail from './components/SiteVisitDetail'
 import QuotationModal from './components/QuotationModal'
 import { initTheme, setTheme } from './utils/theme'
 
@@ -243,6 +244,11 @@ function App() {
         <Route path="/variation-detail" element={
           <ProtectedRoute>
             <VariationDetail />
+          </ProtectedRoute>
+        } />
+        <Route path="/site-visit-detail" element={
+          <ProtectedRoute>
+            <SiteVisitDetail />
           </ProtectedRoute>
         } />
         <Route path="/leads/create-quotation/:leadId" element={

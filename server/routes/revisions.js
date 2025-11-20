@@ -217,8 +217,22 @@ router.post('/', auth, async (req, res) => {
         return res.status(400).json({ message: 'A child revision already exists for this revision.' });
       }
     }
+    
+    // Get the parent quotation to access lead information for project key
+    const parentQuotation = await Quotation.findById(parentQuotationId).populate('lead');
+    if (!parentQuotation) return res.status(404).json({ message: 'Parent quotation not found' });
+    
+    // Generate project key from project title or customer name (uppercase, alphanumeric, max 8 chars)
+    const projectName = parentQuotation.projectTitle || parentQuotation.lead?.projectTitle || parentQuotation.lead?.customerName || 'PROJ';
+    const projectKey = projectName
+      .toUpperCase()
+      .replace(/[^A-Z0-9]/g, '')
+      .substring(0, 8) || 'PROJ';
+    
+    // Count existing revisions for this quotation
     const existingCount = await Revision.countDocuments({ parentQuotation: parentQuotationId });
-    const revisionNumber = existingCount + 1;
+    const revisionNum = existingCount + 1;
+    const revisionNumber = `${projectKey}-REV-${String(revisionNum).padStart(3, '0')}`;
     if (sourceQuotationId && existingCount > 0) {
       return res.status(400).json({ message: 'A revision already exists for this quotation. Delete all revisions to create a new one from the approved quotation.' });
     }

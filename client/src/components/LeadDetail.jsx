@@ -58,6 +58,11 @@ function LeadDetail() {
     weatherConditions: '',
     description: ''
   })
+  const [newVisitFiles, setNewVisitFiles] = useState([])
+  const [newVisitPreviewFiles, setNewVisitPreviewFiles] = useState([])
+  const [editVisitFiles, setEditVisitFiles] = useState([])
+  const [editVisitPreviewFiles, setEditVisitPreviewFiles] = useState([])
+  const [editVisitAttachmentsToRemove, setEditVisitAttachmentsToRemove] = useState([])
   const [notify, setNotify] = useState({ open: false, title: '', message: '' })
 
   // Helpers for PDF export
@@ -124,6 +129,56 @@ function LeadDetail() {
     const sizes = ['Bytes', 'KB', 'MB', 'GB']
     const i = Math.floor(Math.log(bytes) / Math.log(k))
     return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i]
+  }
+
+  const handleVisitFileChange = (e, isEdit = false) => {
+    const files = Array.from(e.target.files)
+    if (isEdit) {
+      setEditVisitFiles(prev => [...prev, ...files])
+    } else {
+      setNewVisitFiles(prev => [...prev, ...files])
+    }
+    
+    // Create previews for images and videos
+    files.forEach(file => {
+      if (file.type.startsWith('image/')) {
+        const reader = new FileReader()
+        reader.onloadend = () => {
+          if (isEdit) {
+            setEditVisitPreviewFiles(prev => [...prev, { file, preview: reader.result, type: 'image' }])
+          } else {
+            setNewVisitPreviewFiles(prev => [...prev, { file, preview: reader.result, type: 'image' }])
+          }
+        }
+        reader.readAsDataURL(file)
+      } else if (file.type.startsWith('video/')) {
+        const reader = new FileReader()
+        reader.onloadend = () => {
+          if (isEdit) {
+            setEditVisitPreviewFiles(prev => [...prev, { file, preview: reader.result, type: 'video' }])
+          } else {
+            setNewVisitPreviewFiles(prev => [...prev, { file, preview: reader.result, type: 'video' }])
+          }
+        }
+        reader.readAsDataURL(file)
+      } else {
+        if (isEdit) {
+          setEditVisitPreviewFiles(prev => [...prev, { file, preview: null, type: 'document' }])
+        } else {
+          setNewVisitPreviewFiles(prev => [...prev, { file, preview: null, type: 'document' }])
+        }
+      }
+    })
+  }
+
+  const removeVisitFile = (index, isEdit = false) => {
+    if (isEdit) {
+      setEditVisitFiles(prev => prev.filter((_, i) => i !== index))
+      setEditVisitPreviewFiles(prev => prev.filter((_, i) => i !== index))
+    } else {
+      setNewVisitFiles(prev => prev.filter((_, i) => i !== index))
+      setNewVisitPreviewFiles(prev => prev.filter((_, i) => i !== index))
+    }
   }
 
   const exportVisitPDF = async (visit) => {
@@ -727,6 +782,17 @@ ${visit.actionItems ? 'Recommended follow‑up: ' + visit.actionItems : 'Continu
                       <td data-label="Description">{v.description || 'N/A'}</td>
                       <td data-label="Actions">
                         <div className="ld-actions">
+                          <button className="assign-btn" onClick={async () => {
+                            try {
+                              localStorage.setItem('siteVisitDetail', JSON.stringify(v))
+                              localStorage.setItem('siteVisitId', v._id)
+                              localStorage.setItem('leadDetail', JSON.stringify(lead))
+                              localStorage.setItem('leadId', lead._id)
+                              window.location.href = '/site-visit-detail'
+                            } catch (e) {
+                              setNotify({ open: true, title: 'Open Failed', message: 'We could not open the site visit detail. Please try again.' })
+                            }
+                          }}>View</button>
                           {(currentUser?.roles?.includes('project_engineer') || currentUser?.roles?.includes('estimation_engineer')) && (
                             <button className="save-btn" onClick={() => {
                               setEditVisit(v)
@@ -742,6 +808,9 @@ ${visit.actionItems ? 'Recommended follow‑up: ' + visit.actionItems : 'Continu
                                 weatherConditions: v.weatherConditions || '',
                                 description: v.description || ''
                               })
+                              setEditVisitFiles([])
+                              setEditVisitPreviewFiles([])
+                              setEditVisitAttachmentsToRemove([])
                             }}>Edit</button>
                           )}
                         <button className="save-btn" onClick={() => exportVisitPDF(v)}>Export</button>
@@ -773,6 +842,90 @@ ${visit.actionItems ? 'Recommended follow‑up: ' + visit.actionItems : 'Continu
                                 </ul>
                               </div>
                             ))}
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                    {v.attachments && v.attachments.length > 0 && (
+                      <tr className="history-row">
+                        <td colSpan={7}>
+                          <div className="history-panel">
+                            <h4 style={{ marginTop: 0, marginBottom: '15px' }}>Attachments ({v.attachments.length})</h4>
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '15px' }}>
+                              {v.attachments.map((attachment, idx) => {
+                                const isImage = attachment.mimetype && attachment.mimetype.startsWith('image/')
+                                const isVideo = attachment.mimetype && attachment.mimetype.startsWith('video/')
+                                const apiBase = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'
+                                const fileUrl = attachment.path.startsWith('http') 
+                                  ? attachment.path 
+                                  : `${apiBase}${attachment.path}`
+                                return (
+                                  <div key={idx} style={{
+                                    border: '1px solid #ddd',
+                                    borderRadius: '8px',
+                                    padding: '10px',
+                                    width: '200px',
+                                    backgroundColor: '#fff'
+                                  }}>
+                                    {isImage ? (
+                                      <img 
+                                        src={fileUrl} 
+                                        alt={attachment.originalName}
+                                        style={{ width: '100%', height: '150px', objectFit: 'cover', borderRadius: '4px', marginBottom: '8px' }}
+                                        onError={(e) => {
+                                          e.target.style.display = 'none'
+                                        }}
+                                      />
+                                    ) : isVideo ? (
+                                      <video 
+                                        src={fileUrl}
+                                        style={{ width: '100%', height: '150px', objectFit: 'cover', borderRadius: '4px', marginBottom: '8px' }}
+                                        controls
+                                      />
+                                    ) : (
+                                      <div style={{
+                                        width: '100%',
+                                        height: '150px',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                        backgroundColor: '#f5f5f5',
+                                        borderRadius: '4px',
+                                        marginBottom: '8px'
+                                      }}>
+                                        <span style={{ fontSize: '14px' }}>📄 {attachment.originalName}</span>
+                                      </div>
+                                    )}
+                                    <div style={{ fontSize: '12px', color: '#666', marginBottom: '5px', wordBreak: 'break-word' }}>
+                                      {attachment.originalName}
+                                    </div>
+                                    <div style={{ fontSize: '11px', color: '#999', marginBottom: '8px' }}>
+                                      {formatFileSize(attachment.size)}
+                                    </div>
+                                    <a
+                                      href={fileUrl}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      style={{
+                                        display: 'inline-block',
+                                        padding: '6px 12px',
+                                        backgroundColor: '#007bff',
+                                        color: 'white',
+                                        textDecoration: 'none',
+                                        borderRadius: '4px',
+                                        fontSize: '12px',
+                                        fontWeight: '500',
+                                        transition: 'background-color 0.2s'
+                                      }}
+                                      onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#0056b3'}
+                                      onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#007bff'}
+                                    >
+                                      {isImage ? 'View Full Size' : isVideo ? 'Play Video' : 'Download'}
+                                    </a>
+                                  </div>
+                                )
+                              })}
+                            </div>
                           </div>
                         </td>
                       </tr>
@@ -1191,29 +1344,57 @@ ${visit.actionItems ? 'Recommended follow‑up: ' + visit.actionItems : 'Continu
       )}
 
       {editVisit && (
-        <div className="modal-overlay" onClick={() => setEditVisit(null)}>
+        <div className="modal-overlay" onClick={() => {
+          setEditVisit(null)
+          setEditVisitFiles([])
+          setEditVisitPreviewFiles([])
+          setEditVisitAttachmentsToRemove([])
+        }}>
           <div className="modal" onClick={e => e.stopPropagation()}>
             <div className="modal-header">
               <h2>Edit Site Visit</h2>
-              <button onClick={() => setEditVisit(null)} className="close-btn">×</button>
+              <button onClick={() => {
+                setEditVisit(null)
+                setEditVisitFiles([])
+                setEditVisitPreviewFiles([])
+                setEditVisitAttachmentsToRemove([])
+              }} className="close-btn">×</button>
             </div>
             <form
               onSubmit={async (e) => {
                 e.preventDefault()
                 try {
-                  const res = await apiFetch(`/api/leads/${lead._id}/site-visits/${editVisit._id}`, {
-                    method: 'PUT',
-                    body: JSON.stringify(visitEditData)
+                  const formDataToSend = new FormData()
+                  
+                  // Append form fields
+                  Object.keys(visitEditData).forEach(key => {
+                    formDataToSend.append(key, visitEditData[key])
                   })
-                  if (!res.ok) throw new Error('Failed')
-                  const updated = await res.json()
+                  
+                  // Append files
+                  editVisitFiles.forEach(file => {
+                    formDataToSend.append('attachments', file)
+                  })
+
+                  // Append attachments to remove
+                  if (editVisitAttachmentsToRemove.length > 0) {
+                    editVisitAttachmentsToRemove.forEach(index => {
+                      formDataToSend.append('removeAttachments', index)
+                    })
+                  }
+
+                  const updated = await api.put(`/api/leads/${lead._id}/site-visits/${editVisit._id}`, formDataToSend)
                   setLead(prev => ({
                     ...prev,
-                    siteVisits: prev.siteVisits.map(v => v._id === updated._id ? updated : v)
+                    siteVisits: prev.siteVisits.map(v => v._id === updated.data._id ? updated.data : v)
                   }))
                   setEditVisit(null)
+                  setEditVisitFiles([])
+                  setEditVisitPreviewFiles([])
+                  setEditVisitAttachmentsToRemove([])
+                  setNotify({ open: true, title: 'Success', message: 'Site visit updated successfully.' })
                 } catch (err) {
-                  setNotify({ open: true, title: 'Update Failed', message: 'We could not update the site visit. Please try again.' })
+                  setNotify({ open: true, title: 'Update Failed', message: err.response?.data?.message || 'We could not update the site visit. Please try again.' })
                 }
               }}
               className="assign-form"
@@ -1258,8 +1439,227 @@ ${visit.actionItems ? 'Recommended follow‑up: ' + visit.actionItems : 'Continu
                 <label>Detailed Description / Remarks *</label>
                 <textarea value={visitEditData.description} onChange={e => setVisitEditData({ ...visitEditData, description: e.target.value })} required />
               </div>
+
+              <div className="form-group">
+                <label>Attachments (Documents, Images & Videos)</label>
+                <input
+                  type="file"
+                  multiple
+                  accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,video/*"
+                  onChange={(e) => handleVisitFileChange(e, true)}
+                  className="file-input"
+                />
+                <small style={{ display: 'block', marginTop: '5px', color: '#666' }}>
+                  Accepted: Images (JPEG, PNG, GIF, WebP), Documents (PDF, DOC, DOCX, XLS, XLSX), Videos (MP4, MOV, AVI, WMV, WebM, etc.). Max 10MB per file.
+                </small>
+                
+                {/* Display existing attachments when editing */}
+                {editVisit && editVisit.attachments && editVisit.attachments.length > 0 && (
+                  <div style={{ marginTop: '15px' }}>
+                    <div style={{ marginBottom: '10px', fontWeight: 'bold', fontSize: '14px' }}>Existing Attachments:</div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
+                      {editVisit.attachments.map((attachment, index) => {
+                        const isImage = attachment.mimetype && attachment.mimetype.startsWith('image/')
+                        const isVideo = attachment.mimetype && attachment.mimetype.startsWith('video/')
+                        const apiBase = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'
+                        const fileUrl = attachment.path.startsWith('http') 
+                          ? attachment.path 
+                          : `${apiBase}${attachment.path}`
+                        return (
+                          <div key={index} style={{ 
+                            position: 'relative', 
+                            border: '1px solid #ddd', 
+                            borderRadius: '4px', 
+                            padding: '8px',
+                            maxWidth: '150px'
+                          }}>
+                            {isImage ? (
+                              <img 
+                                src={fileUrl} 
+                                alt={attachment.originalName}
+                                style={{ width: '100%', height: '100px', objectFit: 'cover', borderRadius: '4px' }}
+                                onError={(e) => {
+                                  e.target.style.display = 'none'
+                                  e.target.nextSibling.style.display = 'flex'
+                                }}
+                              />
+                            ) : isVideo ? (
+                              <div style={{ position: 'relative', width: '100%', height: '100px' }}>
+                                <video 
+                                  src={fileUrl}
+                                  style={{ width: '100%', height: '100px', objectFit: 'cover', borderRadius: '4px' }}
+                                  controls={false}
+                                  muted
+                                />
+                                <div style={{ 
+                                  position: 'absolute',
+                                  top: '50%',
+                                  left: '50%',
+                                  transform: 'translate(-50%, -50%)',
+                                  width: '30px',
+                                  height: '30px',
+                                  borderRadius: '50%',
+                                  backgroundColor: 'rgba(0, 0, 0, 0.6)',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  pointerEvents: 'none'
+                                }}>
+                                  <svg width="18" height="18" viewBox="0 0 24 24" fill="white">
+                                    <path d="M8 5v14l11-7z"/>
+                                  </svg>
+                                </div>
+                              </div>
+                            ) : null}
+                            <div style={{ 
+                              width: '100%', 
+                              height: '100px', 
+                              display: (isImage || isVideo) ? 'none' : 'flex', 
+                              alignItems: 'center', 
+                              justifyContent: 'center',
+                              backgroundColor: '#f5f5f5',
+                              borderRadius: '4px'
+                            }}>
+                              <span style={{ fontSize: '12px', textAlign: 'center' }}>{attachment.originalName}</span>
+                            </div>
+                            <div style={{ marginTop: '5px', fontSize: '11px', color: '#666' }}>
+                              {attachment.originalName.length > 15 ? attachment.originalName.substring(0, 15) + '...' : attachment.originalName}
+                            </div>
+                            <div style={{ fontSize: '10px', color: '#999' }}>
+                              {formatFileSize(attachment.size)}
+                            </div>
+                            <div style={{ display: 'flex', gap: '5px', marginTop: '5px' }}>
+                              <a 
+                                href={fileUrl} 
+                                target="_blank" 
+                                rel="noopener noreferrer"
+                                style={{
+                                  fontSize: '11px',
+                                  color: '#007bff',
+                                  textDecoration: 'none'
+                                }}
+                              >
+                                View
+                              </a>
+                              {!editVisitAttachmentsToRemove.includes(index.toString()) && (
+                                <button
+                                  type="button"
+                                  onClick={() => setEditVisitAttachmentsToRemove(prev => [...prev, index.toString()])}
+                                  style={{
+                                    fontSize: '11px',
+                                    color: '#dc3545',
+                                    background: 'none',
+                                    border: 'none',
+                                    cursor: 'pointer',
+                                    padding: 0,
+                                    textDecoration: 'underline'
+                                  }}
+                                >
+                                  Remove
+                                </button>
+                              )}
+                              {editVisitAttachmentsToRemove.includes(index.toString()) && (
+                                <span style={{ fontSize: '11px', color: '#999', fontStyle: 'italic' }}>
+                                  Will be removed
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </div>
+                )}
+                
+                {/* Display new files being uploaded */}
+                {editVisitPreviewFiles.length > 0 && (
+                  <div style={{ marginTop: '15px' }}>
+                    {editVisit && editVisit.attachments && editVisit.attachments.length > 0 && (
+                      <div style={{ marginBottom: '10px', fontWeight: 'bold', fontSize: '14px' }}>New Attachments:</div>
+                    )}
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
+                      {editVisitPreviewFiles.map((item, index) => (
+                        <div key={index} style={{ 
+                          position: 'relative', 
+                          border: '1px solid #ddd', 
+                          borderRadius: '4px', 
+                          padding: '8px',
+                          maxWidth: '150px'
+                        }}>
+                          {item.type === 'image' && item.preview ? (
+                            <img 
+                              src={item.preview} 
+                              alt={item.file.name}
+                              style={{ width: '100%', height: '100px', objectFit: 'cover', borderRadius: '4px' }}
+                            />
+                          ) : item.type === 'video' && item.preview ? (
+                            <video 
+                              src={item.preview}
+                              style={{ width: '100%', height: '100px', objectFit: 'cover', borderRadius: '4px' }}
+                              controls={false}
+                              muted
+                            />
+                          ) : (
+                            <div style={{ 
+                              width: '100%', 
+                              height: '100px', 
+                              display: 'flex', 
+                              alignItems: 'center', 
+                              justifyContent: 'center',
+                              backgroundColor: '#f5f5f5',
+                              borderRadius: '4px'
+                            }}>
+                              <span style={{ fontSize: '12px', textAlign: 'center' }}>{item.file.name}</span>
+                            </div>
+                          )}
+                          <div style={{ marginTop: '5px', fontSize: '11px', color: '#666' }}>
+                            {item.file.name.length > 15 ? item.file.name.substring(0, 15) + '...' : item.file.name}
+                          </div>
+                          <div style={{ fontSize: '10px', color: '#999' }}>
+                            {formatFileSize(item.file.size)}
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => removeVisitFile(index, true)}
+                            style={{
+                              position: 'absolute',
+                              top: '5px',
+                              right: '5px',
+                              background: 'rgba(255, 0, 0, 0.7)',
+                              color: 'white',
+                              border: 'none',
+                              borderRadius: '50%',
+                              width: '20px',
+                              height: '20px',
+                              cursor: 'pointer',
+                              fontSize: '12px',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center'
+                            }}
+                          >
+                            ×
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+
               <div className="form-actions">
-                <button type="button" onClick={() => setEditVisit(null)} className="cancel-btn">Cancel</button>
+                <button 
+                  type="button" 
+                  onClick={() => {
+                    setEditVisit(null)
+                    setEditVisitFiles([])
+                    setEditVisitPreviewFiles([])
+                    setEditVisitAttachmentsToRemove([])
+                  }} 
+                  className="cancel-btn"
+                >
+                  Cancel
+                </button>
                 <button type="submit" className="save-btn">Save Changes</button>
               </div>
             </form>
@@ -1268,32 +1668,49 @@ ${visit.actionItems ? 'Recommended follow‑up: ' + visit.actionItems : 'Continu
       )}
 
       {newVisitOpen && (
-        <div className="modal-overlay" onClick={() => setNewVisitOpen(false)}>
+        <div className="modal-overlay" onClick={() => {
+          setNewVisitOpen(false)
+          setNewVisitFiles([])
+          setNewVisitPreviewFiles([])
+        }}>
           <div className="modal" onClick={e => e.stopPropagation()}>
             <div className="modal-header">
               <h2>New Site Visit</h2>
-              <button onClick={() => setNewVisitOpen(false)} className="close-btn">×</button>
+              <button onClick={() => {
+                setNewVisitOpen(false)
+                setNewVisitFiles([])
+                setNewVisitPreviewFiles([])
+              }} className="close-btn">×</button>
             </div>
             <form
               onSubmit={async (e) => {
                 e.preventDefault()
                 try {
-                  const res = await apiFetch(`/api/leads/${lead._id}/site-visits`, {
-                    method: 'POST',
-                    body: JSON.stringify(newVisitData)
+                  const formDataToSend = new FormData()
+                  
+                  // Append form fields
+                  Object.keys(newVisitData).forEach(key => {
+                    formDataToSend.append(key, newVisitData[key])
                   })
-                  if (!res.ok) {
-                    const err = await res.json().catch(() => ({}))
-                    throw new Error(err.message || 'Error creating site visit')
-                  }
+                  
+                  // Append files
+                  newVisitFiles.forEach(file => {
+                    formDataToSend.append('attachments', file)
+                  })
+
+                  const created = await api.post(`/api/leads/${lead._id}/site-visits`, formDataToSend)
+                  
                   // Refresh visits list to include createdBy populated
                   const visitsRes = await apiFetch(`/api/leads/${lead._id}/site-visits`)
                   const visits = await visitsRes.json()
                   setLead(prev => ({ ...prev, siteVisits: visits }))
                   setNewVisitOpen(false)
                   setNewVisitData({ visitAt: '', siteLocation: '', engineerName: '', workProgressSummary: '', safetyObservations: '', qualityMaterialCheck: '', issuesFound: '', actionItems: '', weatherConditions: '', description: '' })
+                  setNewVisitFiles([])
+                  setNewVisitPreviewFiles([])
+                  setNotify({ open: true, title: 'Success', message: 'Site visit created successfully.' })
                 } catch (err) {
-                  setNotify({ open: true, title: 'Create Failed', message: err.message || 'We could not create the site visit. Please try again.' })
+                  setNotify({ open: true, title: 'Create Failed', message: err.response?.data?.message || err.message || 'We could not create the site visit. Please try again.' })
                 }
               }}
               className="assign-form"
@@ -1338,8 +1755,105 @@ ${visit.actionItems ? 'Recommended follow‑up: ' + visit.actionItems : 'Continu
                 <label>Detailed Description / Remarks *</label>
                 <textarea value={newVisitData.description} onChange={e => setNewVisitData({ ...newVisitData, description: e.target.value })} required />
               </div>
+
+              <div className="form-group">
+                <label>Attachments (Documents, Images & Videos)</label>
+                <input
+                  type="file"
+                  multiple
+                  accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,video/*"
+                  onChange={(e) => handleVisitFileChange(e, false)}
+                  className="file-input"
+                />
+                <small style={{ display: 'block', marginTop: '5px', color: '#666' }}>
+                  Accepted: Images (JPEG, PNG, GIF, WebP), Documents (PDF, DOC, DOCX, XLS, XLSX), Videos (MP4, MOV, AVI, WMV, WebM, etc.). Max 10MB per file.
+                </small>
+                
+                {/* Display new files being uploaded */}
+                {newVisitPreviewFiles.length > 0 && (
+                  <div style={{ marginTop: '15px' }}>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
+                      {newVisitPreviewFiles.map((item, index) => (
+                        <div key={index} style={{ 
+                          position: 'relative', 
+                          border: '1px solid #ddd', 
+                          borderRadius: '4px', 
+                          padding: '8px',
+                          maxWidth: '150px'
+                        }}>
+                          {item.type === 'image' && item.preview ? (
+                            <img 
+                              src={item.preview} 
+                              alt={item.file.name}
+                              style={{ width: '100%', height: '100px', objectFit: 'cover', borderRadius: '4px' }}
+                            />
+                          ) : item.type === 'video' && item.preview ? (
+                            <video 
+                              src={item.preview}
+                              style={{ width: '100%', height: '100px', objectFit: 'cover', borderRadius: '4px' }}
+                              controls={false}
+                              muted
+                            />
+                          ) : (
+                            <div style={{ 
+                              width: '100%', 
+                              height: '100px', 
+                              display: 'flex', 
+                              alignItems: 'center', 
+                              justifyContent: 'center',
+                              backgroundColor: '#f5f5f5',
+                              borderRadius: '4px'
+                            }}>
+                              <span style={{ fontSize: '12px', textAlign: 'center' }}>{item.file.name}</span>
+                            </div>
+                          )}
+                          <div style={{ marginTop: '5px', fontSize: '11px', color: '#666' }}>
+                            {item.file.name.length > 15 ? item.file.name.substring(0, 15) + '...' : item.file.name}
+                          </div>
+                          <div style={{ fontSize: '10px', color: '#999' }}>
+                            {formatFileSize(item.file.size)}
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => removeVisitFile(index, false)}
+                            style={{
+                              position: 'absolute',
+                              top: '5px',
+                              right: '5px',
+                              background: 'rgba(255, 0, 0, 0.7)',
+                              color: 'white',
+                              border: 'none',
+                              borderRadius: '50%',
+                              width: '20px',
+                              height: '20px',
+                              cursor: 'pointer',
+                              fontSize: '12px',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center'
+                            }}
+                          >
+                            ×
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+
               <div className="form-actions">
-                <button type="button" onClick={() => setNewVisitOpen(false)} className="cancel-btn">Cancel</button>
+                <button 
+                  type="button" 
+                  onClick={() => {
+                    setNewVisitOpen(false)
+                    setNewVisitFiles([])
+                    setNewVisitPreviewFiles([])
+                  }} 
+                  className="cancel-btn"
+                >
+                  Cancel
+                </button>
                 <button type="submit" className="save-btn">Save Visit</button>
               </div>
             </form>

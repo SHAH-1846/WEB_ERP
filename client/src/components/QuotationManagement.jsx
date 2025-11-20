@@ -18,6 +18,7 @@ function QuotationManagement() {
   const [myQuotationsOnly, setMyQuotationsOnly] = useState(false)
   const [selectedLeadFilter, setSelectedLeadFilter] = useState('')
   const [approvalModal, setApprovalModal] = useState({ open: false, quote: null, action: null, note: '' })
+  const [sendApprovalConfirmModal, setSendApprovalConfirmModal] = useState({ open: false, quote: null })
   const [approvalsView, setApprovalsView] = useState(null)
   const [revisionModal, setRevisionModal] = useState({ open: false, quote: null, form: null })
   const [hasRevisionFor, setHasRevisionFor] = useState({})
@@ -284,6 +285,7 @@ function QuotationManagement() {
     try {
       await api.patch(`/api/quotations/${q._id}/approve`, { status: 'pending' })
       await fetchQuotations()
+      setSendApprovalConfirmModal({ open: false, quote: null })
       setNotify({ open: true, title: 'Request Sent', message: 'Approval request has been sent successfully.' })
     } catch (e) {
       setNotify({ open: true, title: 'Send Failed', message: e.response?.data?.message || 'We could not send for approval. Please try again.' })
@@ -857,7 +859,7 @@ function QuotationManagement() {
         <span className="status-badge blue">Approval Pending</span>
       ) : (
         q.managementApproval?.status !== 'approved' && q.managementApproval?.status !== 'pending' && !(currentUser?.roles?.includes('manager') || currentUser?.roles?.includes('admin')) && (
-          <button className="save-btn" onClick={() => sendForApproval(q)}>Send for Approval</button>
+          <button className="save-btn" onClick={() => setSendApprovalConfirmModal({ open: true, quote: q })}>Send for Approval</button>
         )
       )}
       <button className="link-btn" onClick={() => setApprovalsView(q)}>View Approvals/Rejections</button>
@@ -1457,7 +1459,31 @@ function QuotationManagement() {
                                     {(quotationRevisionsMap[q._id] || []).map((r) => (
                                       <>
                                         <tr key={r._id}>
-                                          <td data-label="Revision #">{r.revisionNumber || 'N/A'}</td>
+                                          <td data-label="Revision #">
+                                            {r.parentQuotation?._id || r.parentQuotation ? (
+                                              <button
+                                                className="link-btn"
+                                                onClick={() => {
+                                                  try {
+                                                    const parentId = typeof r.parentQuotation === 'object' ? r.parentQuotation._id : r.parentQuotation;
+                                                    localStorage.setItem('quotationId', parentId);
+                                                    localStorage.setItem('quotationDetail', JSON.stringify(r.parentQuotation || {}));
+                                                  } catch {}
+                                                  window.location.href = '/quotation-detail';
+                                                }}
+                                                style={{
+                                                  fontSize: 'inherit',
+                                                  fontWeight: 600,
+                                                  padding: 0,
+                                                  textDecoration: 'underline'
+                                                }}
+                                              >
+                                                {r.revisionNumber || 'N/A'}
+                                              </button>
+                                            ) : (
+                                              r.revisionNumber || 'N/A'
+                                            )}
+                                          </td>
                                           <td data-label="Offer Ref">{r.offerReference || 'N/A'}</td>
                                           <td data-label="Offer Date">{r.offerDate ? new Date(r.offerDate).toLocaleDateString() : 'N/A'}</td>
                                           <td data-label="Grand Total">{(r.priceSchedule?.currency || 'AED')} {Number(r.priceSchedule?.grandTotal || 0).toFixed(2)}</td>
@@ -2008,6 +2034,35 @@ function QuotationManagement() {
         </div>
       )}
 
+      {sendApprovalConfirmModal.open && (
+        <div className="modal-overlay" onClick={() => setSendApprovalConfirmModal({ open: false, quote: null })}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>Confirm Send for Approval</h2>
+              <button onClick={() => setSendApprovalConfirmModal({ open: false, quote: null })} className="close-btn">×</button>
+            </div>
+            <div className="lead-form">
+              <p>Are you sure you want to send this quotation for approval?</p>
+              <div className="form-actions">
+                <button type="button" className="cancel-btn" onClick={() => setSendApprovalConfirmModal({ open: false, quote: null })}>Cancel</button>
+                <button 
+                  type="button" 
+                  className="save-btn" 
+                  onClick={() => {
+                    if (sendApprovalConfirmModal.quote) {
+                      sendForApproval(sendApprovalConfirmModal.quote)
+                    }
+                  }}
+                  disabled={isSubmitting && loadingAction === `send-approval-${sendApprovalConfirmModal.quote?._id}`}
+                >
+                  {isSubmitting && loadingAction === `send-approval-${sendApprovalConfirmModal.quote?._id}` ? 'Sending...' : 'Confirm & Send'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {approvalModal.open && (
         <div className="modal-overlay" onClick={() => setApprovalModal({ open: false, quote: null, action: null, note: '' })}>
           <div className="modal" onClick={e => e.stopPropagation()}>
@@ -2498,7 +2553,31 @@ function QuotationManagement() {
                     <tbody>
                       {revisionsForQuotation.map((r) => (
                         <tr key={r._id}>
-                          <td data-label="Revision #">{r.revisionNumber || 'N/A'}</td>
+                          <td data-label="Revision #">
+                            {r.parentQuotation?._id || r.parentQuotation ? (
+                              <button
+                                className="link-btn"
+                                onClick={() => {
+                                  try {
+                                    const parentId = typeof r.parentQuotation === 'object' ? r.parentQuotation._id : r.parentQuotation;
+                                    localStorage.setItem('quotationId', parentId);
+                                    localStorage.setItem('quotationDetail', JSON.stringify(r.parentQuotation || {}));
+                                  } catch {}
+                                  window.location.href = '/quotation-detail';
+                                }}
+                                style={{
+                                  fontSize: 'inherit',
+                                  fontWeight: 600,
+                                  padding: 0,
+                                  textDecoration: 'underline'
+                                }}
+                              >
+                                {r.revisionNumber || 'N/A'}
+                              </button>
+                            ) : (
+                              r.revisionNumber || 'N/A'
+                            )}
+                          </td>
                           <td data-label="Offer Ref">{r.offerReference || 'N/A'}</td>
                           <td data-label="Offer Date">{r.offerDate ? new Date(r.offerDate).toLocaleDateString() : 'N/A'}</td>
                           <td data-label="Grand Total">{(r.priceSchedule?.currency || 'AED')} {Number(r.priceSchedule?.grandTotal || 0).toFixed(2)}</td>
