@@ -1,9 +1,52 @@
 const express = require('express');
+const multer = require('multer');
+const path = require('path');
+const fs = require('fs');
 const Lead = require('../models/Lead');
 const SiteVisit = require('../models/SiteVisit');
 const Project = require('../models/Project');
 const jwt = require('jsonwebtoken');
 const router = express.Router();
+
+// Configure multer for file uploads
+const uploadsDir = path.join(__dirname, '..', 'uploads', 'leads');
+if (!fs.existsSync(uploadsDir)) {
+  fs.mkdirSync(uploadsDir, { recursive: true });
+}
+
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, uploadsDir);
+  },
+  filename: (req, file, cb) => {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    cb(null, uniqueSuffix + path.extname(file.originalname));
+  }
+});
+
+const fileFilter = (req, file, cb) => {
+  // Allow images, documents, and videos
+  const allowedMimes = [
+    'image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp',
+    'application/pdf', 'application/msword', 
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'application/vnd.ms-excel',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    'video/mp4', 'video/mpeg', 'video/quicktime', 'video/x-msvideo', 'video/x-ms-wmv',
+    'video/webm', 'video/ogg', 'video/3gpp', 'video/x-matroska'
+  ];
+  if (allowedMimes.includes(file.mimetype)) {
+    cb(null, true);
+  } else {
+    cb(new Error('Invalid file type. Only images, documents, and videos are allowed.'), false);
+  }
+};
+
+const upload = multer({
+  storage: storage,
+  fileFilter: fileFilter,
+  limits: { fileSize: 10 * 1024 * 1024 } // 10MB limit
+});
 
 const auth = (req, res, next) => {
   const token = req.header('Authorization')?.replace('Bearer ', '');
@@ -46,7 +89,7 @@ router.get('/:id', auth, async (req, res) => {
 });
 
 // Create lead (Supervisors only)
-router.post('/', auth, async (req, res) => {
+router.post('/', auth, upload.array('attachments', 10), async (req, res) => {
   try {
     const canCreate = req.user.roles.includes('supervisor') || req.user.roles.includes('sales_engineer') || req.user.roles.includes('estimation_engineer');
     if (!canCreate) {
@@ -60,6 +103,20 @@ router.post('/', auth, async (req, res) => {
       return res.status(400).json({ message: 'Missing required fields' });
     }
 
+    // Process uploaded files
+    const attachments = [];
+    if (req.files && req.files.length > 0) {
+      req.files.forEach(file => {
+        attachments.push({
+          filename: file.filename,
+          originalName: file.originalname,
+          path: `/uploads/leads/${file.filename}`,
+          mimetype: file.mimetype,
+          size: file.size
+        });
+      });
+    }
+
     const lead = new Lead({
       customerName,
       projectTitle,
@@ -67,6 +124,7 @@ router.post('/', auth, async (req, res) => {
       enquiryDate,
       scopeSummary,
       submissionDueDate,
+      attachments,
       name: projectTitle,
       createdBy: req.user.userId
     });
@@ -75,7 +133,16 @@ router.post('/', auth, async (req, res) => {
     await lead.populate('createdBy', 'name email');
     res.status(201).json(lead);
   } catch (error) {
-    res.status(500).json({ message: 'Server error' });
+    // Clean up uploaded files if there's an error
+    if (req.files && req.files.length > 0) {
+      req.files.forEach(file => {
+        const filePath = path.join(uploadsDir, file.filename);
+        if (fs.existsSync(filePath)) {
+          fs.unlinkSync(filePath);
+        }
+      });
+    }
+    res.status(500).json({ message: error.message || 'Server error' });
   }
 });
 
@@ -114,7 +181,7 @@ router.post('/:id/convert', auth, async (req, res) => {
 });
 
 // Update lead (creator can edit only when draft)
-router.put('/:id', auth, async (req, res) => {
+router.put('/:id', auth, upload.array('attachments', 10), async (req, res) => {
   try {
     const lead = await Lead.findById(req.params.id);
     if (!lead) return res.status(404).json({ message: 'Lead not found' });
@@ -129,7 +196,7 @@ router.put('/:id', auth, async (req, res) => {
       return res.status(400).json({ message: 'Only draft leads can be edited' });
     }
 
-    const { customerName, projectTitle, enquiryNumber, enquiryDate, scopeSummary, submissionDueDate } = req.body;
+    const { customerName, projectTitle, enquiryNumber, enquiryDate, scopeSummary, submissionDueDate, removeAttachments } = req.body;
 
     if ((req.user.roles.includes('sales_engineer') || req.user.roles.includes('estimation_engineer')) && (!customerName || !projectTitle || !enquiryNumber || !enquiryDate || !scopeSummary || !submissionDueDate)) {
       return res.status(400).json({ message: 'Missing required fields' });
@@ -151,6 +218,43 @@ router.put('/:id', auth, async (req, res) => {
       lead.name = projectTitle;
     }
 
+    // Handle file uploads
+    if (req.files && req.files.length > 0) {
+      const newAttachments = req.files.map(file => ({
+        filename: file.filename,
+        originalName: file.originalname,
+        path: `/uploads/leads/${file.filename}`,
+        mimetype: file.mimetype,
+        size: file.size
+      }));
+      lead.attachments = [...(lead.attachments || []), ...newAttachments];
+      changes.push({ field: 'attachments', from: lead.attachments.length - newAttachments.length, to: lead.attachments.length });
+    }
+
+    // Handle attachment removal
+    if (removeAttachments) {
+      const removeIds = Array.isArray(removeAttachments) ? removeAttachments : [removeAttachments];
+      const removedCount = lead.attachments.length;
+      const attachmentsToDelete = lead.attachments.filter((att, index) => removeIds.includes(index.toString()));
+      
+      // Delete files from disk
+      attachmentsToDelete.forEach(att => {
+        const filePath = path.join(uploadsDir, att.filename);
+        if (fs.existsSync(filePath)) {
+          try {
+            fs.unlinkSync(filePath);
+          } catch (err) {
+            console.error(`Error deleting file ${filePath}:`, err);
+          }
+        }
+      });
+      
+      lead.attachments = lead.attachments.filter((att, index) => !removeIds.includes(index.toString()));
+      if (lead.attachments.length !== removedCount) {
+        changes.push({ field: 'attachments', from: removedCount, to: lead.attachments.length });
+      }
+    }
+
     if (changes.length > 0) {
       lead.edits.push({ editedBy: req.user.userId, changes });
     }
@@ -160,7 +264,16 @@ router.put('/:id', auth, async (req, res) => {
     await lead.populate('edits.editedBy', 'name email');
     res.json(lead);
   } catch (error) {
-    res.status(500).json({ message: 'Server error' });
+    // Clean up uploaded files if there's an error
+    if (req.files && req.files.length > 0) {
+      req.files.forEach(file => {
+        const filePath = path.join(uploadsDir, file.filename);
+        if (fs.existsSync(filePath)) {
+          fs.unlinkSync(filePath);
+        }
+      });
+    }
+    res.status(500).json({ message: error.message || 'Server error' });
   }
 });
 

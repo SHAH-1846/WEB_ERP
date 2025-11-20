@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import './LeadManagement.css'
 import './LeadDetail.css'
 import { setTheme } from '../utils/theme'
-import { apiFetch } from '../lib/api'
+import { apiFetch, api } from '../lib/api'
 import logo from '../assets/logo/WBES_Logo.png'
 
 function LeadDetail() {
@@ -41,6 +41,10 @@ function LeadDetail() {
     scopeSummary: '',
     submissionDueDate: ''
   })
+  const [selectedFiles, setSelectedFiles] = useState([])
+  const [previewFiles, setPreviewFiles] = useState([])
+  const [isSubmitting, setIsSubmitting] = useState(false)
+  const [attachmentsToRemove, setAttachmentsToRemove] = useState([])
   const [newVisitOpen, setNewVisitOpen] = useState(false)
   const [newVisitData, setNewVisitData] = useState({
     visitAt: '',
@@ -83,6 +87,43 @@ function LeadDetail() {
       reader.onloadend = () => resolve(reader.result)
       reader.readAsDataURL(blob)
     })
+  }
+
+  const handleFileChange = (e) => {
+    const files = Array.from(e.target.files)
+    setSelectedFiles(prev => [...prev, ...files])
+    
+    // Create previews for images and videos
+    files.forEach(file => {
+      if (file.type.startsWith('image/')) {
+        const reader = new FileReader()
+        reader.onloadend = () => {
+          setPreviewFiles(prev => [...prev, { file, preview: reader.result, type: 'image' }])
+        }
+        reader.readAsDataURL(file)
+      } else if (file.type.startsWith('video/')) {
+        const reader = new FileReader()
+        reader.onloadend = () => {
+          setPreviewFiles(prev => [...prev, { file, preview: reader.result, type: 'video' }])
+        }
+        reader.readAsDataURL(file)
+      } else {
+        setPreviewFiles(prev => [...prev, { file, preview: null, type: 'document' }])
+      }
+    })
+  }
+
+  const removeFile = (index) => {
+    setSelectedFiles(prev => prev.filter((_, i) => i !== index))
+    setPreviewFiles(prev => prev.filter((_, i) => i !== index))
+  }
+
+  const formatFileSize = (bytes) => {
+    if (bytes === 0) return '0 Bytes'
+    const k = 1024
+    const sizes = ['Bytes', 'KB', 'MB', 'GB']
+    const i = Math.floor(Math.log(bytes) / Math.log(k))
+    return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i]
   }
 
   const exportVisitPDF = async (visit) => {
@@ -268,6 +309,10 @@ ${visit.actionItems ? 'Recommended follow‑up: ' + visit.actionItems : 'Continu
                   scopeSummary: lead.scopeSummary || '',
                   submissionDueDate: lead.submissionDueDate ? lead.submissionDueDate.substring(0,10) : ''
                 })
+                // Reset file selections when opening edit modal
+                setSelectedFiles([])
+                setPreviewFiles([])
+                setAttachmentsToRemove([])
                 setEditLeadOpen(true)
               }}
             >
@@ -338,11 +383,6 @@ ${visit.actionItems ? 'Recommended follow‑up: ' + visit.actionItems : 'Continu
           {lead.projectId && (
             <button className="link-btn" onClick={() => { try { localStorage.setItem('projectsFocusId', lead.projectId) } catch {}; window.location.href = '/projects' }}>View Project</button>
           )}
-          {lead.edits?.length > 0 && (
-            <button className="link-btn" onClick={() => setShowLeadHistory(!showLeadHistory)}>
-              {showLeadHistory ? 'Hide Lead Edit History' : 'View Lead Edit History'}
-            </button>
-          )}
         </div>
       </div>
 
@@ -391,11 +431,248 @@ ${visit.actionItems ? 'Recommended follow‑up: ' + visit.actionItems : 'Continu
           </div>
         </div>
       </div>
-      {/* Lead edit history (toggle) */}
-      {showLeadHistory && lead.edits?.length > 0 && (
+
+      {/* Attachments Section */}
+      {lead.attachments && lead.attachments.length > 0 && (
         <div className="ld-card ld-section">
-          <h3>Edit History</h3>
-          <div className="edits-list">
+          <h3>Attachments ({lead.attachments.length})</h3>
+          <div style={{ 
+            display: 'grid', 
+            gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', 
+            gap: '20px',
+            marginTop: '15px'
+          }}>
+            {lead.attachments.map((attachment, index) => {
+              const isImage = attachment.mimetype && attachment.mimetype.startsWith('image/')
+              const isVideo = attachment.mimetype && attachment.mimetype.startsWith('video/')
+              const apiBase = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'
+              const fileUrl = attachment.path.startsWith('http') 
+                ? attachment.path 
+                : `${apiBase}${attachment.path}`
+
+              return (
+                <div 
+                  key={index} 
+                  style={{ 
+                    border: '1px solid #ddd', 
+                    borderRadius: '8px', 
+                    padding: '12px',
+                    backgroundColor: '#fff',
+                    boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+                    transition: 'transform 0.2s, box-shadow 0.2s',
+                    cursor: (isImage || isVideo) ? 'pointer' : 'default'
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.transform = 'translateY(-2px)'
+                    e.currentTarget.style.boxShadow = '0 4px 8px rgba(0,0,0,0.15)'
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.transform = 'translateY(0)'
+                    e.currentTarget.style.boxShadow = '0 2px 4px rgba(0,0,0,0.1)'
+                  }}
+                  onClick={(isImage || isVideo) ? () => {
+                    // Open image or video in new window/modal
+                    const newWindow = window.open('', '_blank')
+                    if (isImage) {
+                      newWindow.document.write(`
+                        <html>
+                          <head>
+                            <title>${attachment.originalName}</title>
+                            <style>
+                              body { margin: 0; padding: 20px; display: flex; justify-content: center; align-items: center; min-height: 100vh; background: #f5f5f5; }
+                              img { max-width: 100%; max-height: 90vh; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.2); }
+                            </style>
+                          </head>
+                          <body>
+                            <img src="${fileUrl}" alt="${attachment.originalName}" />
+                          </body>
+                        </html>
+                      `)
+                    } else if (isVideo) {
+                      newWindow.document.write(`
+                        <html>
+                          <head>
+                            <title>${attachment.originalName}</title>
+                            <style>
+                              body { margin: 0; padding: 20px; display: flex; justify-content: center; align-items: center; min-height: 100vh; background: #000; }
+                              video { max-width: 100%; max-height: 90vh; border-radius: 8px; }
+                            </style>
+                          </head>
+                          <body>
+                            <video src="${fileUrl}" controls autoplay style="width: 100%; max-width: 1200px;"></video>
+                          </body>
+                        </html>
+                      `)
+                    }
+                  } : undefined}
+                >
+                  {isImage ? (
+                    <div style={{ position: 'relative', width: '100%', marginBottom: '10px' }}>
+                      <img 
+                        src={fileUrl} 
+                        alt={attachment.originalName}
+                        style={{ 
+                          width: '100%', 
+                          height: '150px', 
+                          objectFit: 'cover', 
+                          borderRadius: '4px',
+                          border: '1px solid #eee'
+                        }}
+                        onError={(e) => {
+                          e.target.style.display = 'none'
+                          const fallback = e.target.nextSibling
+                          if (fallback) fallback.style.display = 'flex'
+                        }}
+                      />
+                      <div style={{ 
+                        display: 'none',
+                        width: '100%', 
+                        height: '150px', 
+                        alignItems: 'center', 
+                        justifyContent: 'center',
+                        backgroundColor: '#f5f5f5',
+                        borderRadius: '4px',
+                        border: '1px solid #eee'
+                      }}>
+                        <span style={{ fontSize: '12px', textAlign: 'center', color: '#666' }}>Image not available</span>
+                      </div>
+                    </div>
+                  ) : isVideo ? (
+                    <div style={{ position: 'relative', width: '100%', marginBottom: '10px' }}>
+                      <video 
+                        src={fileUrl}
+                        style={{ 
+                          width: '100%', 
+                          height: '150px', 
+                          objectFit: 'cover', 
+                          borderRadius: '4px',
+                          border: '1px solid #eee'
+                        }}
+                        controls={false}
+                        muted
+                        onError={(e) => {
+                          e.target.style.display = 'none'
+                          const fallback = e.target.nextSibling
+                          if (fallback) fallback.style.display = 'flex'
+                        }}
+                      />
+                      <div style={{ 
+                        position: 'absolute',
+                        top: '50%',
+                        left: '50%',
+                        transform: 'translate(-50%, -50%)',
+                        width: '40px',
+                        height: '40px',
+                        borderRadius: '50%',
+                        backgroundColor: 'rgba(0, 0, 0, 0.6)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        pointerEvents: 'none'
+                      }}>
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="white">
+                          <path d="M8 5v14l11-7z"/>
+                        </svg>
+                      </div>
+                      <div style={{ 
+                        display: 'none',
+                        width: '100%', 
+                        height: '150px', 
+                        alignItems: 'center', 
+                        justifyContent: 'center',
+                        backgroundColor: '#f5f5f5',
+                        borderRadius: '4px',
+                        border: '1px solid #eee'
+                      }}>
+                        <span style={{ fontSize: '12px', textAlign: 'center', color: '#666' }}>Video not available</span>
+                      </div>
+                    </div>
+                  ) : (
+                    <div style={{ 
+                      width: '100%', 
+                      height: '150px', 
+                      display: 'flex', 
+                      alignItems: 'center', 
+                      justifyContent: 'center',
+                      backgroundColor: '#f5f5f5',
+                      borderRadius: '4px',
+                      marginBottom: '10px',
+                      border: '1px solid #eee'
+                    }}>
+                      <div style={{ textAlign: 'center' }}>
+                        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ color: '#666', marginBottom: '8px' }}>
+                          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                          <polyline points="14 2 14 8 20 8"></polyline>
+                          <line x1="16" y1="13" x2="8" y2="13"></line>
+                          <line x1="16" y1="17" x2="8" y2="17"></line>
+                          <polyline points="10 9 9 9 8 9"></polyline>
+                        </svg>
+                        <div style={{ fontSize: '11px', color: '#666', wordBreak: 'break-word' }}>
+                          {attachment.originalName.length > 20 
+                            ? attachment.originalName.substring(0, 20) + '...' 
+                            : attachment.originalName}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                  <div style={{ marginTop: '8px' }}>
+                    <div style={{ 
+                      fontSize: '13px', 
+                      fontWeight: '500', 
+                      color: '#333',
+                      marginBottom: '4px',
+                      wordBreak: 'break-word'
+                    }}>
+                      {attachment.originalName.length > 25 
+                        ? attachment.originalName.substring(0, 25) + '...' 
+                        : attachment.originalName}
+                    </div>
+                    <div style={{ fontSize: '11px', color: '#999', marginBottom: '8px' }}>
+                      {formatFileSize(attachment.size)}
+                    </div>
+                    <div style={{ fontSize: '10px', color: '#999', marginBottom: '8px' }}>
+                      {attachment.uploadedAt ? new Date(attachment.uploadedAt).toLocaleDateString() : 'N/A'}
+                    </div>
+                    <a 
+                      href={fileUrl} 
+                      target="_blank" 
+                      rel="noopener noreferrer"
+                      onClick={(e) => e.stopPropagation()}
+                      style={{
+                        display: 'inline-block',
+                        padding: '6px 12px',
+                        backgroundColor: '#007bff',
+                        color: 'white',
+                        textDecoration: 'none',
+                        borderRadius: '4px',
+                        fontSize: '12px',
+                        fontWeight: '500',
+                        transition: 'background-color 0.2s'
+                      }}
+                      onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#0056b3'}
+                      onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#007bff'}
+                    >
+                      {isImage ? 'View Full Size' : isVideo ? 'Play Video' : 'Download'}
+                    </a>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Lead edit history (toggle) */}
+      {lead.edits?.length > 0 && (
+        <div className="ld-card ld-section">
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px' }}>
+            <h3 style={{ margin: 0 }}>Edit History</h3>
+            <button className="link-btn" onClick={() => setShowLeadHistory(!showLeadHistory)}>
+              {showLeadHistory ? 'Hide History' : 'View History'}
+            </button>
+          </div>
+          {showLeadHistory && (
+            <div className="edits-list">
             {lead.edits.slice().reverse().map((edit, idx) => (
               <div key={idx} className="edit-item">
                 <div className="edit-header">
@@ -412,7 +689,8 @@ ${visit.actionItems ? 'Recommended follow‑up: ' + visit.actionItems : 'Continu
                 </ul>
               </div>
             ))}
-          </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -598,29 +876,58 @@ ${visit.actionItems ? 'Recommended follow‑up: ' + visit.actionItems : 'Continu
       )}
 
       {editLeadOpen && (
-        <div className="modal-overlay" onClick={() => setEditLeadOpen(false)}>
+        <div className="modal-overlay" onClick={() => {
+          setEditLeadOpen(false)
+          setSelectedFiles([])
+          setPreviewFiles([])
+          setAttachmentsToRemove([])
+        }}>
           <div className="modal" onClick={e => e.stopPropagation()}>
             <div className="modal-header">
               <h2>Edit Lead</h2>
-              <button onClick={() => setEditLeadOpen(false)} className="close-btn">×</button>
+              <button onClick={() => {
+                setEditLeadOpen(false)
+                setSelectedFiles([])
+                setPreviewFiles([])
+                setAttachmentsToRemove([])
+              }} className="close-btn">×</button>
             </div>
             <form
               onSubmit={async (e) => {
                 e.preventDefault()
+                if (isSubmitting) return
+                setIsSubmitting(true)
                 try {
-                  const res = await apiFetch(`/api/leads/${lead._id}`, {
-                    method: 'PUT',
-                    body: JSON.stringify(leadEditData)
+                  const formDataToSend = new FormData()
+                  
+                  // Append form fields
+                  Object.keys(leadEditData).forEach(key => {
+                    formDataToSend.append(key, leadEditData[key])
                   })
-                  if (!res.ok) {
-                    const err = await res.json().catch(() => ({}))
-                    throw new Error(err.message || 'Error saving lead')
+                  
+                  // Append files
+                  selectedFiles.forEach(file => {
+                    formDataToSend.append('attachments', file)
+                  })
+
+                  // Append attachments to remove
+                  if (attachmentsToRemove.length > 0) {
+                    attachmentsToRemove.forEach(index => {
+                      formDataToSend.append('removeAttachments', index)
+                    })
                   }
-                  const updated = await res.json()
-                  setLead(prev => ({ ...prev, ...updated }))
+
+                  const updated = await api.put(`/api/leads/${lead._id}`, formDataToSend)
+                  setLead(prev => ({ ...prev, ...updated.data }))
                   setEditLeadOpen(false)
+                  setSelectedFiles([])
+                  setPreviewFiles([])
+                  setAttachmentsToRemove([])
+                  setNotify({ open: true, title: 'Success', message: 'Lead updated successfully.' })
                 } catch (err) {
-                  alert(err.message || 'Error updating lead')
+                  setNotify({ open: true, title: 'Update Failed', message: err.response?.data?.message || 'We could not update this lead. Please try again.' })
+                } finally {
+                  setIsSubmitting(false)
                 }
               }}
               className="assign-form"
@@ -649,9 +956,234 @@ ${visit.actionItems ? 'Recommended follow‑up: ' + visit.actionItems : 'Continu
                 <label>Submission Due Date *</label>
                 <input type="date" value={leadEditData.submissionDueDate} onChange={e => setLeadEditData({ ...leadEditData, submissionDueDate: e.target.value })} required />
               </div>
+
+              <div className="form-group">
+                <label>Attachments (Documents, Images & Videos)</label>
+                <input
+                  type="file"
+                  multiple
+                  accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,video/*"
+                  onChange={handleFileChange}
+                  className="file-input"
+                />
+                <small style={{ display: 'block', marginTop: '5px', color: '#666' }}>
+                  Accepted: Images (JPEG, PNG, GIF, WebP), Documents (PDF, DOC, DOCX, XLS, XLSX), Videos (MP4, MOV, AVI, WMV, WebM, etc.). Max 10MB per file.
+                </small>
+                
+                {/* Display existing attachments when editing */}
+                {lead && lead.attachments && lead.attachments.length > 0 && (
+                  <div style={{ marginTop: '15px' }}>
+                    <div style={{ marginBottom: '10px', fontWeight: 'bold', fontSize: '14px' }}>Existing Attachments:</div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
+                      {lead.attachments.map((attachment, index) => {
+                        const isImage = attachment.mimetype && attachment.mimetype.startsWith('image/')
+                        const isVideo = attachment.mimetype && attachment.mimetype.startsWith('video/')
+                        const apiBase = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'
+                        const fileUrl = attachment.path.startsWith('http') 
+                          ? attachment.path 
+                          : `${apiBase}${attachment.path}`
+                        return (
+                          <div key={index} style={{ 
+                            position: 'relative', 
+                            border: '1px solid #ddd', 
+                            borderRadius: '4px', 
+                            padding: '8px',
+                            maxWidth: '150px'
+                          }}>
+                            {isImage ? (
+                              <img 
+                                src={fileUrl} 
+                                alt={attachment.originalName}
+                                style={{ width: '100%', height: '100px', objectFit: 'cover', borderRadius: '4px' }}
+                                onError={(e) => {
+                                  e.target.style.display = 'none'
+                                  e.target.nextSibling.style.display = 'flex'
+                                }}
+                              />
+                            ) : isVideo ? (
+                              <div style={{ position: 'relative', width: '100%', height: '100px' }}>
+                                <video 
+                                  src={fileUrl}
+                                  style={{ width: '100%', height: '100px', objectFit: 'cover', borderRadius: '4px' }}
+                                  controls={false}
+                                  muted
+                                />
+                                <div style={{ 
+                                  position: 'absolute',
+                                  top: '50%',
+                                  left: '50%',
+                                  transform: 'translate(-50%, -50%)',
+                                  width: '30px',
+                                  height: '30px',
+                                  borderRadius: '50%',
+                                  backgroundColor: 'rgba(0, 0, 0, 0.6)',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  pointerEvents: 'none'
+                                }}>
+                                  <svg width="18" height="18" viewBox="0 0 24 24" fill="white">
+                                    <path d="M8 5v14l11-7z"/>
+                                  </svg>
+                                </div>
+                              </div>
+                            ) : null}
+                            <div style={{ 
+                              width: '100%', 
+                              height: '100px', 
+                              display: (isImage || isVideo) ? 'none' : 'flex', 
+                              alignItems: 'center', 
+                              justifyContent: 'center',
+                              backgroundColor: '#f5f5f5',
+                              borderRadius: '4px'
+                            }}>
+                              <span style={{ fontSize: '12px', textAlign: 'center' }}>{attachment.originalName}</span>
+                            </div>
+                            <div style={{ marginTop: '5px', fontSize: '11px', color: '#666' }}>
+                              {attachment.originalName.length > 15 ? attachment.originalName.substring(0, 15) + '...' : attachment.originalName}
+                            </div>
+                            <div style={{ fontSize: '10px', color: '#999' }}>
+                              {formatFileSize(attachment.size)}
+                            </div>
+                            <div style={{ display: 'flex', gap: '5px', marginTop: '5px' }}>
+                              <a 
+                                href={fileUrl} 
+                                target="_blank" 
+                                rel="noopener noreferrer"
+                                style={{
+                                  fontSize: '11px',
+                                  color: '#007bff',
+                                  textDecoration: 'none'
+                                }}
+                              >
+                                View
+                              </a>
+                              {!attachmentsToRemove.includes(index.toString()) && (
+                                <button
+                                  type="button"
+                                  onClick={() => setAttachmentsToRemove(prev => [...prev, index.toString()])}
+                                  style={{
+                                    fontSize: '11px',
+                                    color: '#dc3545',
+                                    background: 'none',
+                                    border: 'none',
+                                    cursor: 'pointer',
+                                    padding: 0,
+                                    textDecoration: 'underline'
+                                  }}
+                                >
+                                  Remove
+                                </button>
+                              )}
+                              {attachmentsToRemove.includes(index.toString()) && (
+                                <span style={{ fontSize: '11px', color: '#999', fontStyle: 'italic' }}>
+                                  Will be removed
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </div>
+                )}
+                
+                {/* Display new files being uploaded */}
+                {previewFiles.length > 0 && (
+                  <div style={{ marginTop: '15px' }}>
+                    {lead && lead.attachments && lead.attachments.length > 0 && (
+                      <div style={{ marginBottom: '10px', fontWeight: 'bold', fontSize: '14px' }}>New Attachments:</div>
+                    )}
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
+                      {previewFiles.map((item, index) => (
+                        <div key={index} style={{ 
+                          position: 'relative', 
+                          border: '1px solid #ddd', 
+                          borderRadius: '4px', 
+                          padding: '8px',
+                          maxWidth: '150px'
+                        }}>
+                          {item.type === 'image' && item.preview ? (
+                            <img 
+                              src={item.preview} 
+                              alt={item.file.name}
+                              style={{ width: '100%', height: '100px', objectFit: 'cover', borderRadius: '4px' }}
+                            />
+                          ) : item.type === 'video' && item.preview ? (
+                            <video 
+                              src={item.preview}
+                              style={{ width: '100%', height: '100px', objectFit: 'cover', borderRadius: '4px' }}
+                              controls={false}
+                              muted
+                            />
+                          ) : (
+                            <div style={{ 
+                              width: '100%', 
+                              height: '100px', 
+                              display: 'flex', 
+                              alignItems: 'center', 
+                              justifyContent: 'center',
+                              backgroundColor: '#f5f5f5',
+                              borderRadius: '4px'
+                            }}>
+                              <span style={{ fontSize: '12px', textAlign: 'center' }}>{item.file.name}</span>
+                            </div>
+                          )}
+                          <div style={{ marginTop: '5px', fontSize: '11px', color: '#666' }}>
+                            {item.file.name.length > 15 ? item.file.name.substring(0, 15) + '...' : item.file.name}
+                          </div>
+                          <div style={{ fontSize: '10px', color: '#999' }}>
+                            {formatFileSize(item.file.size)}
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => removeFile(index)}
+                            style={{
+                              position: 'absolute',
+                              top: '5px',
+                              right: '5px',
+                              background: 'rgba(255, 0, 0, 0.7)',
+                              color: 'white',
+                              border: 'none',
+                              borderRadius: '50%',
+                              width: '20px',
+                              height: '20px',
+                              cursor: 'pointer',
+                              fontSize: '12px',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center'
+                            }}
+                          >
+                            ×
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+
               <div className="form-actions">
-                <button type="button" onClick={() => setEditLeadOpen(false)} className="cancel-btn">Cancel</button>
-                <button type="submit" className="save-btn">Save Changes</button>
+                <button 
+                  type="button" 
+                  onClick={() => {
+                    setEditLeadOpen(false)
+                    setSelectedFiles([])
+                    setPreviewFiles([])
+                    setAttachmentsToRemove([])
+                  }} 
+                  className="cancel-btn"
+                >
+                  Cancel
+                </button>
+                <button 
+                  type="submit" 
+                  className="save-btn"
+                  disabled={isSubmitting}
+                >
+                  {isSubmitting ? 'Saving...' : 'Save Changes'}
+                </button>
               </div>
             </form>
           </div>

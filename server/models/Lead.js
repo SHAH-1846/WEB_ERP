@@ -20,6 +20,14 @@ const leadSchema = new mongoose.Schema({
   submissionDueDate: {
     type: Date
   },
+  attachments: [{
+    filename: { type: String, required: true },
+    originalName: { type: String, required: true },
+    path: { type: String, required: true },
+    mimetype: { type: String, required: true },
+    size: { type: Number, required: true },
+    uploadedAt: { type: Date, default: Date.now }
+  }],
   name: {
     type: String
   },
