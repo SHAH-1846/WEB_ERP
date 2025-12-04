@@ -19,7 +19,8 @@ export function Modal({
   size = 'medium',
   className = '',
   showCloseButton = true,
-  closeOnOverlayClick = true
+  closeOnOverlayClick = true,
+  headerActions = null
 }) {
   const modalRef = useRef(null)
   const previousActiveElement = useRef(null)
@@ -143,16 +144,19 @@ export function Modal({
       >
         <div className="modal-header">
           {title && <h2 id="modal-title">{title}</h2>}
-          {showCloseButton && (
-            <button 
-              onClick={onClose} 
-              className="close-btn" 
-              aria-label="Close modal"
-              type="button"
-            >
-              ×
-            </button>
-          )}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            {headerActions}
+            {showCloseButton && (
+              <button 
+                onClick={onClose} 
+                className="close-btn" 
+                aria-label="Close modal"
+                type="button"
+              >
+                ×
+              </button>
+            )}
+          </div>
         </div>
         <div className="modal-content">
           {children}

@@ -1,26 +1,22 @@
 import { useEffect, useMemo, useState } from 'react'
+import { useNavigate, useParams, useLocation } from 'react-router-dom'
 import { api } from '../lib/api'
-import { Modal } from '../design-system/Modal'
 import { FormField, FormRow, FormSection } from '../design-system/FormField'
-import '../design-system/Modal.css'
+import { Modal } from '../design-system/Modal'
 import '../design-system/FormField.css'
+import '../design-system/Modal.css'
+import './LeadManagement.css'
 import logo from '../assets/logo/WBES_Logo.png'
 
-/**
- * Shared Create/Edit Quotation Modal Component
- * Used consistently across Leads and Quotations sections
- */
-export function CreateQuotationModal({
-  isOpen,
-  onClose,
-  onSave,
-  editing = null,
-  preSelectedLeadId = null,
-  leads = [],
-  source = 'leads' // 'leads' or 'quotations'
-}) {
+function QuotationFormPage() {
+  const navigate = useNavigate()
+  const location = useLocation()
+  const { leadId, quotationId } = useParams()
   const [currentUser, setCurrentUser] = useState(null)
+  const [leads, setLeads] = useState([])
+  const [editing, setEditing] = useState(null)
   const [notify, setNotify] = useState({ open: false, title: '', message: '' })
+  const [isSaving, setIsSaving] = useState(false)
 
   const defaultCompany = useMemo(() => ({
     logo,
@@ -62,7 +58,25 @@ export function CreateQuotationModal({
 
   useEffect(() => {
     setCurrentUser(JSON.parse(localStorage.getItem('user')) || null)
-  }, [])
+    void fetchLeads()
+    if (quotationId) {
+      void fetchQuotation()
+    }
+  }, [quotationId])
+
+  const fetchLeads = async () => {
+    try {
+      const res = await api.get('/api/leads')
+      setLeads(res.data)
+    } catch {}
+  }
+
+  const fetchQuotation = async () => {
+    try {
+      const res = await api.get(`/api/quotations/${quotationId}`)
+      setEditing(res.data)
+    } catch {}
+  }
 
   useEffect(() => {
     if (editing) {
@@ -131,9 +145,9 @@ export function CreateQuotationModal({
   }, [editing, defaultCompany, currentUser])
 
   useEffect(() => {
-    // Pre-populate form with lead data if preSelectedLeadId is provided
-    if (preSelectedLeadId && leads.length > 0 && currentUser && !editing) {
-      const selectedLead = leads.find(l => l._id === preSelectedLeadId)
+    // Pre-populate form with lead data if leadId is provided
+    if (leadId && leads.length > 0 && currentUser && !editing) {
+      const selectedLead = leads.find(l => l._id === leadId)
       if (selectedLead) {
         setForm(prev => ({
           ...prev,
@@ -149,7 +163,7 @@ export function CreateQuotationModal({
         }))
       }
     }
-  }, [preSelectedLeadId, leads, currentUser, editing])
+  }, [leadId, leads, currentUser, editing])
 
   const recalcTotals = (items, vatRate) => {
     const sub = items.reduce((sum, it) => sum + (Number(it.quantity || 0) * Number(it.unitRate || 0)), 0)
@@ -160,6 +174,7 @@ export function CreateQuotationModal({
 
   const handleSave = async (e) => {
     e.preventDefault()
+    setIsSaving(true)
     try {
       const payload = { ...form }
       const totals = recalcTotals(payload.priceSchedule.items, payload.priceSchedule.taxDetails.vatRate)
@@ -167,34 +182,27 @@ export function CreateQuotationModal({
       payload.priceSchedule.taxDetails.vatAmount = totals.vatAmount
       payload.priceSchedule.grandTotal = totals.grandTotal
       
-      await onSave(payload, editing)
-      onClose()
+      if (editing) {
+        await api.put(`/api/quotations/${editing._id}`, payload)
+        setNotify({ open: true, title: 'Success', message: 'Quotation updated successfully.' })
+      } else {
+        await api.post('/api/quotations', payload)
+        setNotify({ open: true, title: 'Success', message: 'Quotation created successfully.' })
+      }
+      
+      // Navigate back after a short delay
+      setTimeout(() => {
+        if (location.pathname.includes('/quotations/')) {
+          navigate('/quotations')
+        } else {
+          navigate('/leads')
+        }
+      }, 1500)
     } catch (err) {
       setNotify({ open: true, title: 'Save Failed', message: err.response?.data?.message || 'We could not save this quotation. Please try again.' })
+    } finally {
+      setIsSaving(false)
     }
-  }
-
-  const handleOpenInNewTab = () => {
-    let url = ''
-    if (source === 'leads') {
-      if (editing) {
-        // For editing from leads, we still use the quotations route
-        url = `/quotations/edit/${editing._id}`
-      } else if (form.lead || preSelectedLeadId) {
-        const leadId = form.lead || preSelectedLeadId
-        url = `/leads/create-quotation/${leadId}`
-      } else {
-        url = `/leads/create-quotation`
-      }
-    } else {
-      // source === 'quotations'
-      if (editing) {
-        url = `/quotations/edit/${editing._id}`
-      } else {
-        url = `/quotations/create`
-      }
-    }
-    window.open(url, '_blank')
   }
 
   const onChangeItem = (idx, field, value) => {
@@ -216,44 +224,57 @@ export function CreateQuotationModal({
     })
   }
 
+  const handleCancel = () => {
+    if (location.pathname.includes('/quotations/')) {
+      navigate('/quotations')
+    } else {
+      navigate('/leads')
+    }
+  }
+
+  // Determine source based on the route
+  const source = location.pathname.includes('/quotations/') ? 'quotations' : 'leads'
+
   return (
-    <>
-      <Modal
-        isOpen={isOpen}
-        onClose={onClose}
-        title={editing ? 'Edit Quotation' : 'Create Quotation'}
-        size="medium"
-        className=""
-        closeOnOverlayClick={true}
-        headerActions={
+    <div style={{ 
+      minHeight: '100vh', 
+      background: 'var(--bg)', 
+      padding: '24px',
+      maxWidth: '1200px',
+      margin: '0 auto'
+    }}>
+      <div style={{
+        background: 'var(--card)',
+        borderRadius: '12px',
+        padding: '32px',
+        boxShadow: '0 2px 8px rgba(0,0,0,0.1)'
+      }}>
+        <div style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          marginBottom: '32px',
+          paddingBottom: '24px',
+          borderBottom: '1px solid var(--border)'
+        }}>
+          <h1 style={{ 
+            fontSize: '28px', 
+            fontWeight: '600', 
+            color: 'var(--text)',
+            margin: 0
+          }}>
+            {editing ? 'Edit Quotation' : 'Create Quotation'}
+          </h1>
           <button
             type="button"
-            onClick={handleOpenInNewTab}
-            className="link-btn"
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px',
-              fontSize: '14px',
-              padding: '6px 12px',
-              border: '1px solid var(--border)',
-              borderRadius: '6px',
-              background: 'transparent',
-              color: 'var(--text)',
-              cursor: 'pointer',
-              transition: 'all 0.2s'
-            }}
-            title="Open in New Tab"
+            onClick={handleCancel}
+            className="cancel-btn"
+            style={{ padding: '8px 16px' }}
           >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
-              <polyline points="15 3 21 3 21 9"></polyline>
-              <line x1="10" y1="14" x2="21" y2="3"></line>
-            </svg>
-            Open in New Tab
+            Cancel
           </button>
-        }
-      >
+        </div>
+
         <form onSubmit={handleSave}>
           <FormField label="Select Lead" required>
             <select 
@@ -637,15 +658,15 @@ export function CreateQuotationModal({
           </FormSection>
 
           <div className="form-actions">
-            <button type="button" onClick={onClose} className="cancel-btn">
+            <button type="button" onClick={handleCancel} className="cancel-btn">
               Cancel
             </button>
-            <button type="submit" className="save-btn">
-              {editing ? 'Save Changes' : 'Create Quotation'}
+            <button type="submit" className="save-btn" disabled={isSaving}>
+              {isSaving ? 'Saving...' : (editing ? 'Save Changes' : 'Create Quotation')}
             </button>
           </div>
         </form>
-      </Modal>
+      </div>
 
       {notify.open && (
         <Modal
@@ -666,7 +687,9 @@ export function CreateQuotationModal({
           </div>
         </Modal>
       )}
-    </>
+    </div>
   )
 }
+
+export default QuotationFormPage
 

@@ -5,6 +5,7 @@ const fs = require('fs');
 const Lead = require('../models/Lead');
 const SiteVisit = require('../models/SiteVisit');
 const Project = require('../models/Project');
+const AuditLog = require('../models/AuditLog');
 const jwt = require('jsonwebtoken');
 const router = express.Router();
 
@@ -302,7 +303,8 @@ router.put('/:id', auth, upload.array('attachments', 10), async (req, res) => {
 // Delete lead (creator can delete only when draft)
 router.delete('/:id', auth, async (req, res) => {
   try {
-    const lead = await Lead.findById(req.params.id);
+    const lead = await Lead.findById(req.params.id)
+      .populate('createdBy', 'name email');
     if (!lead) return res.status(404).json({ message: 'Lead not found' });
 
     if (lead.createdBy.toString() !== req.user.userId) {
@@ -319,9 +321,43 @@ router.delete('/:id', auth, async (req, res) => {
       return res.status(400).json({ message: 'Cannot delete lead with existing site visits' });
     }
 
+    // Create audit log before deletion
+    let createdById = null;
+    if (lead.createdBy) {
+      if (typeof lead.createdBy === 'object' && lead.createdBy._id) {
+        createdById = lead.createdBy._id;
+      } else {
+        createdById = lead.createdBy;
+      }
+    }
+    
+    try {
+      await AuditLog.create({
+        action: 'lead_deleted',
+        entityType: 'lead',
+        entityId: lead._id,
+        entityData: {
+          customerName: lead.customerName || null,
+          projectTitle: lead.projectTitle || null,
+          enquiryNumber: lead.enquiryNumber || null,
+          status: lead.status || null,
+          createdBy: createdById,
+          createdAt: lead.createdAt || null
+        },
+        deletedBy: req.user.userId,
+        deletedAt: new Date(),
+        reason: (req.body && req.body.reason) ? req.body.reason : null,
+        ipAddress: req.ip || req.socket?.remoteAddress || 'unknown',
+        userAgent: req.get('user-agent') || 'unknown'
+      });
+    } catch (auditError) {
+      console.error('Error creating audit log:', auditError);
+    }
+
     await Lead.findByIdAndDelete(req.params.id);
     res.json({ message: 'Lead deleted successfully' });
   } catch (error) {
+    console.error('Error deleting lead:', error);
     res.status(500).json({ message: 'Server error' });
   }
 });

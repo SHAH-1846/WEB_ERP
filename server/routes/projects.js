@@ -4,6 +4,7 @@ const User = require('../models/User');
 const jwt = require('jsonwebtoken');
 const Revision = require('../models/Revision');
 const Lead = require('../models/Lead');
+const AuditLog = require('../models/AuditLog');
 const router = express.Router();
 
 const auth = (req, res, next) => {
@@ -197,10 +198,49 @@ router.delete('/:id', auth, async (req, res) => {
     if (!(roles.includes('manager') || roles.includes('admin'))) {
       return res.status(403).json({ message: 'Only managers can delete projects' });
     }
-    const deleted = await Project.findByIdAndDelete(req.params.id);
-    if (!deleted) return res.status(404).json({ message: 'Project not found' });
+    const project = await Project.findById(req.params.id)
+      .populate('leadId', 'customerName projectTitle')
+      .populate('createdBy', 'name email');
+    if (!project) return res.status(404).json({ message: 'Project not found' });
+    
+    // Create audit log before deletion
+    const leadData = typeof project.leadId === 'object' ? project.leadId : null;
+    let createdById = null;
+    if (project.createdBy) {
+      if (typeof project.createdBy === 'object' && project.createdBy._id) {
+        createdById = project.createdBy._id;
+      } else {
+        createdById = project.createdBy;
+      }
+    }
+    
+    try {
+      await AuditLog.create({
+        action: 'project_deleted',
+        entityType: 'project',
+        entityId: project._id,
+        entityData: {
+          name: project.name || null,
+          projectTitle: leadData?.projectTitle || null,
+          customerName: leadData?.customerName || null,
+          status: project.status || null,
+          createdBy: createdById,
+          createdAt: project.createdAt || null
+        },
+        deletedBy: req.user.userId,
+        deletedAt: new Date(),
+        reason: (req.body && req.body.reason) ? req.body.reason : null,
+        ipAddress: req.ip || req.socket?.remoteAddress || 'unknown',
+        userAgent: req.get('user-agent') || 'unknown'
+      });
+    } catch (auditError) {
+      console.error('Error creating audit log:', auditError);
+    }
+    
+    await Project.findByIdAndDelete(req.params.id);
     return res.json({ success: true });
   } catch (error) {
+    console.error('Error deleting project:', error);
     return res.status(500).json({ message: 'Server error' });
   }
 });

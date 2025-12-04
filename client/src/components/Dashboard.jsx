@@ -7,6 +7,8 @@ import ProjectManagement from './ProjectManagement'
 import QuotationManagement from './QuotationManagement'
 import RevisionManagement from './RevisionManagement'
 import ProjectVariationManagement from './ProjectVariationManagement'
+import EstimationAuditLogs from './EstimationAuditLogs'
+import GeneralAuditLogs from './GeneralAuditLogs'
 import QuotationModal from './QuotationModal'
 import { initTheme, setTheme } from '../utils/theme'
 
@@ -38,15 +40,21 @@ function Dashboard() {
   const [showLogoutModal, setShowLogoutModal] = useState(false)
 
   useEffect(() => {
-    const userData = JSON.parse(localStorage.getItem('user'))
-    setUser(userData)
+    try {
+      const userDataStr = localStorage.getItem('user')
+      const userData = userDataStr ? JSON.parse(userDataStr) : null
+      setUser(userData)
+    } catch (error) {
+      console.error('Error loading user data:', error)
+      setUser(null)
+    }
     
     // When modal route is active, use backgroundLocation to determine activeTab
     // This ensures the Leads list stays visible behind the modal
     if (isModalRoute && backgroundLocation) {
       const pathSegments = backgroundLocation.pathname.split('/').filter(Boolean)
       const basePath = pathSegments[0] || 'dashboard'
-      if (['dashboard','users','leads','projects','quotations','revisions','project-variations'].includes(basePath)) {
+      if (['dashboard','users','leads','projects','quotations','revisions','project-variations','estimation-audit-logs','general-audit-logs'].includes(basePath)) {
         setActiveTab(basePath)
       }
     } else if (isModalRoute && !backgroundLocation) {
@@ -57,7 +65,7 @@ function Dashboard() {
       } else {
         const pathSegments = location.pathname.split('/').filter(Boolean)
         const basePath = pathSegments[0] || 'dashboard'
-        if (['dashboard','users','leads','projects','quotations','revisions','project-variations'].includes(basePath)) {
+        if (['dashboard','users','leads','projects','quotations','revisions','project-variations','estimation-audit-logs','general-audit-logs'].includes(basePath)) {
           setActiveTab(basePath)
         }
       }
@@ -65,7 +73,7 @@ function Dashboard() {
       // Normal navigation - use current pathname
       const pathSegments = location.pathname.split('/').filter(Boolean)
       const basePath = pathSegments[0] || 'dashboard'
-      if (['dashboard','users','leads','projects','quotations','revisions','project-variations'].includes(basePath)) {
+      if (['dashboard','users','leads','projects','quotations','revisions','project-variations','estimation-audit-logs','general-audit-logs'].includes(basePath)) {
         setActiveTab(basePath)
       }
     }
@@ -156,6 +164,22 @@ function Dashboard() {
               <span className="label">Project Variations</span>
             </NavLink>
           )}
+          {(user?.roles?.includes('manager') || user?.roles?.includes('admin')) && (
+            <>
+              <NavLink to="/estimation-audit-logs" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
+                <svg viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/>
+                </svg>
+                <span className="label">Estimation Audit Logs</span>
+              </NavLink>
+              <NavLink to="/general-audit-logs" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
+                <svg viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-5 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z"/>
+                </svg>
+                <span className="label">General Audit Logs</span>
+              </NavLink>
+            </>
+          )}
         </nav>
         
         <div className="sidebar-footer">
@@ -197,6 +221,8 @@ function Dashboard() {
               {activeTab === 'projects' && 'Project Management'}
               {activeTab === 'quotations' && 'Quotation Management'}
               {activeTab === 'revisions' && 'Revisions Management'}
+              {activeTab === 'estimation-audit-logs' && 'Estimation Audit Logs'}
+              {activeTab === 'general-audit-logs' && 'General Audit Logs'}
               {activeTab === 'project-variations' && 'Project Variations'}
             </h1>
               <p>Welcome back, {user?.name}!</p>
@@ -318,6 +344,10 @@ function Dashboard() {
           {activeTab === 'quotations' && <QuotationManagement />}
           {activeTab === 'revisions' && <RevisionManagement />}
           {activeTab === 'project-variations' && <ProjectVariationManagement />}
+          {activeTab === 'estimation-audit-logs' && <EstimationAuditLogs />}
+          {activeTab === 'general-audit-logs' && (
+            <GeneralAuditLogs />
+          )}
         </div>
       </div>
       

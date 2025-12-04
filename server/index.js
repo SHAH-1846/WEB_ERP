@@ -12,6 +12,8 @@ const siteVisitRoutes = require('./routes/siteVisits');
 const quotationRoutes = require('./routes/quotations');
 const revisionRoutes = require('./routes/revisions');
 const projectVariationRoutes = require('./routes/projectVariations');
+const auditLogRoutes = require('./routes/auditLogs');
+const generalAuditLogRoutes = require('./routes/generalAuditLogs');
 
 const app = express();
 const path = require('path');
@@ -34,6 +36,8 @@ app.use('/api/roles', roleRoutes);
 app.use('/api/quotations', quotationRoutes);
 app.use('/api/revisions', revisionRoutes);
 app.use('/api/project-variations', projectVariationRoutes);
+app.use('/api/audit-logs', auditLogRoutes);
+app.use('/api/general-audit-logs', generalAuditLogRoutes);
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {

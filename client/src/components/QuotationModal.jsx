@@ -7,13 +7,17 @@ import '../design-system'
 function QuotationModal() {
   const navigate = useNavigate()
   const location = useLocation()
-  const { leadId } = useParams()
+  const { leadId, quotationId } = useParams()
   const backgroundLocation = location.state?.backgroundLocation
   const [leads, setLeads] = useState([])
+  const [editing, setEditing] = useState(null)
 
   useEffect(() => {
     void fetchLeads()
-  }, [])
+    if (quotationId) {
+      void fetchQuotation()
+    }
+  }, [quotationId, leadId])
 
   const fetchLeads = async () => {
     try {
@@ -22,22 +26,37 @@ function QuotationModal() {
     } catch {}
   }
 
-  const handleSave = async (payload, editing) => {
-    if (editing) {
-      await api.put(`/api/quotations/${editing._id}`, payload)
+  const fetchQuotation = async () => {
+    try {
+      const res = await api.get(`/api/quotations/${quotationId}`)
+      setEditing(res.data)
+    } catch {}
+  }
+
+  const handleSave = async (payload, editingQuotation) => {
+    if (editingQuotation) {
+      await api.put(`/api/quotations/${editingQuotation._id}`, payload)
     } else {
       await api.post('/api/quotations', payload)
     }
   }
 
   const handleClose = () => {
-    // Use navigate(-1) to go back to the background location, preserving the Leads list
+    // Use navigate(-1) to go back to the background location, preserving the list
     if (backgroundLocation) {
       navigate(-1)
     } else {
-      navigate('/leads', { replace: true })
+      // Determine the correct route based on the current path
+      if (location.pathname.includes('/quotations/')) {
+        navigate('/quotations', { replace: true })
+      } else {
+        navigate('/leads', { replace: true })
+      }
     }
   }
+
+  // Determine source based on the route
+  const source = location.pathname.includes('/quotations/') ? 'quotations' : 'leads'
 
   return (
     <CreateQuotationModal
@@ -45,7 +64,9 @@ function QuotationModal() {
       onClose={handleClose}
       onSave={handleSave}
       preSelectedLeadId={leadId}
+      editing={editing}
       leads={leads}
+      source={source}
     />
   )
 }

@@ -49,6 +49,7 @@ function LeadManagement() {
   const [showQuotationsListModal, setShowQuotationsListModal] = useState(false)
   const [quotationsForLead, setQuotationsForLead] = useState([])
   const [selectedLeadForList, setSelectedLeadForList] = useState(null)
+  const [deleteQuotationModal, setDeleteQuotationModal] = useState({ open: false, quotation: null })
   const [showRevisionsModal, setShowRevisionsModal] = useState({ open: false, quotation: null })
   const [viewMode, setViewMode] = useState(() => {
     const saved = localStorage.getItem('leadViewMode')
@@ -314,6 +315,37 @@ function LeadManagement() {
       setNotify({ open: true, title: 'Deleted', message: 'Lead deleted successfully.' })
     } catch (error) {
       setNotify({ open: true, title: 'Delete Failed', message: error.response?.data?.message || 'We could not delete this lead. Please try again.' })
+    } finally {
+      setIsSubmitting(false)
+      setLoadingAction(null)
+    }
+  }
+
+  const handleDeleteQuotation = async (q) => {
+    if (isSubmitting) return
+    setLoadingAction(`delete-quotation-${q._id}`)
+    setIsSubmitting(true)
+    try {
+      await api.delete(`/api/quotations/${q._id}`)
+      // Refresh quotations for the lead
+      const leadId = typeof q.lead === 'object' ? q.lead?._id : q.lead
+      if (leadId && leadQuotationsMap[leadId]) {
+        setLeadQuotationsMap(prev => ({
+          ...prev,
+          [leadId]: (prev[leadId] || []).filter(qu => qu._id !== q._id)
+        }))
+      }
+      // Refresh quotations in modal if open
+      if (quotationsForLead.length > 0) {
+        setQuotationsForLead(prev => prev.filter(qu => qu._id !== q._id))
+      }
+      // Refresh quotation counts
+      await fetchLeads()
+      setDeleteQuotationModal({ open: false, quotation: null })
+      setNotify({ open: true, title: 'Deleted', message: 'Quotation deleted successfully.' })
+    } catch (error) {
+      setDeleteQuotationModal({ open: false, quotation: null })
+      setNotify({ open: true, title: 'Delete Failed', message: error.response?.data?.message || 'We could not delete this quotation. Please try again.' })
     } finally {
       setIsSubmitting(false)
       setLoadingAction(null)
@@ -1172,6 +1204,15 @@ function LeadManagement() {
                                             >
                                               View Revisions
                                             </button>
+                                            {(q.managementApproval?.status !== 'approved' || currentUser?.roles?.includes('manager') || currentUser?.roles?.includes('admin')) && (
+                                              <button
+                                                className="reject-btn"
+                                                onClick={() => setDeleteQuotationModal({ open: true, quotation: q })}
+                                                style={{ marginLeft: '6px' }}
+                                              >
+                                                Delete
+                                              </button>
+                                            )}
                                           </td>
                                         </tr>
                                         {expandedRevisionRows[q._id] && (
@@ -2101,6 +2142,33 @@ function LeadManagement() {
         </div>
       )}
 
+      {deleteQuotationModal.open && deleteQuotationModal.quotation && (
+        <div className="modal-overlay" onClick={() => setDeleteQuotationModal({ open: false, quotation: null })} style={{ zIndex: 10000 }}>
+          <div className="modal" onClick={e => e.stopPropagation()} style={{ zIndex: 10001 }}>
+            <div className="modal-header">
+              <h2>Delete Quotation</h2>
+              <button onClick={() => setDeleteQuotationModal({ open: false, quotation: null })} className="close-btn">×</button>
+            </div>
+            <div className="lead-form">
+              <p>Are you sure you want to delete this quotation? This action cannot be undone.</p>
+              <div className="form-actions">
+                <button type="button" className="cancel-btn" onClick={() => setDeleteQuotationModal({ open: false, quotation: null })}>Cancel</button>
+                <button 
+                  type="button" 
+                  className="reject-btn" 
+                  onClick={() => handleDeleteQuotation(deleteQuotationModal.quotation)}
+                  disabled={isSubmitting && loadingAction === `delete-quotation-${deleteQuotationModal.quotation._id}`}
+                >
+                  <ButtonLoader loading={loadingAction === `delete-quotation-${deleteQuotationModal.quotation._id}`}>
+                    {isSubmitting && loadingAction === `delete-quotation-${deleteQuotationModal.quotation._id}` ? 'Deleting...' : 'Delete'}
+                  </ButtonLoader>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {showQuotationsListModal && selectedLeadForList && (
         <div className="modal-overlay" onClick={() => {
           setShowQuotationsListModal(false)
@@ -2186,6 +2254,15 @@ function LeadManagement() {
                             >
                               View Revisions
                             </button>
+                            {(q.managementApproval?.status !== 'approved' || currentUser?.roles?.includes('manager') || currentUser?.roles?.includes('admin')) && (
+                              <button
+                                className="reject-btn"
+                                onClick={() => setDeleteQuotationModal({ open: true, quotation: q })}
+                                style={{ marginLeft: '6px' }}
+                              >
+                                Delete
+                              </button>
+                            )}
                           </td>
                         </tr>
                       ))}
@@ -2407,6 +2484,7 @@ function LeadManagement() {
           setShowQuotationModal(false)
           setSelectedLeadForQuotation(null)
         }}
+        source="leads"
         onSave={async (payload, editing) => {
           try {
             if (editing) {

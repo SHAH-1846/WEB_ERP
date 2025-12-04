@@ -20,6 +20,7 @@ function QuotationDetail() {
   const [revisions, setRevisions] = useState([])
   const [revisionHistoryOpen, setRevisionHistoryOpen] = useState({})
   const [notify, setNotify] = useState({ open: false, title: '', message: '' })
+  const [deleteModal, setDeleteModal] = useState({ open: false })
 
   const ensurePdfMake = async () => {
     if (window.pdfMake) return
@@ -375,6 +376,23 @@ function QuotationDetail() {
     }
   }
 
+  const handleDeleteQuotation = async () => {
+    try {
+      const token = localStorage.getItem('token')
+      await apiFetch(`/api/quotations/${quotation._id}`, {
+        method: 'DELETE'
+      })
+      setDeleteModal({ open: false })
+      setNotify({ open: true, title: 'Deleted', message: 'Quotation deleted successfully.' })
+      setTimeout(() => {
+        window.location.href = '/quotations'
+      }, 1500)
+    } catch (e) {
+      setDeleteModal({ open: false })
+      setNotify({ open: true, title: 'Delete Failed', message: e.message || 'We could not delete the quotation. Please try again.' })
+    }
+  }
+
   const createRevision = async () => {
     try {
       const token = localStorage.getItem('token')
@@ -611,6 +629,11 @@ function QuotationDetail() {
           {quotation.edits?.length > 0 && (
             <button className="link-btn" onClick={() => setShowQuoteHistory(!showQuoteHistory)}>
               {showQuoteHistory ? 'Hide Quotation Edit History' : 'View Quotation Edit History'}
+            </button>
+          )}
+          {(quotation.managementApproval?.status !== 'approved' || currentUser?.roles?.includes('manager') || currentUser?.roles?.includes('admin')) && (
+            <button className="reject-btn" onClick={() => setDeleteModal({ open: true })}>
+              Delete
             </button>
           )}
         </div>
@@ -1155,6 +1178,26 @@ function QuotationDetail() {
               <p>{notify.message}</p>
               <div className="form-actions">
                 <button type="button" className="save-btn" onClick={() => setNotify({ open: false, title: '', message: '' })}>OK</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {deleteModal.open && (
+        <div className="modal-overlay" onClick={() => setDeleteModal({ open: false })}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>Delete Quotation</h2>
+              <button onClick={() => setDeleteModal({ open: false })} className="close-btn">×</button>
+            </div>
+            <div className="lead-form">
+              <p>Are you sure you want to delete this quotation? This action cannot be undone.</p>
+              <div className="form-actions">
+                <button type="button" className="cancel-btn" onClick={() => setDeleteModal({ open: false })}>Cancel</button>
+                <button type="button" className="reject-btn" onClick={handleDeleteQuotation}>
+                  Delete
+                </button>
               </div>
             </div>
           </div>

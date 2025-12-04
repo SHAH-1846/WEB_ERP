@@ -270,7 +270,10 @@ router.delete('/:id', auth, async (req, res) => {
       return res.status(403).json({ message: 'Not authorized to delete variations' });
     }
 
-    const variation = await ProjectVariation.findById(req.params.id);
+    const variation = await ProjectVariation.findById(req.params.id)
+      .populate('parentProject', 'name')
+      .populate('lead', 'customerName projectTitle')
+      .populate('createdBy', 'name email');
     if (!variation) return res.status(404).json({ message: 'Variation not found' });
 
     // Check if there are child variations
@@ -279,9 +282,46 @@ router.delete('/:id', auth, async (req, res) => {
       return res.status(400).json({ message: 'Cannot delete variation with child variations' });
     }
 
+    // Create audit log before deletion
+    const projectData = typeof variation.parentProject === 'object' ? variation.parentProject : null;
+    const leadData = typeof variation.lead === 'object' ? variation.lead : null;
+    let createdById = null;
+    if (variation.createdBy) {
+      if (typeof variation.createdBy === 'object' && variation.createdBy._id) {
+        createdById = variation.createdBy._id;
+      } else {
+        createdById = variation.createdBy;
+      }
+    }
+    
+    try {
+      await AuditLog.create({
+        action: 'project_variation_deleted',
+        entityType: 'project_variation',
+        entityId: variation._id,
+        entityData: {
+          variationName: variation.name || null,
+          projectName: projectData?.name || null,
+          projectTitle: leadData?.projectTitle || null,
+          customerName: leadData?.customerName || null,
+          managementApprovalStatus: variation.managementApproval?.status || null,
+          createdBy: createdById,
+          createdAt: variation.createdAt || null
+        },
+        deletedBy: req.user.userId,
+        deletedAt: new Date(),
+        reason: (req.body && req.body.reason) ? req.body.reason : null,
+        ipAddress: req.ip || req.socket?.remoteAddress || 'unknown',
+        userAgent: req.get('user-agent') || 'unknown'
+      });
+    } catch (auditError) {
+      console.error('Error creating audit log:', auditError);
+    }
+
     await ProjectVariation.findByIdAndDelete(req.params.id);
     res.json({ message: 'Variation deleted successfully' });
   } catch (error) {
+    console.error('Error deleting project variation:', error);
     res.status(500).json({ message: 'Server error' });
   }
 });
@@ -344,6 +384,43 @@ router.patch('/:id/approve', auth, async (req, res) => {
     }
 
     await variation.save();
+    
+    // Create audit log for approval/rejection actions
+    try {
+      let auditAction = null;
+      if (status === 'pending') {
+        auditAction = 'project_variation_approval_requested';
+      } else if (status === 'approved') {
+        auditAction = 'project_variation_approved';
+      } else if (status === 'rejected') {
+        auditAction = 'project_variation_rejected';
+      }
+      
+      if (auditAction) {
+        const projectData = typeof variation.parentProject === 'object' ? variation.parentProject : null;
+        const leadData = typeof variation.lead === 'object' ? variation.lead : null;
+        await AuditLog.create({
+          action: auditAction,
+          entityType: 'project_variation',
+          entityId: variation._id,
+          entityData: {
+            variationName: variation.name || null,
+            projectName: projectData?.name || null,
+            projectTitle: leadData?.projectTitle || null,
+            customerName: leadData?.customerName || null,
+            managementApprovalStatus: status
+          },
+          performedBy: req.user.userId,
+          performedAt: new Date(),
+          reason: note || null,
+          ipAddress: req.ip || req.socket?.remoteAddress || 'unknown',
+          userAgent: req.get('user-agent') || 'unknown'
+        });
+      }
+    } catch (auditError) {
+      console.error('Error creating audit log:', auditError);
+    }
+    
     const populated = await ProjectVariation.findById(variation._id)
       .populate('parentProject', 'name')
       .populate('lead')

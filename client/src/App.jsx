@@ -11,6 +11,7 @@ import ProjectDetail from './components/ProjectDetail'
 import VariationDetail from './components/VariationDetail'
 import SiteVisitDetail from './components/SiteVisitDetail'
 import QuotationModal from './components/QuotationModal'
+import QuotationFormPage from './components/QuotationFormPage'
 import { initTheme, setTheme } from './utils/theme'
 
 function Login() {
@@ -221,6 +222,16 @@ function App() {
             <Dashboard />
           </ProtectedRoute>
         } />
+        <Route path="/estimation-audit-logs" element={
+          <ProtectedRoute>
+            <Dashboard />
+          </ProtectedRoute>
+        } />
+        <Route path="/general-audit-logs" element={
+          <ProtectedRoute>
+            <Dashboard />
+          </ProtectedRoute>
+        } />
         <Route path="/lead-detail" element={
           <ProtectedRoute>
             <LeadDetail />
@@ -253,7 +264,22 @@ function App() {
         } />
         <Route path="/leads/create-quotation/:leadId" element={
           <ProtectedRoute>
-            <QuotationModal />
+            <QuotationFormPage />
+          </ProtectedRoute>
+        } />
+        <Route path="/leads/create-quotation" element={
+          <ProtectedRoute>
+            <QuotationFormPage />
+          </ProtectedRoute>
+        } />
+        <Route path="/quotations/create" element={
+          <ProtectedRoute>
+            <QuotationFormPage />
+          </ProtectedRoute>
+        } />
+        <Route path="/quotations/edit/:quotationId" element={
+          <ProtectedRoute>
+            <QuotationFormPage />
           </ProtectedRoute>
         } />
       </Routes>

@@ -19,6 +19,7 @@ function QuotationManagement() {
   const [selectedLeadFilter, setSelectedLeadFilter] = useState('')
   const [approvalModal, setApprovalModal] = useState({ open: false, quote: null, action: null, note: '' })
   const [sendApprovalConfirmModal, setSendApprovalConfirmModal] = useState({ open: false, quote: null })
+  const [deleteModal, setDeleteModal] = useState({ open: false, quote: null })
   const [approvalsView, setApprovalsView] = useState(null)
   const [revisionModal, setRevisionModal] = useState({ open: false, quote: null, form: null })
   const [hasRevisionFor, setHasRevisionFor] = useState({})
@@ -289,6 +290,24 @@ function QuotationManagement() {
       setNotify({ open: true, title: 'Request Sent', message: 'Approval request has been sent successfully.' })
     } catch (e) {
       setNotify({ open: true, title: 'Send Failed', message: e.response?.data?.message || 'We could not send for approval. Please try again.' })
+    } finally {
+      setIsSubmitting(false)
+      setLoadingAction(null)
+    }
+  }
+
+  const handleDeleteQuotation = async (q) => {
+    if (isSubmitting) return
+    setLoadingAction(`delete-${q._id}`)
+    setIsSubmitting(true)
+    try {
+      await api.delete(`/api/quotations/${q._id}`)
+      await fetchQuotations()
+      setDeleteModal({ open: false, quote: null })
+      setNotify({ open: true, title: 'Deleted', message: 'Quotation deleted successfully.' })
+    } catch (e) {
+      setDeleteModal({ open: false, quote: null })
+      setNotify({ open: true, title: 'Delete Failed', message: e.response?.data?.message || 'We could not delete the quotation. Please try again.' })
     } finally {
       setIsSubmitting(false)
       setLoadingAction(null)
@@ -816,13 +835,24 @@ function QuotationManagement() {
   }
 
   // Helper function to render quotation actions (used in both card and table views)
-  const renderQuotationActions = (q, isTableView = false) => (
+  const renderQuotationActions = (q, isTableView = false) => {
+    const isApproved = q.managementApproval?.status === 'approved'
+    const canDelete = !isApproved || (currentUser?.roles?.includes('manager') || currentUser?.roles?.includes('admin'))
+    return (
     <div className="lead-actions">
       <button className="assign-btn" onClick={() => {
         setEditing(q)
         setShowModal(true)
       }}>Edit</button>
       <button className="save-btn" onClick={() => exportPDF(q)}>Export</button>
+      {canDelete && (
+        <button 
+          className="reject-btn" 
+          onClick={() => setDeleteModal({ open: true, quote: q })}
+        >
+          Delete
+        </button>
+      )}
       {q.managementApproval?.status === 'approved' && !hasRevisionFor[q._id] && (
         <button className="assign-btn" onClick={() => {
           setRevisionModal({ open: true, quote: q, form: {
@@ -919,7 +949,8 @@ function QuotationManagement() {
         View Revisions
       </button>
     </div>
-  )
+    )
+  }
 
   // Debounce name filter (300ms delay)
   useEffect(() => {
@@ -1763,6 +1794,7 @@ function QuotationManagement() {
           setShowModal(false)
           setEditing(null)
         }}
+        source="quotations"
         onSave={handleSave}
         editing={editing}
         leads={leads}
@@ -2082,6 +2114,33 @@ function QuotationManagement() {
                   await approveQuotation(approvalModal.quote, approvalModal.action, approvalModal.note)
                   setApprovalModal({ open: false, quote: null, action: null, note: '' })
                 }}>Confirm</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {deleteModal.open && deleteModal.quote && (
+        <div className="modal-overlay" onClick={() => setDeleteModal({ open: false, quote: null })}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>Delete Quotation</h2>
+              <button onClick={() => setDeleteModal({ open: false, quote: null })} className="close-btn">×</button>
+            </div>
+            <div className="lead-form">
+              <p>Are you sure you want to delete this quotation? This action cannot be undone.</p>
+              <div className="form-actions">
+                <button type="button" className="cancel-btn" onClick={() => setDeleteModal({ open: false, quote: null })}>Cancel</button>
+                <button 
+                  type="button" 
+                  className="reject-btn" 
+                  onClick={() => handleDeleteQuotation(deleteModal.quote)}
+                  disabled={isSubmitting && loadingAction === `delete-${deleteModal.quote._id}`}
+                >
+                  <ButtonLoader loading={loadingAction === `delete-${deleteModal.quote._id}`}>
+                    {isSubmitting && loadingAction === `delete-${deleteModal.quote._id}` ? 'Deleting...' : 'Delete'}
+                  </ButtonLoader>
+                </button>
               </div>
             </div>
           </div>
