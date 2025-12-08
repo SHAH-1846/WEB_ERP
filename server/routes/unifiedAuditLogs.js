@@ -100,8 +100,22 @@ router.get('/', auth, async (req, res) => {
       }
 
       const estimationLogs = await AuditLog.find(estimationQuery)
-        .populate('deletedBy', 'name email roles')
-        .populate('performedBy', 'name email roles')
+        .populate({
+          path: 'deletedBy',
+          select: 'name email roles',
+          populate: {
+            path: 'roles',
+            select: 'name'
+          }
+        })
+        .populate({
+          path: 'performedBy',
+          select: 'name email roles',
+          populate: {
+            path: 'roles',
+            select: 'name'
+          }
+        })
         .populate('entityData.createdBy', 'name email')
         .sort({ deletedAt: -1, performedAt: -1, createdAt: -1 })
         .lean(); // Use lean() for better performance
@@ -155,8 +169,33 @@ router.get('/', auth, async (req, res) => {
           performer = log.performedBy;
         }
         
+        // Sanitize performer roles - filter out ObjectIds
+        if (performer && performer.roles && Array.isArray(performer.roles)) {
+          performer.roles = performer.roles.filter(role => {
+            // Filter out ObjectIds (24 char hex strings)
+            if (typeof role === 'string') {
+              return !/^[0-9a-fA-F]{24}$/.test(role);
+            }
+            // Keep valid role objects with name property
+            if (role && typeof role === 'object' && role.name) {
+              return true;
+            }
+            return false;
+          });
+        }
+        
+        // Additional safety: Remove ObjectId fields before sending to frontend
+        const sanitizedLog = { ...log };
+        // Remove ObjectId fields if they're not valid user objects
+        if (sanitizedLog.deletedBy && !isValidUser(sanitizedLog.deletedBy)) {
+          delete sanitizedLog.deletedBy;
+        }
+        if (sanitizedLog.performedBy && !isValidUser(sanitizedLog.performedBy)) {
+          delete sanitizedLog.performedBy;
+        }
+        
         allLogs.push({
-          ...log,
+          ...sanitizedLog,
           logSource: 'estimation',
           timestamp: log.deletedAt || log.performedAt || log.createdAt,
           performer: performer
@@ -195,7 +234,14 @@ router.get('/', auth, async (req, res) => {
       }
 
       const generalLogs = await GeneralAuditLog.find(generalQuery)
-        .populate('performedBy', 'name email roles')
+        .populate({
+          path: 'performedBy',
+          select: 'name email roles',
+          populate: {
+            path: 'roles',
+            select: 'name'
+          }
+        })
         .sort({ performedAt: -1 })
         .lean(); // Use lean() for better performance
 
@@ -231,10 +277,32 @@ router.get('/', auth, async (req, res) => {
           return false;
         };
         
+        // Additional safety: Remove ObjectId fields before sending to frontend
+        const sanitizedLog = { ...log };
+        // Remove ObjectId fields if they're not valid user objects
+        if (sanitizedLog.performedBy && !isValidUser(sanitizedLog.performedBy)) {
+          delete sanitizedLog.performedBy;
+        }
+        
         const performer = isValidUser(log.performedBy) ? log.performedBy : null;
         
+        // Sanitize performer roles - filter out ObjectIds
+        if (performer && performer.roles && Array.isArray(performer.roles)) {
+          performer.roles = performer.roles.filter(role => {
+            // Filter out ObjectIds (24 char hex strings)
+            if (typeof role === 'string') {
+              return !/^[0-9a-fA-F]{24}$/.test(role);
+            }
+            // Keep valid role objects with name property
+            if (role && typeof role === 'object' && role.name) {
+              return true;
+            }
+            return false;
+          });
+        }
+        
         allLogs.push({
-          ...log,
+          ...sanitizedLog,
           logSource: 'general',
           timestamp: log.performedAt || log.createdAt,
           performer: performer

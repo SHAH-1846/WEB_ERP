@@ -154,6 +154,30 @@ router.post('/', auth, upload.array('attachments', 10), async (req, res) => {
 
     await lead.save();
     await lead.populate('createdBy', 'name email');
+    
+    // Create audit log for lead creation
+    try {
+      await AuditLog.create({
+        action: 'lead_created',
+        entityType: 'lead',
+        entityId: lead._id,
+        entityData: {
+          customerName: lead.customerName || null,
+          projectTitle: lead.projectTitle || null,
+          enquiryNumber: lead.enquiryNumber || null,
+          status: lead.status || null,
+          createdBy: lead.createdBy?._id || lead.createdBy || null,
+          createdAt: lead.createdAt || null
+        },
+        performedBy: req.user.userId,
+        performedAt: new Date(),
+        ipAddress: req.ip || req.socket?.remoteAddress || 'unknown',
+        userAgent: req.get('user-agent') || 'unknown'
+      });
+    } catch (auditError) {
+      console.error('Error creating audit log for lead creation:', auditError);
+    }
+    
     res.status(201).json(lead);
   } catch (error) {
     // Clean up uploaded files if there's an error
@@ -285,6 +309,34 @@ router.put('/:id', auth, upload.array('attachments', 10), async (req, res) => {
     await lead.save();
     await lead.populate('createdBy', 'name email');
     await lead.populate('edits.editedBy', 'name email');
+    
+    // Create audit log for lead update if there were changes
+    if (changes.length > 0) {
+      try {
+        await AuditLog.create({
+          action: 'lead_updated',
+          entityType: 'lead',
+          entityId: lead._id,
+          entityData: {
+            customerName: lead.customerName || null,
+            projectTitle: lead.projectTitle || null,
+            enquiryNumber: lead.enquiryNumber || null,
+            status: lead.status || null,
+            createdBy: lead.createdBy?._id || lead.createdBy || null,
+            createdAt: lead.createdAt || null
+          },
+          performedBy: req.user.userId,
+          performedAt: new Date(),
+          oldValue: changes.length > 0 ? changes : null,
+          newValue: changes.length > 0 ? changes.map(c => ({ field: c.field, to: c.to })) : null,
+          ipAddress: req.ip || req.socket?.remoteAddress || 'unknown',
+          userAgent: req.get('user-agent') || 'unknown'
+        });
+      } catch (auditError) {
+        console.error('Error creating audit log for lead update:', auditError);
+      }
+    }
+    
     res.json(lead);
   } catch (error) {
     // Clean up uploaded files if there's an error
@@ -324,6 +376,24 @@ router.delete('/:id', auth, async (req, res) => {
     const visitCount = await SiteVisit.countDocuments({ lead: lead._id });
     if (visitCount > 0) {
       return res.status(400).json({ message: 'Cannot delete lead with existing site visits' });
+    }
+
+    // Delete all attachment files from disk before deleting the lead
+    if (lead.attachments && Array.isArray(lead.attachments) && lead.attachments.length > 0) {
+      lead.attachments.forEach(attachment => {
+        if (attachment.filename) {
+          const filePath = path.join(uploadsDir, attachment.filename);
+          if (fs.existsSync(filePath)) {
+            try {
+              fs.unlinkSync(filePath);
+              console.log(`Deleted attachment file: ${filePath}`);
+            } catch (err) {
+              console.error(`Error deleting attachment file ${filePath}:`, err);
+              // Continue with deletion even if file deletion fails
+            }
+          }
+        }
+      });
     }
 
     // Create audit log before deletion
@@ -368,7 +438,24 @@ router.delete('/:id', auth, async (req, res) => {
 });
 
 // Create a site visit for a lead (project engineers only)
-router.post('/:id/site-visits', auth, siteVisitUpload.array('attachments', 10), async (req, res) => {
+router.post('/:id/site-visits', auth, (req, res, next) => {
+  siteVisitUpload.array('attachments', 10)(req, res, (err) => {
+    if (err) {
+      // Handle multer errors
+      if (err.code === 'LIMIT_FILE_SIZE') {
+        return res.status(400).json({ message: 'File size exceeds 10MB limit' });
+      }
+      if (err.code === 'LIMIT_FILE_COUNT') {
+        return res.status(400).json({ message: 'Too many files. Maximum 10 files allowed' });
+      }
+      if (err.message && err.message.includes('Invalid file type')) {
+        return res.status(400).json({ message: err.message });
+      }
+      return res.status(400).json({ message: err.message || 'File upload error' });
+    }
+    next();
+  });
+}, async (req, res) => {
   try {
     if (!req.user.roles.includes('project_engineer')) {
       return res.status(403).json({ message: 'Only project engineers can create site visits' });
@@ -383,8 +470,10 @@ router.post('/:id/site-visits', auth, siteVisitUpload.array('attachments', 10), 
 
     // Process uploaded files
     const attachments = [];
+    console.log('Site visit creation - Files received:', req.files ? req.files.length : 0);
     if (req.files && req.files.length > 0) {
       req.files.forEach(file => {
+        console.log('Processing file:', file.originalname, 'Size:', file.size, 'Type:', file.mimetype);
         attachments.push({
           filename: file.filename,
           originalName: file.originalname,
@@ -393,6 +482,8 @@ router.post('/:id/site-visits', auth, siteVisitUpload.array('attachments', 10), 
           size: file.size
         });
       });
+    } else {
+      console.log('No files received in req.files');
     }
 
     const siteVisit = await SiteVisit.create({
@@ -410,6 +501,31 @@ router.post('/:id/site-visits', auth, siteVisitUpload.array('attachments', 10), 
       attachments,
       createdBy: req.user.userId
     });
+
+    // Create audit log for site visit creation
+    try {
+      const leadData = typeof lead === 'object' ? lead : null;
+      await AuditLog.create({
+        action: 'site_visit_created',
+        entityType: 'site_visit',
+        entityId: siteVisit._id,
+        entityData: {
+          visitAt: siteVisit.visitAt || null,
+          engineerName: siteVisit.engineerName || null,
+          siteLocation: siteVisit.siteLocation || null,
+          customerName: leadData?.customerName || null,
+          projectTitle: leadData?.projectTitle || null,
+          createdBy: siteVisit.createdBy || null,
+          createdAt: siteVisit.createdAt || null
+        },
+        performedBy: req.user.userId,
+        performedAt: new Date(),
+        ipAddress: req.ip || req.socket?.remoteAddress || 'unknown',
+        userAgent: req.get('user-agent') || 'unknown'
+      });
+    } catch (auditError) {
+      console.error('Error creating audit log for site visit creation:', auditError);
+    }
 
     res.status(201).json(siteVisit);
   } catch (error) {
@@ -508,6 +624,36 @@ router.put('/:leadId/site-visits/:visitId', auth, siteVisitUpload.array('attachm
 
     await sv.save();
     await sv.populate('edits.editedBy', 'name email');
+    
+    // Create audit log for site visit update if there were changes
+    if (changes.length > 0) {
+      try {
+        const leadData = typeof sv.lead === 'object' ? await Lead.findById(sv.lead) : null;
+        await AuditLog.create({
+          action: 'site_visit_updated',
+          entityType: 'site_visit',
+          entityId: sv._id,
+          entityData: {
+            visitAt: sv.visitAt || null,
+            engineerName: sv.engineerName || null,
+            siteLocation: sv.siteLocation || null,
+            customerName: leadData?.customerName || null,
+            projectTitle: leadData?.projectTitle || null,
+            createdBy: sv.createdBy || null,
+            createdAt: sv.createdAt || null
+          },
+          performedBy: req.user.userId,
+          performedAt: new Date(),
+          oldValue: changes.length > 0 ? changes : null,
+          newValue: changes.length > 0 ? changes.map(c => ({ field: c.field, to: c.to })) : null,
+          ipAddress: req.ip || req.socket?.remoteAddress || 'unknown',
+          userAgent: req.get('user-agent') || 'unknown'
+        });
+      } catch (auditError) {
+        console.error('Error creating audit log for site visit update:', auditError);
+      }
+    }
+    
     res.json(sv);
   } catch (error) {
     // Clean up uploaded files if there's an error

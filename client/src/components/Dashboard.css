@@ -301,31 +301,6 @@
   position: relative;
 }
 
-.accordion-header::after {
-  content: '';
-  position: absolute;
-  right: 24px;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 0;
-  height: 0;
-  border-left: 5px solid transparent;
-  border-right: 5px solid transparent;
-  border-top: 6px solid var(--text-muted);
-  transition: all 0.3s ease;
-  opacity: 0;
-}
-
-.accordion-header:hover::after,
-.accordion-header.open::after {
-  border-top-color: var(--primary);
-  opacity: 1;
-}
-
-.sidebar.collapsed .accordion-header::after {
-  display: none;
-}
-
 .accordion-content {
   max-height: 0;
   overflow: hidden;

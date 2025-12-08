@@ -9,10 +9,11 @@ function EstimationsDashboard() {
   const [stats, setStats] = useState({
     leads: {
       total: 0,
-      draft: 0,
-      submitted: 0,
-      approved: 0,
-      converted: 0
+      withSiteVisits: 0,
+      withQuotations: 0,
+      withBoth: 0,
+      converted: 0,
+      noActivity: 0
     },
     siteVisits: {
       total: 0,
@@ -103,9 +104,10 @@ function EstimationsDashboard() {
         .map(lead => 
           apiFetch(`/api/leads/${lead._id}/site-visits`)
             .then(res => res.json())
+            .then(visits => ({ leadId: lead._id, visits }))
             .catch(error => {
               console.error(`Error fetching site visits for lead ${lead._id}:`, error)
-              return [] // Return empty array on error
+              return { leadId: lead._id, visits: [] } // Return empty array on error
             })
         )
       
@@ -122,14 +124,14 @@ function EstimationsDashboard() {
         )
       
       // Wait for all site visits to be fetched
-      const [leadVisitsArrays, projectVisitsArrays] = await Promise.all([
+      const [leadVisitsResults, projectVisitsArrays] = await Promise.all([
         Promise.all(leadVisitsPromises),
         Promise.all(projectVisitsPromises)
       ])
       
-      // Process all lead site visits
-      leadVisitsArrays.forEach(leadVisits => {
-        processSiteVisits(leadVisits)
+      // Process all lead site visits for counting
+      leadVisitsResults.forEach(({ visits }) => {
+        processSiteVisits(visits)
       })
       
       // Process all project site visits
@@ -137,13 +139,62 @@ function EstimationsDashboard() {
         processSiteVisits(projectVisits)
       })
 
-      // Process leads
+      // Process leads with site visits and quotations data
+      // Create a map of lead ID to site visits
+      const leadSiteVisitsMap = {}
+      leadVisitsResults.forEach(({ leadId, visits }) => {
+        leadSiteVisitsMap[leadId] = visits || []
+      })
+
+      // Map quotations to leads
+      const leadQuotationsMap = {}
+      quotations.forEach(q => {
+        const qLeadId = typeof q.lead === 'object' ? q.lead?._id : q.lead
+        if (qLeadId) {
+          if (!leadQuotationsMap[qLeadId]) {
+            leadQuotationsMap[qLeadId] = []
+          }
+          leadQuotationsMap[qLeadId].push(q)
+        }
+      })
+
+      // Calculate lead breakdown metrics
+      let leadsWithSiteVisits = 0
+      let leadsWithQuotations = 0
+      let leadsWithBoth = 0
+      let leadsConverted = 0
+      let leadsNoActivity = 0
+
+      leads.forEach(lead => {
+        const leadId = lead._id
+        const hasSiteVisits = (leadSiteVisitsMap[leadId] || []).length > 0
+        const hasQuotations = (leadQuotationsMap[leadId] || []).length > 0
+        const isConverted = !!lead.projectId
+
+        if (isConverted) {
+          leadsConverted++
+        }
+        if (hasSiteVisits) {
+          leadsWithSiteVisits++
+        }
+        if (hasQuotations) {
+          leadsWithQuotations++
+        }
+        if (hasSiteVisits && hasQuotations) {
+          leadsWithBoth++
+        }
+        if (!hasSiteVisits && !hasQuotations && !isConverted) {
+          leadsNoActivity++
+        }
+      })
+
       const leadsStats = {
         total: leads.length,
-        draft: leads.filter(l => l.status === 'draft').length,
-        submitted: leads.filter(l => l.status === 'submitted').length,
-        approved: leads.filter(l => l.status === 'approved').length,
-        converted: leads.filter(l => l.projectId).length
+        withSiteVisits: leadsWithSiteVisits,
+        withQuotations: leadsWithQuotations,
+        withBoth: leadsWithBoth,
+        converted: leadsConverted,
+        noActivity: leadsNoActivity
       }
 
       // Process quotations
@@ -344,44 +395,8 @@ function EstimationsDashboard() {
       {/* Detailed Analytics */}
       <div className="charts-section">
         <div className="chart-card">
-          <h3>Leads Status Breakdown</h3>
+          <h3>Leads Activity Breakdown</h3>
           <div className="status-breakdown">
-            <div className="status-item">
-              <div className="status-bar">
-                <div 
-                  className="status-fill draft" 
-                  style={{ width: `${stats.leads.total > 0 ? (stats.leads.draft / stats.leads.total * 100) : 0}%` }}
-                ></div>
-              </div>
-              <div className="status-info">
-                <span>Draft</span>
-                <span>{stats.leads.draft} ({stats.leads.total > 0 ? ((stats.leads.draft / stats.leads.total) * 100).toFixed(1) : 0}%)</span>
-              </div>
-            </div>
-            <div className="status-item">
-              <div className="status-bar">
-                <div 
-                  className="status-fill submitted" 
-                  style={{ width: `${stats.leads.total > 0 ? (stats.leads.submitted / stats.leads.total * 100) : 0}%` }}
-                ></div>
-              </div>
-              <div className="status-info">
-                <span>Submitted</span>
-                <span>{stats.leads.submitted} ({stats.leads.total > 0 ? ((stats.leads.submitted / stats.leads.total) * 100).toFixed(1) : 0}%)</span>
-              </div>
-            </div>
-            <div className="status-item">
-              <div className="status-bar">
-                <div 
-                  className="status-fill approved" 
-                  style={{ width: `${stats.leads.total > 0 ? (stats.leads.approved / stats.leads.total * 100) : 0}%` }}
-                ></div>
-              </div>
-              <div className="status-info">
-                <span>Approved</span>
-                <span>{stats.leads.approved} ({stats.leads.total > 0 ? ((stats.leads.approved / stats.leads.total) * 100).toFixed(1) : 0}%)</span>
-              </div>
-            </div>
             <div className="status-item">
               <div className="status-bar">
                 <div 
@@ -392,6 +407,54 @@ function EstimationsDashboard() {
               <div className="status-info">
                 <span>Converted to Projects</span>
                 <span>{stats.leads.converted} ({stats.leads.total > 0 ? ((stats.leads.converted / stats.leads.total) * 100).toFixed(1) : 0}%)</span>
+              </div>
+            </div>
+            <div className="status-item">
+              <div className="status-bar">
+                <div 
+                  className="status-fill approved" 
+                  style={{ width: `${stats.leads.total > 0 ? (stats.leads.withBoth / stats.leads.total * 100) : 0}%` }}
+                ></div>
+              </div>
+              <div className="status-info">
+                <span>With Site Visits & Quotations</span>
+                <span>{stats.leads.withBoth} ({stats.leads.total > 0 ? ((stats.leads.withBoth / stats.leads.total) * 100).toFixed(1) : 0}%)</span>
+              </div>
+            </div>
+            <div className="status-item">
+              <div className="status-bar">
+                <div 
+                  className="status-fill submitted" 
+                  style={{ width: `${stats.leads.total > 0 ? (stats.leads.withQuotations / stats.leads.total * 100) : 0}%` }}
+                ></div>
+              </div>
+              <div className="status-info">
+                <span>With Quotations</span>
+                <span>{stats.leads.withQuotations} ({stats.leads.total > 0 ? ((stats.leads.withQuotations / stats.leads.total) * 100).toFixed(1) : 0}%)</span>
+              </div>
+            </div>
+            <div className="status-item">
+              <div className="status-bar">
+                <div 
+                  className="status-fill draft" 
+                  style={{ width: `${stats.leads.total > 0 ? (stats.leads.withSiteVisits / stats.leads.total * 100) : 0}%` }}
+                ></div>
+              </div>
+              <div className="status-info">
+                <span>With Site Visits</span>
+                <span>{stats.leads.withSiteVisits} ({stats.leads.total > 0 ? ((stats.leads.withSiteVisits / stats.leads.total) * 100).toFixed(1) : 0}%)</span>
+              </div>
+            </div>
+            <div className="status-item">
+              <div className="status-bar">
+                <div 
+                  className="status-fill rejected" 
+                  style={{ width: `${stats.leads.total > 0 ? (stats.leads.noActivity / stats.leads.total * 100) : 0}%` }}
+                ></div>
+              </div>
+              <div className="status-info">
+                <span>No Activity</span>
+                <span>{stats.leads.noActivity} ({stats.leads.total > 0 ? ((stats.leads.noActivity / stats.leads.total) * 100).toFixed(1) : 0}%)</span>
               </div>
             </div>
           </div>

@@ -8,9 +8,9 @@ const AuditLogSchema = new mongoose.Schema({
       // Deletions
       'quotation_deleted', 'revision_deleted', 'project_variation_deleted', 'lead_deleted', 'project_deleted', 'site_visit_deleted',
       // Creations
-      'quotation_created', 'revision_created', 'project_variation_created',
+      'quotation_created', 'revision_created', 'project_variation_created', 'lead_created', 'site_visit_created',
       // Updates
-      'quotation_updated', 'revision_updated', 'project_variation_updated',
+      'quotation_updated', 'revision_updated', 'project_variation_updated', 'lead_updated', 'site_visit_updated',
       // Approvals/Rejections
       'quotation_approved', 'quotation_rejected', 'quotation_approval_requested',
       'revision_approved', 'revision_rejected', 'revision_approval_requested',

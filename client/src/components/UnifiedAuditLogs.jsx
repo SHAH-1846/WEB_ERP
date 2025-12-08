@@ -477,9 +477,22 @@ function UnifiedAuditLogs() {
                               <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
                                 {log.performer.email || ''}
                               </div>
-                              {log.performer.roles && (
+                              {log.performer.roles && Array.isArray(log.performer.roles) && log.performer.roles.length > 0 && (
                                 <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '2px' }}>
-                                  {log.performer.roles.join(', ')}
+                                  {log.performer.roles
+                                    .filter(role => {
+                                      // Filter out ObjectIds - only show valid role objects with name
+                                      if (typeof role === 'string') {
+                                        // Check if it's an ObjectId (24 char hex string)
+                                        return !/^[0-9a-fA-F]{24}$/.test(role);
+                                      }
+                                      if (role && typeof role === 'object' && role.name) {
+                                        return true;
+                                      }
+                                      return false;
+                                    })
+                                    .map(role => typeof role === 'object' && role.name ? role.name : role)
+                                    .join(', ')}
                                 </div>
                               )}
                             </div>

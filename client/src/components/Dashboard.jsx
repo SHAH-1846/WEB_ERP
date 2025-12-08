@@ -146,7 +146,7 @@ function Dashboard() {
             <span className="label">Users</span>
           </NavLink>
           
-          {/* Estimations and Projects Management Accordion - Only for Admins and Managers */}
+          {/* Estimations Module Accordion - Only for Admins and Managers */}
           {(user?.roles?.includes('admin') || user?.roles?.includes('manager')) && (
             <div className="accordion-section">
               <button
@@ -160,7 +160,7 @@ function Dashboard() {
                 <svg viewBox="0 0 24 24" fill="currentColor">
                   <path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-5 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z"/>
                 </svg>
-                <span className="label">Estimations and Projects Management</span>
+                <span className="label">Estimations Module</span>
                 <svg 
                   className="accordion-arrow" 
                   viewBox="0 0 24 24" 

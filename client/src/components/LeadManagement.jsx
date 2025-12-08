@@ -413,9 +413,11 @@ function LeadManagement() {
           setRevisionProjectMap(prev => ({ ...prev, ...projectChecks }))
         } catch (e) {
           setNotify({ open: true, title: 'Load Failed', message: 'We could not load the quotations. Please try again.' })
-          return
+          // Set empty array so accordion can show empty state
+          setLeadQuotationsMap(prev => ({ ...prev, [leadId]: [] }))
         }
       }
+      // Always set expanded state, even if fetch failed
       setExpandedQuotationRows(prev => ({ ...prev, [leadId]: true }))
     }
   }
@@ -611,7 +613,26 @@ function LeadManagement() {
           }
         }}
       >
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/>
+        </svg>
         View Quotations
+        {isTableView && (
+          <svg 
+            width="14" 
+            height="14" 
+            viewBox="0 0 24 24" 
+            fill="currentColor"
+            className="accordion-chevron"
+            style={{
+              transform: expandedQuotationRows[lead._id] ? 'rotate(180deg)' : 'rotate(0deg)',
+              transition: 'transform 0.3s ease',
+              marginLeft: '4px'
+            }}
+          >
+            <path d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6 1.41-1.41z"/>
+          </svg>
+        )}
       </button>
       {lead.status === 'approved' && (
         <button 
@@ -1101,6 +1122,9 @@ function LeadManagement() {
             )}
             {lead.edits?.length > 0 && (
               <button className="link-btn" onClick={() => setHistoryLead(lead)}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
+                </svg>
                 View Edit History
               </button>
             )}
@@ -1149,16 +1173,19 @@ function LeadManagement() {
                       <td data-label="Actions">
                         {renderLeadActions(lead, true)}
                         {lead.edits?.length > 0 && (
-                          <button className="link-btn" onClick={() => setHistoryLead(lead)} style={{ marginTop: '4px', display: 'block' }}>
+                          <button className="link-btn" onClick={() => setHistoryLead(lead)} style={{ marginTop: '4px', display: 'inline-flex' }}>
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                              <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
+                            </svg>
                             View Edit History
                           </button>
                         )}
                       </td>
                     </tr>
                     {expandedQuotationRows[lead._id] && (
-                      <tr key={`${lead._id}-quotations`} className="history-row accordion-row">
-                        <td colSpan={9} style={{ padding: '0' }}>
-                          <div className="history-panel accordion-content" style={{ padding: '16px' }}>
+                      <tr key={`${lead._id}-quotations`} className="history-row accordion-row" style={{ display: 'table-row', height: 'auto' }}>
+                        <td colSpan={9} style={{ padding: '0', display: 'table-cell', height: 'auto', verticalAlign: 'top' }}>
+                          <div className="history-panel accordion-content" style={{ height: 'auto', overflow: 'visible' }}>
                             <h4 style={{ marginTop: '0', marginBottom: '12px', fontSize: '16px', fontWeight: 600 }}>Quotations ({(leadQuotationsMap[lead._id] || []).length})</h4>
                             {(leadQuotationsMap[lead._id] || []).length === 0 ? (
                               <p style={{ margin: 0, color: 'var(--text-muted)' }}>No quotations found for this lead.</p>
@@ -1167,7 +1194,7 @@ function LeadManagement() {
                                 <table>
                                   <thead>
                                     <tr>
-                                      <th>Offer Ref</th>
+                                      <th>Project Title</th>
                                       <th>Offer Date</th>
                                       <th>Grand Total</th>
                                       <th>Status</th>
@@ -1179,7 +1206,7 @@ function LeadManagement() {
                                     {(leadQuotationsMap[lead._id] || []).map((q) => (
                                       <>
                                         <tr key={q._id}>
-                                          <td data-label="Offer Ref">{q.offerReference || 'N/A'}</td>
+                                          <td data-label="Project Title">{q.projectTitle || q.lead?.projectTitle || 'N/A'}</td>
                                           <td data-label="Offer Date">{q.offerDate ? new Date(q.offerDate).toLocaleDateString() : 'N/A'}</td>
                                           <td data-label="Grand Total">{(q.priceSchedule?.currency || 'AED')} {Number(q.priceSchedule?.grandTotal || 0).toFixed(2)}</td>
                                           <td data-label="Status">{q.managementApproval?.status || 'pending'}</td>
@@ -1201,15 +1228,16 @@ function LeadManagement() {
                                             <button
                                               className="link-btn"
                                               onClick={() => handleViewRevisionsTable(q)}
-                                              style={{ marginLeft: '6px' }}
                                             >
+                                              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                                                <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
+                                              </svg>
                                               View Revisions
                                             </button>
                                             {(q.managementApproval?.status !== 'approved' || currentUser?.roles?.includes('manager') || currentUser?.roles?.includes('admin')) && (
                                               <button
                                                 className="reject-btn"
                                                 onClick={() => setDeleteQuotationModal({ open: true, quotation: q })}
-                                                style={{ marginLeft: '6px' }}
                                               >
                                                 Delete
                                               </button>
@@ -1998,10 +2026,25 @@ function LeadManagement() {
               setLoadingAction('create-site-visit')
               setIsSubmitting(true)
               try {
-                await api.post(`/api/leads/${editingLead._id}/site-visits`, visitData)
+                const formDataToSend = new FormData()
+                
+                // Append form fields
+                Object.keys(visitData).forEach(key => {
+                  formDataToSend.append(key, visitData[key])
+                })
+                
+                // Append files
+                visitFiles.forEach(file => {
+                  formDataToSend.append('attachments', file)
+                })
+
+                await api.post(`/api/leads/${editingLead._id}/site-visits`, formDataToSend)
                 setShowVisitModal(false)
                 setVisitData({ visitAt: '', siteLocation: '', engineerName: '', workProgressSummary: '', safetyObservations: '', qualityMaterialCheck: '', issuesFound: '', actionItems: '', weatherConditions: '', description: '' })
+                setVisitFiles([])
+                setVisitPreviewFiles([])
                 setNotify({ open: true, title: 'Saved', message: 'Site visit saved successfully.' })
+                await fetchLeads()
               } catch (error) {
                 setNotify({ open: true, title: 'Save Failed', message: error.response?.data?.message || 'We could not save the site visit. Please try again.' })
               } finally {

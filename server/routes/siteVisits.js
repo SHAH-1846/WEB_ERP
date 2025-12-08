@@ -5,6 +5,7 @@ const fs = require('fs');
 const jwt = require('jsonwebtoken');
 const SiteVisit = require('../models/SiteVisit');
 const Project = require('../models/Project');
+const AuditLog = require('../models/AuditLog');
 const router = express.Router();
 
 // Configure multer for file uploads
@@ -60,7 +61,24 @@ const auth = (req, res, next) => {
 };
 
 // Create a site visit (project engineers only)
-router.post('/', auth, upload.array('attachments', 10), async (req, res) => {
+router.post('/', auth, (req, res, next) => {
+  upload.array('attachments', 10)(req, res, (err) => {
+    if (err) {
+      // Handle multer errors
+      if (err.code === 'LIMIT_FILE_SIZE') {
+        return res.status(400).json({ message: 'File size exceeds 10MB limit' });
+      }
+      if (err.code === 'LIMIT_FILE_COUNT') {
+        return res.status(400).json({ message: 'Too many files. Maximum 10 files allowed' });
+      }
+      if (err.message && err.message.includes('Invalid file type')) {
+        return res.status(400).json({ message: err.message });
+      }
+      return res.status(400).json({ message: err.message || 'File upload error' });
+    }
+    next();
+  });
+}, async (req, res) => {
   try {
     if (!req.user.roles.includes('project_engineer')) {
       return res.status(403).json({ message: 'Only project engineers can create site visits' });
@@ -77,8 +95,10 @@ router.post('/', auth, upload.array('attachments', 10), async (req, res) => {
 
     // Process uploaded files
     const attachments = [];
+    console.log('Site visit creation (project) - Files received:', req.files ? req.files.length : 0);
     if (req.files && req.files.length > 0) {
       req.files.forEach(file => {
+        console.log('Processing file:', file.originalname, 'Size:', file.size, 'Type:', file.mimetype);
         attachments.push({
           filename: file.filename,
           originalName: file.originalname,
@@ -87,6 +107,8 @@ router.post('/', auth, upload.array('attachments', 10), async (req, res) => {
           size: file.size
         });
       });
+    } else {
+      console.log('No files received in req.files');
     }
 
     const siteVisit = await SiteVisit.create({
@@ -104,6 +126,29 @@ router.post('/', auth, upload.array('attachments', 10), async (req, res) => {
       attachments,
       createdBy: req.user.userId
     });
+
+    // Create audit log for site visit creation
+    try {
+      await AuditLog.create({
+        action: 'site_visit_created',
+        entityType: 'site_visit',
+        entityId: siteVisit._id,
+        entityData: {
+          visitAt: siteVisit.visitAt || null,
+          engineerName: siteVisit.engineerName || null,
+          siteLocation: siteVisit.siteLocation || null,
+          projectTitle: project.name || null,
+          createdBy: siteVisit.createdBy || null,
+          createdAt: siteVisit.createdAt || null
+        },
+        performedBy: req.user.userId,
+        performedAt: new Date(),
+        ipAddress: req.ip || req.socket?.remoteAddress || 'unknown',
+        userAgent: req.get('user-agent') || 'unknown'
+      });
+    } catch (auditError) {
+      console.error('Error creating audit log for site visit creation:', auditError);
+    }
 
     res.status(201).json(siteVisit);
   } catch (error) {
