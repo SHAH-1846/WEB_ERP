@@ -50,6 +50,7 @@ function LeadManagement() {
   const [quotationsForLead, setQuotationsForLead] = useState([])
   const [selectedLeadForList, setSelectedLeadForList] = useState(null)
   const [deleteQuotationModal, setDeleteQuotationModal] = useState({ open: false, quotation: null })
+  const [deleteLeadModal, setDeleteLeadModal] = useState({ open: false, leadId: null })
   const [showRevisionsModal, setShowRevisionsModal] = useState({ open: false, quotation: null })
   const [viewMode, setViewMode] = useState(() => {
     const saved = localStorage.getItem('leadViewMode')
@@ -305,8 +306,8 @@ function LeadManagement() {
   }
 
   const handleDeleteLead = async (leadId) => {
-    if (!confirm('Delete this lead?')) return
     if (isSubmitting) return
+    setDeleteLeadModal({ open: false, leadId: null }) // Close modal immediately
     setLoadingAction(`delete-${leadId}`)
     setIsSubmitting(true)
     try {
@@ -538,11 +539,11 @@ function LeadManagement() {
               New Site Visit
             </button>
           )}
-          {lead.createdBy?._id === currentUser?.id && (
+          {(lead.createdBy?._id === currentUser?.id || currentUser?.roles?.includes('manager') || currentUser?.roles?.includes('admin')) && (
             <button 
-              onClick={() => handleDeleteLead(lead._id)} 
+              onClick={() => setDeleteLeadModal({ open: true, leadId: lead._id })} 
               className="cancel-btn"
-              disabled={isSubmitting}
+              disabled={isSubmitting && loadingAction === `delete-${lead._id}`}
             >
               <ButtonLoader loading={loadingAction === `delete-${lead._id}`}>
                 {isSubmitting && loadingAction === `delete-${lead._id}` ? 'Deleting...' : 'Delete'}
@@ -1557,12 +1558,81 @@ function LeadManagement() {
           <div className="modal" onClick={e => e.stopPropagation()}>
             <div className="modal-header">
               <h2>{editingLead ? 'Edit Lead' : 'Create New Lead'}</h2>
-              <button onClick={() => {
-                setShowModal(false)
-                setSelectedFiles([])
-                setPreviewFiles([])
-                setAttachmentsToRemove([])
-              }} className="close-btn">×</button>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    let url = ''
+                    if (editingLead) {
+                      url = `/leads/edit/${editingLead._id}`
+                    } else {
+                      url = '/leads/create'
+                    }
+                    window.open(url, '_blank')
+                  }}
+                  className="link-btn"
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    fontSize: '14px',
+                    padding: '6px 12px',
+                    border: '1px solid var(--border)',
+                    borderRadius: '6px',
+                    background: 'transparent',
+                    color: 'var(--text)',
+                    cursor: 'pointer',
+                    transition: 'all 0.2s'
+                  }}
+                  title="Open in New Tab"
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
+                    <polyline points="15 3 21 3 21 9"></polyline>
+                    <line x1="10" y1="14" x2="21" y2="3"></line>
+                  </svg>
+                  Open in New Tab
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    let url = ''
+                    if (editingLead) {
+                      url = `/leads/edit/${editingLead._id}`
+                    } else {
+                      url = '/leads/create'
+                    }
+                    window.location.href = url
+                  }}
+                  className="link-btn"
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    fontSize: '14px',
+                    padding: '6px 12px',
+                    border: '1px solid var(--border)',
+                    borderRadius: '6px',
+                    background: 'transparent',
+                    color: 'var(--text)',
+                    cursor: 'pointer',
+                    transition: 'all 0.2s'
+                  }}
+                  title="Open Full Form"
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                    <line x1="9" y1="3" x2="9" y2="21"></line>
+                  </svg>
+                  Open Full Form
+                </button>
+                <button onClick={() => {
+                  setShowModal(false)
+                  setSelectedFiles([])
+                  setPreviewFiles([])
+                  setAttachmentsToRemove([])
+                }} className="close-btn">×</button>
+              </div>
             </div>
             
             <form onSubmit={handleSubmit} className="lead-form">
@@ -1859,7 +1929,68 @@ function LeadManagement() {
           <div className="modal" onClick={e => e.stopPropagation()}>
             <div className="modal-header">
               <h2>New Site Visit</h2>
-              <button onClick={() => setShowVisitModal(false)} className="close-btn">×</button>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (editingLead && editingLead._id) {
+                      window.open(`/leads/${editingLead._id}/site-visits/create`, '_blank')
+                    }
+                  }}
+                  className="link-btn"
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    fontSize: '14px',
+                    padding: '6px 12px',
+                    border: '1px solid var(--border)',
+                    borderRadius: '6px',
+                    background: 'transparent',
+                    color: 'var(--text)',
+                    cursor: 'pointer',
+                    transition: 'all 0.2s'
+                  }}
+                  title="Open in New Tab"
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
+                    <polyline points="15 3 21 3 21 9"></polyline>
+                    <line x1="10" y1="14" x2="21" y2="3"></line>
+                  </svg>
+                  Open in New Tab
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (editingLead && editingLead._id) {
+                      window.location.href = `/leads/${editingLead._id}/site-visits/create`
+                    }
+                  }}
+                  className="link-btn"
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    fontSize: '14px',
+                    padding: '6px 12px',
+                    border: '1px solid var(--border)',
+                    borderRadius: '6px',
+                    background: 'transparent',
+                    color: 'var(--text)',
+                    cursor: 'pointer',
+                    transition: 'all 0.2s'
+                  }}
+                  title="Open Full Form"
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                    <line x1="9" y1="3" x2="9" y2="21"></line>
+                  </svg>
+                  Open Full Form
+                </button>
+                <button onClick={() => setShowVisitModal(false)} className="close-btn">×</button>
+              </div>
             </div>
             <form onSubmit={async (e) => {
               e.preventDefault()
@@ -2136,6 +2267,46 @@ function LeadManagement() {
                   }
                   setNotify({ open: false, title: '', message: '' })
                 }}>OK</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {deleteLeadModal.open && deleteLeadModal.leadId && (
+        <div className="modal-overlay" onClick={() => !isSubmitting && setDeleteLeadModal({ open: false, leadId: null })} style={{ zIndex: 10000 }}>
+          <div className="modal" onClick={e => e.stopPropagation()} style={{ zIndex: 10001 }}>
+            <div className="modal-header">
+              <h2>Delete Lead</h2>
+              <button 
+                onClick={() => !isSubmitting && setDeleteLeadModal({ open: false, leadId: null })} 
+                className="close-btn"
+                disabled={isSubmitting && loadingAction === `delete-${deleteLeadModal.leadId}`}
+              >
+                ×
+              </button>
+            </div>
+            <div className="lead-form">
+              <p>Are you sure you want to delete this lead? This action cannot be undone.</p>
+              <div className="form-actions">
+                <button 
+                  type="button" 
+                  className="cancel-btn" 
+                  onClick={() => setDeleteLeadModal({ open: false, leadId: null })}
+                  disabled={isSubmitting && loadingAction === `delete-${deleteLeadModal.leadId}`}
+                >
+                  Cancel
+                </button>
+                <button 
+                  type="button" 
+                  className="reject-btn" 
+                  onClick={() => handleDeleteLead(deleteLeadModal.leadId)}
+                  disabled={isSubmitting && loadingAction === `delete-${deleteLeadModal.leadId}`}
+                >
+                  <ButtonLoader loading={loadingAction === `delete-${deleteLeadModal.leadId}`}>
+                    {isSubmitting && loadingAction === `delete-${deleteLeadModal.leadId}` ? 'Deleting...' : 'Delete'}
+                  </ButtonLoader>
+                </button>
               </div>
             </div>
           </div>

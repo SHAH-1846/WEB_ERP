@@ -31,6 +31,8 @@ function SiteVisitDetail() {
   const [editVisitAttachmentsToRemove, setEditVisitAttachmentsToRemove] = useState([])
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [notify, setNotify] = useState({ open: false, title: '', message: '' })
+  const [deleteModal, setDeleteModal] = useState({ open: false })
+  const [isDeleting, setIsDeleting] = useState(false)
   const [isDark, setIsDark] = useState(() => {
     const saved = localStorage.getItem('theme')
     return saved === 'dark'
@@ -321,9 +323,85 @@ ${visit.actionItems ? 'Recommended follow‑up: ' + visit.actionItems : 'Continu
               Edit Visit
             </button>
           )}
+          {((currentUser?.roles?.includes('project_engineer') && siteVisit.createdBy?._id === currentUser?.id) || currentUser?.roles?.includes('manager') || currentUser?.roles?.includes('admin')) && (
+            <button 
+              className="cancel-btn" 
+              onClick={() => setDeleteModal({ open: true })}
+              disabled={isDeleting}
+              style={{ marginLeft: '6px' }}
+            >
+              {isDeleting ? 'Deleting...' : 'Delete Visit'}
+            </button>
+          )}
           <button className="save-btn" onClick={() => exportVisitPDF(siteVisit)}>Export PDF</button>
         </div>
       </div>
+
+      {deleteModal.open && (
+        <div className="modal-overlay" onClick={() => !isDeleting && setDeleteModal({ open: false })} style={{ zIndex: 10000 }}>
+          <div className="modal" onClick={e => e.stopPropagation()} style={{ zIndex: 10001 }}>
+            <div className="modal-header">
+              <h2>Delete Site Visit</h2>
+              <button 
+                onClick={() => !isDeleting && setDeleteModal({ open: false })} 
+                className="close-btn"
+                disabled={isDeleting}
+              >
+                ×
+              </button>
+            </div>
+            <div className="lead-form">
+              <p>Are you sure you want to delete this site visit? This action cannot be undone.</p>
+              <div className="form-actions">
+                <button 
+                  type="button" 
+                  className="cancel-btn" 
+                  onClick={() => setDeleteModal({ open: false })}
+                  disabled={isDeleting}
+                >
+                  Cancel
+                </button>
+                <button 
+                  type="button" 
+                  className="reject-btn" 
+                  onClick={async () => {
+                    if (isDeleting || !siteVisit || !lead) return
+                    setIsDeleting(true)
+                    try {
+                      const res = await apiFetch(`/api/leads/${lead._id}/site-visits/${siteVisit._id}`, {
+                        method: 'DELETE'
+                      })
+                      if (!res.ok) {
+                        const err = await res.json().catch(() => ({}))
+                        throw new Error(err.message || 'Error deleting site visit')
+                      }
+                      setDeleteModal({ open: false })
+                      setNotify({ open: true, title: 'Deleted', message: 'Site visit deleted successfully. Redirecting to lead...' })
+                      setTimeout(() => {
+                        try {
+                          localStorage.setItem('leadDetail', JSON.stringify(lead))
+                          localStorage.setItem('leadId', lead._id)
+                          window.location.href = '/lead-detail'
+                        } catch {
+                          window.location.href = '/leads'
+                        }
+                      }, 1500)
+                    } catch (e) {
+                      setDeleteModal({ open: false })
+                      setNotify({ open: true, title: 'Delete Failed', message: e.message || 'We could not delete the site visit. Please try again.' })
+                    } finally {
+                      setIsDeleting(false)
+                    }
+                  }}
+                  disabled={isDeleting}
+                >
+                  {isDeleting ? 'Deleting...' : 'Delete'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {notify.open && (
         <div className="modal-overlay" onClick={() => setNotify({ open: false, title: '', message: '' })}>
@@ -595,12 +673,73 @@ ${visit.actionItems ? 'Recommended follow‑up: ' + visit.actionItems : 'Continu
           <div className="modal" onClick={e => e.stopPropagation()}>
             <div className="modal-header">
               <h2>Edit Site Visit</h2>
-              <button onClick={() => {
-                setEditVisit(null)
-                setEditVisitFiles([])
-                setEditVisitPreviewFiles([])
-                setEditVisitAttachmentsToRemove([])
-              }} className="close-btn">×</button>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (lead && lead._id && editVisit && editVisit._id) {
+                      window.open(`/leads/${lead._id}/site-visits/edit/${editVisit._id}`, '_blank')
+                    }
+                  }}
+                  className="link-btn"
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    fontSize: '14px',
+                    padding: '6px 12px',
+                    border: '1px solid var(--border)',
+                    borderRadius: '6px',
+                    background: 'transparent',
+                    color: 'var(--text)',
+                    cursor: 'pointer',
+                    transition: 'all 0.2s'
+                  }}
+                  title="Open in New Tab"
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
+                    <polyline points="15 3 21 3 21 9"></polyline>
+                    <line x1="10" y1="14" x2="21" y2="3"></line>
+                  </svg>
+                  Open in New Tab
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (lead && lead._id && editVisit && editVisit._id) {
+                      window.location.href = `/leads/${lead._id}/site-visits/edit/${editVisit._id}`
+                    }
+                  }}
+                  className="link-btn"
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    fontSize: '14px',
+                    padding: '6px 12px',
+                    border: '1px solid var(--border)',
+                    borderRadius: '6px',
+                    background: 'transparent',
+                    color: 'var(--text)',
+                    cursor: 'pointer',
+                    transition: 'all 0.2s'
+                  }}
+                  title="Open Full Form"
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                    <line x1="9" y1="3" x2="9" y2="21"></line>
+                  </svg>
+                  Open Full Form
+                </button>
+                <button onClick={() => {
+                  setEditVisit(null)
+                  setEditVisitFiles([])
+                  setEditVisitPreviewFiles([])
+                  setEditVisitAttachmentsToRemove([])
+                }} className="close-btn">×</button>
+              </div>
             </div>
             <form
               onSubmit={async (e) => {

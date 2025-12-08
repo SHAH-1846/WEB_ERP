@@ -64,6 +64,10 @@ function LeadDetail() {
   const [editVisitPreviewFiles, setEditVisitPreviewFiles] = useState([])
   const [editVisitAttachmentsToRemove, setEditVisitAttachmentsToRemove] = useState([])
   const [notify, setNotify] = useState({ open: false, title: '', message: '' })
+  const [deleteModal, setDeleteModal] = useState({ open: false })
+  const [isDeleting, setIsDeleting] = useState(false)
+  const [deleteSiteVisitModal, setDeleteSiteVisitModal] = useState({ open: false, visit: null })
+  const [isDeletingSiteVisit, setIsDeletingSiteVisit] = useState(false)
 
   // Helpers for PDF export
   const ensurePdfMake = async () => {
@@ -374,65 +378,12 @@ ${visit.actionItems ? 'Recommended follow‑up: ' + visit.actionItems : 'Continu
               Edit Lead
             </button>
           )}
-          {lead.status === 'draft' && currentUser?.id === lead.createdBy?._id && (
+          {lead.status === 'draft' && (currentUser?.id === lead.createdBy?._id || currentUser?.roles?.includes('manager') || currentUser?.roles?.includes('admin')) && (
             <button
               className="cancel-btn"
-              onClick={async () => {
-                if (!confirm('Delete this lead?')) return
-                try {
-                  // Ensure no site visits
-                  const resVisits = await apiFetch(`/api/leads/${lead._id}/site-visits`)
-                  const visits = await resVisits.json()
-                  if (Array.isArray(visits) && visits.length > 0) {
-                    setNotify({ open: true, title: 'Delete Blocked', message: 'Cannot delete lead with existing site visits.' })
-                    return
-                  }
-                  const res = await apiFetch(`/api/leads/${lead._id}`, {
-                    method: 'DELETE'
-                  })
-                  if (!res.ok) {
-                    const err = await res.json().catch(() => ({}))
-                    throw new Error(err.message || 'Error deleting lead')
-                  }
-                  setNotify({ open: true, title: 'Deleted', message: 'Lead deleted successfully.' })
-                  window.location.href = '/'
-                } catch (e) {
-                  setNotify({ open: true, title: 'Delete Failed', message: e.message || 'We could not delete the lead. Please try again.' })
-                }
-              }}
+              onClick={() => setDeleteModal({ open: true })}
             >
               Delete Lead
-            </button>
-          )}
-          {lead.status === 'draft' && currentUser?.roles?.includes('estimation_engineer') && (
-            <button
-              className="save-btn"
-              onClick={async () => {
-                try {
-                  // If estimation engineer, ensure at least one site visit exists
-                  const resVisits = await apiFetch(`/api/leads/${lead._id}/site-visits`)
-                  const visits = await resVisits.json()
-                  if (!Array.isArray(visits) || visits.length === 0) {
-                    setNotify({ open: true, title: 'Add Site Visit', message: 'Please add a site visit before submitting for approval.' })
-                    return
-                  }
-
-                  const res = await apiFetch(`/api/leads/${lead._id}/submit`, {
-                    method: 'PATCH'
-                  })
-                  if (!res.ok) {
-                    const err = await res.json().catch(() => ({}))
-                    throw new Error(err.message || 'Error submitting lead')
-                  }
-                  const updated = await res.json()
-                  setLead(prev => ({ ...prev, status: updated.status }))
-                  setNotify({ open: true, title: 'Submitted', message: 'Lead submitted for approval.' })
-                } catch (e) {
-                  setNotify({ open: true, title: 'Submit Failed', message: e.message || 'We could not submit the lead. Please try again.' })
-                }
-              }}
-            >
-              Submit for Approval
             </button>
           )}
           {lead.projectId && (
@@ -813,6 +764,16 @@ ${visit.actionItems ? 'Recommended follow‑up: ' + visit.actionItems : 'Continu
                               setEditVisitAttachmentsToRemove([])
                             }}>Edit</button>
                           )}
+                          {((currentUser?.roles?.includes('project_engineer') && v.createdBy?._id === currentUser?.id) || currentUser?.roles?.includes('manager') || currentUser?.roles?.includes('admin')) && (
+                            <button 
+                              className="cancel-btn" 
+                              onClick={() => setDeleteSiteVisitModal({ open: true, visit: v })}
+                              disabled={isDeletingSiteVisit && deleteSiteVisitModal.visit?._id === v._id}
+                              style={{ marginLeft: '6px' }}
+                            >
+                              {isDeletingSiteVisit && deleteSiteVisitModal.visit?._id === v._id ? 'Deleting...' : 'Delete'}
+                            </button>
+                          )}
                         <button className="save-btn" onClick={() => exportVisitPDF(v)}>Export</button>
                         {v.edits?.length > 0 && (
                             <button className="link-btn" onClick={() => setVisitHistoryOpen(prev => ({ ...prev, [v._id]: !prev[v._id] }))}>
@@ -1038,12 +999,73 @@ ${visit.actionItems ? 'Recommended follow‑up: ' + visit.actionItems : 'Continu
           <div className="modal" onClick={e => e.stopPropagation()}>
             <div className="modal-header">
               <h2>Edit Lead</h2>
-              <button onClick={() => {
-                setEditLeadOpen(false)
-                setSelectedFiles([])
-                setPreviewFiles([])
-                setAttachmentsToRemove([])
-              }} className="close-btn">×</button>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (lead && lead._id) {
+                      window.open(`/leads/edit/${lead._id}`, '_blank')
+                    }
+                  }}
+                  className="link-btn"
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    fontSize: '14px',
+                    padding: '6px 12px',
+                    border: '1px solid var(--border)',
+                    borderRadius: '6px',
+                    background: 'transparent',
+                    color: 'var(--text)',
+                    cursor: 'pointer',
+                    transition: 'all 0.2s'
+                  }}
+                  title="Open in New Tab"
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
+                    <polyline points="15 3 21 3 21 9"></polyline>
+                    <line x1="10" y1="14" x2="21" y2="3"></line>
+                  </svg>
+                  Open in New Tab
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (lead && lead._id) {
+                      window.location.href = `/leads/edit/${lead._id}`
+                    }
+                  }}
+                  className="link-btn"
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    fontSize: '14px',
+                    padding: '6px 12px',
+                    border: '1px solid var(--border)',
+                    borderRadius: '6px',
+                    background: 'transparent',
+                    color: 'var(--text)',
+                    cursor: 'pointer',
+                    transition: 'all 0.2s'
+                  }}
+                  title="Open Full Form"
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                    <line x1="9" y1="3" x2="9" y2="21"></line>
+                  </svg>
+                  Open Full Form
+                </button>
+                <button onClick={() => {
+                  setEditLeadOpen(false)
+                  setSelectedFiles([])
+                  setPreviewFiles([])
+                  setAttachmentsToRemove([])
+                }} className="close-btn">×</button>
+              </div>
             </div>
             <form
               onSubmit={async (e) => {
@@ -1353,12 +1375,73 @@ ${visit.actionItems ? 'Recommended follow‑up: ' + visit.actionItems : 'Continu
           <div className="modal" onClick={e => e.stopPropagation()}>
             <div className="modal-header">
               <h2>Edit Site Visit</h2>
-              <button onClick={() => {
-                setEditVisit(null)
-                setEditVisitFiles([])
-                setEditVisitPreviewFiles([])
-                setEditVisitAttachmentsToRemove([])
-              }} className="close-btn">×</button>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (lead && lead._id && editVisit && editVisit._id) {
+                      window.open(`/leads/${lead._id}/site-visits/edit/${editVisit._id}`, '_blank')
+                    }
+                  }}
+                  className="link-btn"
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    fontSize: '14px',
+                    padding: '6px 12px',
+                    border: '1px solid var(--border)',
+                    borderRadius: '6px',
+                    background: 'transparent',
+                    color: 'var(--text)',
+                    cursor: 'pointer',
+                    transition: 'all 0.2s'
+                  }}
+                  title="Open in New Tab"
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
+                    <polyline points="15 3 21 3 21 9"></polyline>
+                    <line x1="10" y1="14" x2="21" y2="3"></line>
+                  </svg>
+                  Open in New Tab
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (lead && lead._id && editVisit && editVisit._id) {
+                      window.location.href = `/leads/${lead._id}/site-visits/edit/${editVisit._id}`
+                    }
+                  }}
+                  className="link-btn"
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    fontSize: '14px',
+                    padding: '6px 12px',
+                    border: '1px solid var(--border)',
+                    borderRadius: '6px',
+                    background: 'transparent',
+                    color: 'var(--text)',
+                    cursor: 'pointer',
+                    transition: 'all 0.2s'
+                  }}
+                  title="Open Full Form"
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                    <line x1="9" y1="3" x2="9" y2="21"></line>
+                  </svg>
+                  Open Full Form
+                </button>
+                <button onClick={() => {
+                  setEditVisit(null)
+                  setEditVisitFiles([])
+                  setEditVisitPreviewFiles([])
+                  setEditVisitAttachmentsToRemove([])
+                }} className="close-btn">×</button>
+              </div>
             </div>
             <form
               onSubmit={async (e) => {
@@ -1676,11 +1759,72 @@ ${visit.actionItems ? 'Recommended follow‑up: ' + visit.actionItems : 'Continu
           <div className="modal" onClick={e => e.stopPropagation()}>
             <div className="modal-header">
               <h2>New Site Visit</h2>
-              <button onClick={() => {
-                setNewVisitOpen(false)
-                setNewVisitFiles([])
-                setNewVisitPreviewFiles([])
-              }} className="close-btn">×</button>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (lead && lead._id) {
+                      window.open(`/leads/${lead._id}/site-visits/create`, '_blank')
+                    }
+                  }}
+                  className="link-btn"
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    fontSize: '14px',
+                    padding: '6px 12px',
+                    border: '1px solid var(--border)',
+                    borderRadius: '6px',
+                    background: 'transparent',
+                    color: 'var(--text)',
+                    cursor: 'pointer',
+                    transition: 'all 0.2s'
+                  }}
+                  title="Open in New Tab"
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
+                    <polyline points="15 3 21 3 21 9"></polyline>
+                    <line x1="10" y1="14" x2="21" y2="3"></line>
+                  </svg>
+                  Open in New Tab
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (lead && lead._id) {
+                      window.location.href = `/leads/${lead._id}/site-visits/create`
+                    }
+                  }}
+                  className="link-btn"
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    fontSize: '14px',
+                    padding: '6px 12px',
+                    border: '1px solid var(--border)',
+                    borderRadius: '6px',
+                    background: 'transparent',
+                    color: 'var(--text)',
+                    cursor: 'pointer',
+                    transition: 'all 0.2s'
+                  }}
+                  title="Open Full Form"
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                    <line x1="9" y1="3" x2="9" y2="21"></line>
+                  </svg>
+                  Open Full Form
+                </button>
+                <button onClick={() => {
+                  setNewVisitOpen(false)
+                  setNewVisitFiles([])
+                  setNewVisitPreviewFiles([])
+                }} className="close-btn">×</button>
+              </div>
             </div>
             <form
               onSubmit={async (e) => {
@@ -1860,6 +2004,134 @@ ${visit.actionItems ? 'Recommended follow‑up: ' + visit.actionItems : 'Continu
           </div>
         </div>
       )}
+
+      {deleteSiteVisitModal.open && deleteSiteVisitModal.visit && (
+        <div className="modal-overlay" onClick={() => !isDeletingSiteVisit && setDeleteSiteVisitModal({ open: false, visit: null })} style={{ zIndex: 10000 }}>
+          <div className="modal" onClick={e => e.stopPropagation()} style={{ zIndex: 10001 }}>
+            <div className="modal-header">
+              <h2>Delete Site Visit</h2>
+              <button 
+                onClick={() => !isDeletingSiteVisit && setDeleteSiteVisitModal({ open: false, visit: null })} 
+                className="close-btn"
+                disabled={isDeletingSiteVisit}
+              >
+                ×
+              </button>
+            </div>
+            <div className="lead-form">
+              <p>Are you sure you want to delete this site visit? This action cannot be undone.</p>
+              <div className="form-actions">
+                <button 
+                  type="button" 
+                  className="cancel-btn" 
+                  onClick={() => setDeleteSiteVisitModal({ open: false, visit: null })}
+                  disabled={isDeletingSiteVisit}
+                >
+                  Cancel
+                </button>
+                <button 
+                  type="button" 
+                  className="reject-btn" 
+                  onClick={async () => {
+                    if (isDeletingSiteVisit) return
+                    setIsDeletingSiteVisit(true)
+                    try {
+                      const res = await apiFetch(`/api/leads/${lead._id}/site-visits/${deleteSiteVisitModal.visit._id}`, {
+                        method: 'DELETE'
+                      })
+                      if (!res.ok) {
+                        const err = await res.json().catch(() => ({}))
+                        throw new Error(err.message || 'Error deleting site visit')
+                      }
+                      setDeleteSiteVisitModal({ open: false, visit: null })
+                      // Refresh site visits
+                      const visitsRes = await apiFetch(`/api/leads/${lead._id}/site-visits`)
+                      const visitsData = await visitsRes.json()
+                      setLead(prev => ({ ...prev, siteVisits: visitsData }))
+                      setNotify({ open: true, title: 'Deleted', message: 'Site visit deleted successfully.' })
+                    } catch (e) {
+                      setDeleteSiteVisitModal({ open: false, visit: null })
+                      setNotify({ open: true, title: 'Delete Failed', message: e.message || 'We could not delete the site visit. Please try again.' })
+                    } finally {
+                      setIsDeletingSiteVisit(false)
+                    }
+                  }}
+                  disabled={isDeletingSiteVisit}
+                >
+                  {isDeletingSiteVisit ? 'Deleting...' : 'Delete'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {deleteModal.open && (
+        <div className="modal-overlay" onClick={() => !isDeleting && setDeleteModal({ open: false })} style={{ zIndex: 10000 }}>
+          <div className="modal" onClick={e => e.stopPropagation()} style={{ zIndex: 10001 }}>
+            <div className="modal-header">
+              <h2>Delete Lead</h2>
+              <button 
+                onClick={() => !isDeleting && setDeleteModal({ open: false })} 
+                className="close-btn"
+                disabled={isDeleting}
+              >
+                ×
+              </button>
+            </div>
+            <div className="lead-form">
+              <p>Are you sure you want to delete this lead? This action cannot be undone.</p>
+              <div className="form-actions">
+                <button 
+                  type="button" 
+                  className="cancel-btn" 
+                  onClick={() => setDeleteModal({ open: false })}
+                  disabled={isDeleting}
+                >
+                  Cancel
+                </button>
+                <button 
+                  type="button" 
+                  className="reject-btn" 
+                  onClick={async () => {
+                    if (isDeleting) return
+                    setIsDeleting(true)
+                    try {
+                      // Ensure no site visits
+                      const resVisits = await apiFetch(`/api/leads/${lead._id}/site-visits`)
+                      const visits = await resVisits.json()
+                      if (Array.isArray(visits) && visits.length > 0) {
+                        setDeleteModal({ open: false })
+                        setNotify({ open: true, title: 'Delete Blocked', message: 'Cannot delete lead with existing site visits.' })
+                        return
+                      }
+                      const res = await apiFetch(`/api/leads/${lead._id}`, {
+                        method: 'DELETE'
+                      })
+                      if (!res.ok) {
+                        const err = await res.json().catch(() => ({}))
+                        throw new Error(err.message || 'Error deleting lead')
+                      }
+                      setDeleteModal({ open: false })
+                      setNotify({ open: true, title: 'Deleted', message: 'Lead deleted successfully.' })
+                      window.location.href = '/'
+                    } catch (e) {
+                      setDeleteModal({ open: false })
+                      setNotify({ open: true, title: 'Delete Failed', message: e.message || 'We could not delete the lead. Please try again.' })
+                    } finally {
+                      setIsDeleting(false)
+                    }
+                  }}
+                  disabled={isDeleting}
+                >
+                  {isDeleting ? 'Deleting...' : 'Delete'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {notify.open && (
         <div className="modal-overlay" onClick={() => setNotify({ open: false, title: '', message: '' })}>
           <div className="modal" onClick={e => e.stopPropagation()}>

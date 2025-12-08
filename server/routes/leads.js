@@ -300,14 +300,19 @@ router.put('/:id', auth, upload.array('attachments', 10), async (req, res) => {
   }
 });
 
-// Delete lead (creator can delete only when draft)
+// Delete lead (creator, manager, or admin can delete only when draft)
 router.delete('/:id', auth, async (req, res) => {
   try {
     const lead = await Lead.findById(req.params.id)
       .populate('createdBy', 'name email');
     if (!lead) return res.status(404).json({ message: 'Lead not found' });
 
-    if (lead.createdBy.toString() !== req.user.userId) {
+    const roles = req.user.roles || [];
+    const isCreator = lead.createdBy && (lead.createdBy._id?.toString() === req.user.userId || lead.createdBy.toString() === req.user.userId);
+    const isManagerOrAdmin = roles.includes('manager') || roles.includes('admin');
+
+    // Only creator, manager, or admin can delete
+    if (!isCreator && !isManagerOrAdmin) {
       return res.status(403).json({ message: 'Not authorized to delete this lead' });
     }
 
@@ -515,6 +520,81 @@ router.put('/:leadId/site-visits/:visitId', auth, siteVisitUpload.array('attachm
       });
     }
     res.status(500).json({ message: error.message || 'Server error' });
+  }
+});
+
+// Delete site visit (project engineer can delete their own, manager/admin can delete any)
+router.delete('/:leadId/site-visits/:visitId', auth, async (req, res) => {
+  try {
+    const roles = req.user.roles || [];
+    const isManagerOrAdmin = roles.includes('manager') || roles.includes('admin');
+    const isProjectEngineer = roles.includes('project_engineer');
+
+    if (!isProjectEngineer && !isManagerOrAdmin) {
+      return res.status(403).json({ message: 'Not authorized to delete site visits' });
+    }
+
+    const siteVisit = await SiteVisit.findOne({ _id: req.params.visitId, lead: req.params.leadId })
+      .populate('createdBy', 'name email')
+      .populate('lead', 'customerName projectTitle');
+    
+    if (!siteVisit) {
+      return res.status(404).json({ message: 'Site visit not found' });
+    }
+
+    // Project engineers can only delete their own site visits
+    if (isProjectEngineer && !isManagerOrAdmin) {
+      const createdById = siteVisit.createdBy?._id?.toString() || siteVisit.createdBy?.toString();
+      if (createdById !== req.user.userId) {
+        return res.status(403).json({ message: 'You can only delete site visits you created' });
+      }
+    }
+
+    // Create audit log before deletion
+    try {
+      const leadData = typeof siteVisit.lead === 'object' ? siteVisit.lead : null;
+      await AuditLog.create({
+        action: 'site_visit_deleted',
+        entityType: 'site_visit',
+        entityId: siteVisit._id,
+        entityData: {
+          visitAt: siteVisit.visitAt || null,
+          engineerName: siteVisit.engineerName || null,
+          siteLocation: siteVisit.siteLocation || null,
+          customerName: leadData?.customerName || null,
+          projectTitle: leadData?.projectTitle || null,
+          createdBy: siteVisit.createdBy?._id || siteVisit.createdBy || null,
+          createdAt: siteVisit.createdAt || null
+        },
+        deletedBy: req.user.userId,
+        deletedAt: new Date(),
+        reason: (req.body && req.body.reason) ? req.body.reason : null,
+        ipAddress: req.ip || req.socket?.remoteAddress || 'unknown',
+        userAgent: req.get('user-agent') || 'unknown'
+      });
+    } catch (auditError) {
+      console.error('Error creating audit log for site visit deletion:', auditError);
+    }
+
+    // Delete attachment files from disk
+    if (siteVisit.attachments && siteVisit.attachments.length > 0) {
+      siteVisit.attachments.forEach(att => {
+        const filePath = path.join(siteVisitUploadsDir, att.filename);
+        if (fs.existsSync(filePath)) {
+          try {
+            fs.unlinkSync(filePath);
+          } catch (err) {
+            console.error(`Error deleting file ${filePath}:`, err);
+          }
+        }
+      });
+    }
+
+    await SiteVisit.findByIdAndDelete(req.params.visitId);
+    res.json({ message: 'Site visit deleted successfully' });
+  } catch (error) {
+    console.error('Error deleting site visit:', error);
+    res.status(500).json({ message: 'Server error', error: process.env.NODE_ENV === 'development' ? error.message : undefined });
   }
 });
 

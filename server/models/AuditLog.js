@@ -4,9 +4,9 @@ const AuditLogSchema = new mongoose.Schema({
   action: { 
     type: String, 
     required: true,
-    enum: [
+      enum: [
       // Deletions
-      'quotation_deleted', 'revision_deleted', 'project_variation_deleted', 'lead_deleted', 'project_deleted',
+      'quotation_deleted', 'revision_deleted', 'project_variation_deleted', 'lead_deleted', 'project_deleted', 'site_visit_deleted',
       // Creations
       'quotation_created', 'revision_created', 'project_variation_created',
       // Updates
@@ -24,7 +24,7 @@ const AuditLogSchema = new mongoose.Schema({
   entityType: { 
     type: String, 
     required: true,
-    enum: ['quotation', 'revision', 'project_variation', 'lead', 'project']
+      enum: ['quotation', 'revision', 'project_variation', 'lead', 'project', 'site_visit']
   },
   entityId: { type: mongoose.Schema.Types.ObjectId, required: true },
   entityData: {

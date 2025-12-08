@@ -10,8 +10,10 @@ import RevisionDetail from './components/RevisionDetail'
 import ProjectDetail from './components/ProjectDetail'
 import VariationDetail from './components/VariationDetail'
 import SiteVisitDetail from './components/SiteVisitDetail'
+import SiteVisitFormPage from './components/SiteVisitFormPage'
 import QuotationModal from './components/QuotationModal'
 import QuotationFormPage from './components/QuotationFormPage'
+import LeadFormPage from './components/LeadFormPage'
 import { initTheme, setTheme } from './utils/theme'
 
 function Login() {
@@ -222,12 +224,7 @@ function App() {
             <Dashboard />
           </ProtectedRoute>
         } />
-        <Route path="/estimation-audit-logs" element={
-          <ProtectedRoute>
-            <Dashboard />
-          </ProtectedRoute>
-        } />
-        <Route path="/general-audit-logs" element={
+        <Route path="/audit-logs" element={
           <ProtectedRoute>
             <Dashboard />
           </ProtectedRoute>
@@ -280,6 +277,36 @@ function App() {
         <Route path="/quotations/edit/:quotationId" element={
           <ProtectedRoute>
             <QuotationFormPage />
+          </ProtectedRoute>
+        } />
+        <Route path="/leads/create" element={
+          <ProtectedRoute>
+            <LeadFormPage />
+          </ProtectedRoute>
+        } />
+        <Route path="/leads/edit/:leadId" element={
+          <ProtectedRoute>
+            <LeadFormPage />
+          </ProtectedRoute>
+        } />
+        <Route path="/leads/:leadId/site-visits/create" element={
+          <ProtectedRoute>
+            <SiteVisitFormPage />
+          </ProtectedRoute>
+        } />
+        <Route path="/leads/:leadId/site-visits/edit/:visitId" element={
+          <ProtectedRoute>
+            <SiteVisitFormPage />
+          </ProtectedRoute>
+        } />
+        <Route path="/projects/:projectId/site-visits/create" element={
+          <ProtectedRoute>
+            <SiteVisitFormPage />
+          </ProtectedRoute>
+        } />
+        <Route path="/projects/:projectId/site-visits/edit/:visitId" element={
+          <ProtectedRoute>
+            <SiteVisitFormPage />
           </ProtectedRoute>
         } />
       </Routes>
