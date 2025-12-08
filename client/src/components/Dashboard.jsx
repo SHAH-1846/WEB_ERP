@@ -9,6 +9,7 @@ import RevisionManagement from './RevisionManagement'
 import ProjectVariationManagement from './ProjectVariationManagement'
 import UnifiedAuditLogs from './UnifiedAuditLogs'
 import QuotationModal from './QuotationModal'
+import EstimationsDashboard from './EstimationsDashboard'
 import { initTheme, setTheme } from '../utils/theme'
 import { api } from '../lib/api'
 
@@ -16,6 +17,9 @@ function Dashboard() {
   const [user, setUser] = useState(null)
   const [collapsed, setCollapsed] = useState(() => {
     try { return JSON.parse(localStorage.getItem('sidebarCollapsed') || 'false') } catch { return false }
+  })
+  const [estimationsAccordionOpen, setEstimationsAccordionOpen] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('estimationsAccordionOpen') || 'true') } catch { return true }
   })
   const [isDark, setIsDark] = useState(() => {
     const saved = localStorage.getItem('theme')
@@ -54,7 +58,7 @@ function Dashboard() {
     if (isModalRoute && backgroundLocation) {
       const pathSegments = backgroundLocation.pathname.split('/').filter(Boolean)
       const basePath = pathSegments[0] || 'dashboard'
-      if (['dashboard','users','leads','projects','quotations','revisions','project-variations','audit-logs'].includes(basePath)) {
+      if (['dashboard','users','estimations-dashboard','leads','projects','quotations','revisions','project-variations','audit-logs'].includes(basePath)) {
         setActiveTab(basePath)
       }
     } else if (isModalRoute && !backgroundLocation) {
@@ -65,7 +69,7 @@ function Dashboard() {
       } else {
         const pathSegments = location.pathname.split('/').filter(Boolean)
         const basePath = pathSegments[0] || 'dashboard'
-        if (['dashboard','users','leads','projects','quotations','revisions','project-variations','audit-logs'].includes(basePath)) {
+        if (['dashboard','users','estimations-dashboard','leads','projects','quotations','revisions','project-variations','audit-logs'].includes(basePath)) {
           setActiveTab(basePath)
         }
       }
@@ -73,7 +77,7 @@ function Dashboard() {
       // Normal navigation - use current pathname
       const pathSegments = location.pathname.split('/').filter(Boolean)
       const basePath = pathSegments[0] || 'dashboard'
-      if (['dashboard','users','leads','projects','quotations','revisions','project-variations','audit-logs'].includes(basePath)) {
+      if (['dashboard','users','estimations-dashboard','leads','projects','quotations','revisions','project-variations','audit-logs'].includes(basePath)) {
         setActiveTab(basePath)
       }
     }
@@ -141,43 +145,120 @@ function Dashboard() {
             </svg>
             <span className="label">Users</span>
           </NavLink>
-          <NavLink to="/leads" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
-            <svg viewBox="0 0 24 24" fill="currentColor">
-              <path d="M9 11H7v2h2v-2zm4 0h-2v2h2v-2zm4 0h-2v2h2v-2zm2-7h-1V2h-2v2H8V2H6v2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 16H5V9h14v11z"/>
-            </svg>
-            <span className="label">Leads</span>
-          </NavLink>
-          {user?.roles?.some(r => ['estimation_engineer','manager','admin'].includes(r)) && (
-            <NavLink to="/quotations" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
+          
+          {/* Estimations and Projects Management Accordion - Only for Admins and Managers */}
+          {(user?.roles?.includes('admin') || user?.roles?.includes('manager')) && (
+            <div className="accordion-section">
+              <button
+                className={`accordion-header ${estimationsAccordionOpen ? 'open' : ''}`}
+                onClick={() => {
+                  const next = !estimationsAccordionOpen
+                  setEstimationsAccordionOpen(next)
+                  try { localStorage.setItem('estimationsAccordionOpen', JSON.stringify(next)) } catch {}
+                }}
+              >
+                <svg viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-5 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z"/>
+                </svg>
+                <span className="label">Estimations and Projects Management</span>
+                <svg 
+                  className="accordion-arrow" 
+                  viewBox="0 0 24 24" 
+                  fill="currentColor"
+                  style={{ 
+                    transform: estimationsAccordionOpen ? 'rotate(180deg)' : 'rotate(0deg)',
+                    transition: 'transform 0.3s ease',
+                    marginLeft: 'auto'
+                  }}
+                >
+                  <path d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6 1.41-1.41z"/>
+                </svg>
+              </button>
+              <div className={`accordion-content ${estimationsAccordionOpen ? 'open' : ''}`}>
+                <NavLink to="/estimations-dashboard" className={({ isActive }) => `nav-item sub-item ${isActive ? 'active' : ''}`}>
+                  <svg viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M3 13h8V3H3v10zm0 8h8v-6H3v6zm10 0h8V11h-8v10zm0-18v6h8V3h-8z"/>
+                  </svg>
+                  <span className="label">Estimations Dashboard</span>
+                </NavLink>
+                <NavLink to="/leads" className={({ isActive }) => `nav-item sub-item ${isActive ? 'active' : ''}`}>
+                  <svg viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M9 11H7v2h2v-2zm4 0h-2v2h2v-2zm4 0h-2v2h2v-2zm2-7h-1V2h-2v2H8V2H6v2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 16H5V9h14v11z"/>
+                  </svg>
+                  <span className="label">Leads</span>
+                </NavLink>
+                <NavLink to="/quotations" className={({ isActive }) => `nav-item sub-item ${isActive ? 'active' : ''}`}>
+                  <svg viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M6 2h9a3 3 0 013 3v14a3 3 0 01-3 3H6a3 3 0 01-3-3V5a3 3 0 013-3zm2 5h7v2H8V7zm0 4h7v2H8v-2zm0 4h5v2H8v-2z"/>
+                  </svg>
+                  <span className="label">Quotations</span>
+                </NavLink>
+                <NavLink to="/revisions" className={({ isActive }) => `nav-item sub-item ${isActive ? 'active' : ''}`}>
+                  <svg viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M5 4h9a3 3 0 013 3v11a3 3 0 01-3 3H5a3 3 0 01-3-3V7a3 3 0 013-3zm2 4h7v2H7V8zm0 4h7v2H7v-2zm0 4h5v2H7v-2z"/>
+                  </svg>
+                  <span className="label">Revisions</span>
+                </NavLink>
+                <NavLink to="/projects" className={({ isActive }) => `nav-item sub-item ${isActive ? 'active' : ''}`}>
+                  <svg viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-5 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z"/>
+                  </svg>
+                  <span className="label">Projects</span>
+                </NavLink>
+                <NavLink to="/project-variations" className={({ isActive }) => `nav-item sub-item ${isActive ? 'active' : ''}`}>
+                  <svg viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-2 10h-4v4h-4v-4H5v-4h4V5h4v4h4v4z"/>
+                  </svg>
+                  <span className="label">Project Variations</span>
+                </NavLink>
+              </div>
+            </div>
+          )}
+          
+          {/* Show Leads separately for non-admin/manager users */}
+          {!(user?.roles?.includes('admin') || user?.roles?.includes('manager')) && (
+            <NavLink to="/leads" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
               <svg viewBox="0 0 24 24" fill="currentColor">
-                <path d="M6 2h9a3 3 0 013 3v14a3 3 0 01-3 3H6a3 3 0 01-3-3V5a3 3 0 013-3zm2 5h7v2H8V7zm0 4h7v2H8v-2zm0 4h5v2H8v-2z"/>
+                <path d="M9 11H7v2h2v-2zm4 0h-2v2h2v-2zm4 0h-2v2h2v-2zm2-7h-1V2h-2v2H8V2H6v2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 16H5V9h14v11z"/>
               </svg>
-              <span className="label">Quotations</span>
+              <span className="label">Leads</span>
             </NavLink>
           )}
-          {user?.roles?.some(r => ['estimation_engineer','manager','admin'].includes(r)) && (
-            <NavLink to="/revisions" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
+          
+          {/* Show Quotations, Revisions, Project Variations for estimation engineers (not in accordion) */}
+          {user?.roles?.some(r => ['estimation_engineer'].includes(r)) && !(user?.roles?.includes('admin') || user?.roles?.includes('manager')) && (
+            <>
+              <NavLink to="/quotations" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
+                <svg viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M6 2h9a3 3 0 013 3v14a3 3 0 01-3 3H6a3 3 0 01-3-3V5a3 3 0 013-3zm2 5h7v2H8V7zm0 4h7v2H8v-2zm0 4h5v2H8v-2z"/>
+                </svg>
+                <span className="label">Quotations</span>
+              </NavLink>
+              <NavLink to="/revisions" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
+                <svg viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M5 4h9a3 3 0 013 3v11a3 3 0 01-3 3H5a3 3 0 01-3-3V7a3 3 0 013-3zm2 4h7v2H7V8zm0 4h7v2H7v-2zm0 4h5v2H7v-2z"/>
+                </svg>
+                <span className="label">Revisions</span>
+              </NavLink>
+              <NavLink to="/project-variations" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
+                <svg viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-2 10h-4v4h-4v-4H5v-4h4V5h4v4h4v4z"/>
+                </svg>
+                <span className="label">Project Variations</span>
+              </NavLink>
+            </>
+          )}
+          
+          {/* Show Projects for all users (not in accordion for non-admin/manager) */}
+          {!(user?.roles?.includes('admin') || user?.roles?.includes('manager')) && (
+            <NavLink to="/projects" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
               <svg viewBox="0 0 24 24" fill="currentColor">
-                <path d="M5 4h9a3 3 0 013 3v11a3 3 0 01-3 3H5a3 3 0 01-3-3V7a3 3 0 013-3zm2 4h7v2H7V8zm0 4h7v2H7v-2zm0 4h5v2H7v-2z"/>
+                <path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-5 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z"/>
               </svg>
-              <span className="label">Revisions</span>
+              <span className="label">Projects</span>
             </NavLink>
           )}
-          <NavLink to="/projects" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
-            <svg viewBox="0 0 24 24" fill="currentColor">
-              <path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-5 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z"/>
-            </svg>
-            <span className="label">Projects</span>
-          </NavLink>
-          {user?.roles?.some(r => ['estimation_engineer','manager','admin'].includes(r)) && (
-            <NavLink to="/project-variations" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
-              <svg viewBox="0 0 24 24" fill="currentColor">
-                <path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-2 10h-4v4h-4v-4H5v-4h4V5h4v4h4v4z"/>
-              </svg>
-              <span className="label">Project Variations</span>
-            </NavLink>
-          )}
-          {(user?.roles?.includes('manager') || user?.roles?.includes('admin')) && (
+          {(user?.roles?.includes('manager') || user?.roles?.includes('admin') || user?.roles?.includes('estimation_engineer') || user?.roles?.includes('sales_engineer') || user?.roles?.includes('project_engineer')) && (
             <NavLink to="/audit-logs" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
               <svg viewBox="0 0 24 24" fill="currentColor">
                 <path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/>
@@ -220,7 +301,11 @@ function Dashboard() {
             </button>
             <div>
               <h1>
-              {activeTab === 'dashboard' && 'Dashboard'}
+              {activeTab === 'dashboard' && (
+                (user?.roles?.includes('estimation_engineer') || user?.roles?.includes('sales_engineer') || user?.roles?.includes('project_engineer'))
+                  ? 'Estimations Dashboard'
+                  : 'Dashboard'
+              )}
               {activeTab === 'users' && 'User Management'}
               {activeTab === 'leads' && 'Lead Management'}
               {activeTab === 'projects' && 'Project Management'}
@@ -243,7 +328,13 @@ function Dashboard() {
         <div className="content">
           {activeTab === 'dashboard' && (
             <>
-              <div className="stats-grid">
+              {/* Show Estimations Dashboard for Estimation Engineers, Sales Engineers, and Project Engineers */}
+              {(user?.roles?.includes('estimation_engineer') || user?.roles?.includes('sales_engineer') || user?.roles?.includes('project_engineer')) ? (
+                <EstimationsDashboard />
+              ) : (
+                <>
+                  {/* Show Default Dashboard for Admins and Managers (and other roles) */}
+                  <div className="stats-grid">
                 <div className="stat-card">
                   <div className="stat-icon users">
                     <svg viewBox="0 0 24 24" fill="currentColor">
@@ -339,10 +430,13 @@ function Dashboard() {
                   </div>
                 </div>
               </div>
+                </>
+              )}
             </>
           )}
           
           {activeTab === 'users' && <UserManagement />}
+          {activeTab === 'estimations-dashboard' && <EstimationsDashboard />}
           {activeTab === 'leads' && <LeadManagement />}
           {activeTab === 'projects' && <ProjectManagement />}
           {activeTab === 'quotations' && <QuotationManagement />}

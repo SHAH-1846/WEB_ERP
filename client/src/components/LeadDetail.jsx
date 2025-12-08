@@ -68,6 +68,7 @@ function LeadDetail() {
   const [isDeleting, setIsDeleting] = useState(false)
   const [deleteSiteVisitModal, setDeleteSiteVisitModal] = useState({ open: false, visit: null })
   const [isDeletingSiteVisit, setIsDeletingSiteVisit] = useState(false)
+  const [printPreviewModal, setPrintPreviewModal] = useState({ open: false, visit: null, pdfUrl: null })
 
   // Helpers for PDF export
   const ensurePdfMake = async () => {
@@ -774,7 +775,104 @@ ${visit.actionItems ? 'Recommended follow‑up: ' + visit.actionItems : 'Continu
                               {isDeletingSiteVisit && deleteSiteVisitModal.visit?._id === v._id ? 'Deleting...' : 'Delete'}
                             </button>
                           )}
-                        <button className="save-btn" onClick={() => exportVisitPDF(v)}>Export</button>
+                        <button className="save-btn" onClick={async () => {
+                          try {
+                            await ensurePdfMake()
+                            const logoDataUrl = await toDataURL(logo)
+                            const reportTitle = 'Site Visit Report'
+                            
+                            const leadFields = [
+                              ['Customer', lead.customerName || 'N/A'],
+                              ['Project Title', lead.projectTitle || 'N/A'],
+                              ['Enquiry #', lead.enquiryNumber || 'N/A'],
+                              ['Enquiry Date', lead.enquiryDate ? new Date(lead.enquiryDate).toLocaleDateString() : 'N/A'],
+                              ['Submission Due', lead.submissionDueDate ? new Date(lead.submissionDueDate).toLocaleDateString() : 'N/A'],
+                              ['Scope Summary', lead.scopeSummary || 'N/A']
+                            ]
+
+                            const visitFields = [
+                              ['Date & Time', v.visitAt ? new Date(v.visitAt).toLocaleString() : 'N/A'],
+                              ['Engineer', v.engineerName || 'N/A'],
+                              ['Added By', v.createdBy?.name ? `${v.createdBy.name}${v.createdBy.email ? ' (' + v.createdBy.email + ')' : ''}` : 'N/A'],
+                              ['Site Location', v.siteLocation || 'N/A'],
+                              ['Work Progress', v.workProgressSummary || 'N/A'],
+                              ['Safety Observations', v.safetyObservations || 'N/A'],
+                              ['Quality & Material Check', v.qualityMaterialCheck || 'N/A'],
+                              ['Issues / Non-Conformities', v.issuesFound || 'N/A'],
+                              ['Action Items / Follow-up', v.actionItems || 'N/A'],
+                              ['Weather Conditions', v.weatherConditions || 'N/A'],
+                              ['Description / Remarks', v.description || 'N/A']
+                            ]
+
+                            const professionalParagraphs = [
+                              { text: 'Executive Summary', style: 'h2', margin: [0, 16, 0, 8] },
+                              { text: `The site visit was conducted by ${v.engineerName || 'the assigned engineer'} on ${v.visitAt ? new Date(v.visitAt).toLocaleString() : 'N/A'}. The overall progress is summarized below with key observations and recommended follow-up actions for maintaining momentum and quality across on‑site operations.`, margin: [0,0,0,8] },
+                              { text: 'Observations & Insights', style: 'h2', margin: [0, 12, 0, 8] },
+                              { text: `Work on site is progressing ${v.workProgressSummary ? 'as follows: ' + v.workProgressSummary : 'according to plan'}.
+${v.safetyObservations ? 'Safety: ' + v.safetyObservations : 'Safety standards appear to be upheld with no critical deviations reported at the time of visit.'}
+${v.qualityMaterialCheck ? 'Quality & Materials: ' + v.qualityMaterialCheck : 'Materials inspected met expected quality benchmarks; workmanship aligns with design intent.'}`, margin: [0,0,0,8] },
+                              { text: 'Risks & Recommendations', style: 'h2', margin: [0, 12, 0, 8] },
+                              { text: `${v.issuesFound ? 'Issues identified: ' + v.issuesFound : 'No material issues were identified that could impact schedule or quality.'}
+${v.actionItems ? 'Recommended follow‑up: ' + v.actionItems : 'Continue with current plan, monitor progress and perform targeted spot checks on critical path items.'}`, margin: [0,0,0,0] }
+                            ]
+
+                            const docDefinition = {
+                              pageMargins: [40, 60, 40, 60],
+                              content: [
+                                {
+                                  columns: [
+                                    { image: logoDataUrl, width: 90 },
+                                    [
+                                      { text: 'WBES', style: 'brand' },
+                                      { text: reportTitle, style: 'h1' }
+                                    ],
+                                    { text: new Date().toLocaleDateString(), alignment: 'right', color: '#64748b' }
+                                  ]
+                                },
+                                { text: '\n' },
+                                { text: 'Lead Details', style: 'h2', margin: [0, 8, 0, 6] },
+                                {
+                                  table: {
+                                    widths: ['30%', '70%'],
+                                    body: [
+                                      [{ text: 'Field', style: 'th' }, { text: 'Value', style: 'th' }],
+                                      ...leadFields.map(([k,v]) => [{ text: k, style: 'tdKey' }, { text: v, style: 'tdVal' }])
+                                    ]
+                                  },
+                                  layout: 'lightHorizontalLines'
+                                },
+                                { text: 'Site Visit Details', style: 'h2', margin: [0, 14, 0, 6] },
+                                {
+                                  table: {
+                                    widths: ['30%', '70%'],
+                                    body: [
+                                      [{ text: 'Field', style: 'th' }, { text: 'Value', style: 'th' }],
+                                      ...visitFields.map(([k,v]) => [{ text: k, style: 'tdKey' }, { text: v, style: 'tdVal' }])
+                                    ]
+                                  },
+                                  layout: 'lightHorizontalLines'
+                                },
+                                ...professionalParagraphs
+                              ],
+                              styles: {
+                                brand: { fontSize: 14, color: '#6366f1', bold: true, margin: [0, 0, 0, 2] },
+                                h1: { fontSize: 20, bold: true, margin: [0, 2, 0, 0] },
+                                h2: { fontSize: 14, bold: true, color: '#0f172a' },
+                                th: { bold: true, fillColor: '#f1f5f9' },
+                                tdKey: { color: '#64748b' },
+                                tdVal: { color: '#0f172a' }
+                              },
+                              defaultStyle: { fontSize: 10 }
+                            }
+
+                            const pdfDoc = window.pdfMake.createPdf(docDefinition)
+                            pdfDoc.getDataUrl((dataUrl) => {
+                              setPrintPreviewModal({ open: true, visit: v, pdfUrl: dataUrl })
+                            })
+                          } catch (e) {
+                            setNotify({ open: true, title: 'Preview Failed', message: 'We could not generate the PDF preview. Please try again.' })
+                          }
+                        }}>Print Preview</button>
                         {v.edits?.length > 0 && (
                             <button className="link-btn" onClick={() => setVisitHistoryOpen(prev => ({ ...prev, [v._id]: !prev[v._id] }))}>
                               {visitHistoryOpen[v._id] ? 'Hide History' : 'View History'}
@@ -2127,6 +2225,74 @@ ${visit.actionItems ? 'Recommended follow‑up: ' + visit.actionItems : 'Continu
                   {isDeleting ? 'Deleting...' : 'Delete'}
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {printPreviewModal.open && printPreviewModal.pdfUrl && (
+        <div className="modal-overlay" onClick={() => setPrintPreviewModal({ open: false, visit: null, pdfUrl: null })} style={{ zIndex: 10000 }}>
+          <div className="modal" onClick={e => e.stopPropagation()} style={{ zIndex: 10001, maxWidth: '95%', width: '100%', height: '95vh', display: 'flex', flexDirection: 'column' }}>
+            <div className="modal-header" style={{ flexShrink: 0, borderBottom: '1px solid var(--border)', padding: '16px 24px' }}>
+              <h2>PDF Preview - Site Visit Report</h2>
+              <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                <button 
+                  className="save-btn" 
+                  onClick={async () => {
+                    if (printPreviewModal.visit) {
+                      try {
+                        await exportVisitPDF(printPreviewModal.visit)
+                      } catch (e) {
+                        setNotify({ open: true, title: 'Export Failed', message: 'We could not generate the PDF. Please try again.' })
+                      }
+                    }
+                  }}
+                >
+                  Download PDF
+                </button>
+                <button 
+                  className="save-btn" 
+                  onClick={() => {
+                    if (printPreviewModal.pdfUrl) {
+                      const printWindow = window.open('', '_blank')
+                      printWindow.document.write(`
+                        <!DOCTYPE html>
+                        <html>
+                          <head>
+                            <title>Site Visit Report</title>
+                            <style>
+                              body { margin: 0; padding: 0; }
+                              iframe { width: 100%; height: 100vh; border: none; }
+                            </style>
+                          </head>
+                          <body>
+                            <iframe src="${printPreviewModal.pdfUrl}"></iframe>
+                          </body>
+                        </html>
+                      `)
+                      printWindow.document.close()
+                      setTimeout(() => {
+                        printWindow.frames[0].print()
+                      }, 500)
+                    }
+                  }}
+                >
+                  Print
+                </button>
+                <button onClick={() => setPrintPreviewModal({ open: false, visit: null, pdfUrl: null })} className="close-btn">×</button>
+              </div>
+            </div>
+            <div style={{ flex: 1, overflow: 'hidden', background: '#525252', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <iframe 
+                src={printPreviewModal.pdfUrl}
+                style={{ 
+                  width: '100%', 
+                  height: '100%', 
+                  border: 'none',
+                  background: 'white'
+                }}
+                title="PDF Preview"
+              />
             </div>
           </div>
         </div>

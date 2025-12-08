@@ -194,6 +194,11 @@ function App() {
             <Dashboard />
           </ProtectedRoute>
         } />
+        <Route path="/estimations-dashboard" element={
+          <ProtectedRoute>
+            <Dashboard />
+          </ProtectedRoute>
+        } />
         <Route path="/users" element={
           <ProtectedRoute>
             <Dashboard />

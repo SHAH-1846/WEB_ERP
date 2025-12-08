@@ -31,7 +31,21 @@ function UnifiedAuditLogs() {
   useEffect(() => {
     try {
       const userData = localStorage.getItem('user')
-      setCurrentUser(userData ? JSON.parse(userData) : null)
+      const user = userData ? JSON.parse(userData) : null
+      setCurrentUser(user)
+      
+      // Automatically set logSourceFilter to 'estimation' for estimation roles
+      if (user?.roles) {
+        const isEstimationRole = user.roles.includes('estimation_engineer') || 
+                                user.roles.includes('sales_engineer') || 
+                                user.roles.includes('project_engineer')
+        const isManagerOrAdmin = user.roles.includes('manager') || user.roles.includes('admin')
+        
+        // Only estimation roles (not managers/admins) should default to estimation logs
+        if (isEstimationRole && !isManagerOrAdmin) {
+          setLogSourceFilter('estimation')
+        }
+      }
     } catch (error) {
       console.error('Error loading user data:', error)
       setCurrentUser(null)
@@ -123,7 +137,16 @@ function UnifiedAuditLogs() {
     <div className="lead-management">
       <div ref={headerRef} className="header-section" style={{ position: 'sticky', top: 0, zIndex: 100, background: 'var(--bg)' }}>
         <div className="header">
-          <h1>Audit Logs</h1>
+          <h1>
+            Audit Logs
+            {currentUser?.roles && 
+             !currentUser.roles.includes('manager') && 
+             !currentUser.roles.includes('admin') && 
+             (currentUser.roles.includes('estimation_engineer') || 
+              currentUser.roles.includes('sales_engineer') || 
+              currentUser.roles.includes('project_engineer')) && 
+             ' (Estimation Only)'}
+          </h1>
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
             <span style={{ fontSize: '14px', color: 'var(--text-muted)' }}>
               Total: {total} logs
@@ -184,46 +207,52 @@ function UnifiedAuditLogs() {
               </div>
               
               <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(auto-fit, minmax(200px, 1fr))', gap: '12px' }}>
-                <div className="form-group">
-                  <label>Log Source</label>
-                <select 
-                  value={logSourceFilter} 
-                  onChange={e => {
-                    setLogSourceFilter(e.target.value)
-                    setCurrentPage(1)
-                  }}
-                  style={{ width: '100%', padding: '8px', border: '1px solid var(--border)', borderRadius: '6px', background: 'var(--input)', color: 'var(--text)' }}
-                >
-                  <option value="">All Logs</option>
-                  <option value="estimation">Estimation Logs</option>
-                  <option value="general">General Logs</option>
-                </select>
-              </div>
+                {/* Only show Log Source filter for managers and admins */}
+                {(currentUser?.roles?.includes('manager') || currentUser?.roles?.includes('admin')) && (
+                  <div className="form-group">
+                    <label>Log Source</label>
+                    <select 
+                      value={logSourceFilter} 
+                      onChange={e => {
+                        setLogSourceFilter(e.target.value)
+                        setCurrentPage(1)
+                      }}
+                      style={{ width: '100%', padding: '8px', border: '1px solid var(--border)', borderRadius: '6px', background: 'var(--input)', color: 'var(--text)' }}
+                    >
+                      <option value="">All Logs</option>
+                      <option value="estimation">Estimation Logs</option>
+                      <option value="general">General Logs</option>
+                    </select>
+                  </div>
+                )}
 
-              <div className="form-group">
-                <label>Module (General Logs)</label>
-                <select 
-                  value={moduleFilter} 
-                  onChange={e => {
-                    setModuleFilter(e.target.value)
-                    setCurrentPage(1)
-                  }}
-                  style={{ width: '100%', padding: '8px', border: '1px solid var(--border)', borderRadius: '6px', background: 'var(--input)', color: 'var(--text)' }}
-                  disabled={logSourceFilter === 'estimation'}
-                >
-                  <option value="">All Modules</option>
-                  <option value="authentication">Authentication</option>
-                  <option value="user_management">User Management</option>
-                  <option value="role_management">Role Management</option>
-                  <option value="lead_management">Lead Management</option>
-                  <option value="quotation_management">Quotation Management</option>
-                  <option value="revision_management">Revision Management</option>
-                  <option value="project_management">Project Management</option>
-                  <option value="project_variation_management">Project Variation Management</option>
-                  <option value="site_visit_management">Site Visit Management</option>
-                  <option value="system">System</option>
-                </select>
-              </div>
+                {/* Only show Module filter for managers and admins, and only when viewing general logs */}
+                {(currentUser?.roles?.includes('manager') || currentUser?.roles?.includes('admin')) && (
+                  <div className="form-group">
+                    <label>Module (General Logs)</label>
+                    <select 
+                      value={moduleFilter} 
+                      onChange={e => {
+                        setModuleFilter(e.target.value)
+                        setCurrentPage(1)
+                      }}
+                      style={{ width: '100%', padding: '8px', border: '1px solid var(--border)', borderRadius: '6px', background: 'var(--input)', color: 'var(--text)' }}
+                      disabled={logSourceFilter === 'estimation'}
+                    >
+                      <option value="">All Modules</option>
+                      <option value="authentication">Authentication</option>
+                      <option value="user_management">User Management</option>
+                      <option value="role_management">Role Management</option>
+                      <option value="lead_management">Lead Management</option>
+                      <option value="quotation_management">Quotation Management</option>
+                      <option value="revision_management">Revision Management</option>
+                      <option value="project_management">Project Management</option>
+                      <option value="project_variation_management">Project Variation Management</option>
+                      <option value="site_visit_management">Site Visit Management</option>
+                      <option value="system">System</option>
+                    </select>
+                  </div>
+                )}
               
               <div className="form-group">
                 <label>Action</label>

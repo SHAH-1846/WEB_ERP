@@ -20,8 +20,12 @@ const auth = (req, res, next) => {
 router.get('/', auth, async (req, res) => {
   try {
     const roles = req.user.roles || [];
-    if (!roles.includes('manager') && !roles.includes('admin')) {
-      return res.status(403).json({ message: 'Only managers and admins can view audit logs' });
+    const isManagerOrAdmin = roles.includes('manager') || roles.includes('admin');
+    const isEstimationRole = roles.includes('estimation_engineer') || roles.includes('sales_engineer') || roles.includes('project_engineer');
+    
+    // Allow managers/admins to see all logs, estimation roles to see only estimation logs
+    if (!isManagerOrAdmin && !isEstimationRole) {
+      return res.status(403).json({ message: 'Access denied. Only managers, admins, and estimation-related roles can view audit logs' });
     }
 
     const { 
@@ -38,10 +42,13 @@ router.get('/', auth, async (req, res) => {
       limit = 50 
     } = req.query;
 
+    // Force estimation logs only for non-manager/admin roles
+    const effectiveLogSource = isManagerOrAdmin ? logSource : 'estimation';
+
     const allLogs = [];
 
     // Fetch Estimation Audit Logs (if logSource is 'estimation' or empty)
-    if (!logSource || logSource === 'estimation') {
+    if (!effectiveLogSource || effectiveLogSource === 'estimation') {
       const estimationQuery = {};
       
       if (action) estimationQuery.action = action;
@@ -157,8 +164,8 @@ router.get('/', auth, async (req, res) => {
       });
     }
 
-    // Fetch General Audit Logs (if logSource is 'general' or empty)
-    if (!logSource || logSource === 'general') {
+    // Fetch General Audit Logs (if logSource is 'general' or empty) - only for managers/admins
+    if (isManagerOrAdmin && (!effectiveLogSource || effectiveLogSource === 'general')) {
       const generalQuery = {};
       
       if (action) generalQuery.action = { $regex: action, $options: 'i' };
