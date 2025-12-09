@@ -13,10 +13,14 @@ function QuotationDetail() {
   const [showQuoteHistory, setShowQuoteHistory] = useState(false)
   const [profileUser, setProfileUser] = useState(null)
   const [approvalModal, setApprovalModal] = useState({ open: false, action: null, note: '' })
+  const [sendApprovalConfirmModal, setSendApprovalConfirmModal] = useState(false)
   const [approvalsViewOpen, setApprovalsViewOpen] = useState(false)
   const [revisionModal, setRevisionModal] = useState({ open: false, form: null })
   const [hasRevisions, setHasRevisions] = useState(false)
+  const [revisions, setRevisions] = useState([])
+  const [revisionHistoryOpen, setRevisionHistoryOpen] = useState({})
   const [notify, setNotify] = useState({ open: false, title: '', message: '' })
+  const [deleteModal, setDeleteModal] = useState({ open: false })
 
   const ensurePdfMake = async () => {
     if (window.pdfMake) return
@@ -365,9 +369,27 @@ function QuotationDetail() {
       const res = await apiFetch(`/api/quotations/${quotation._id}`)
       const updated = await res.json()
       setQuotation(updated)
+      setSendApprovalConfirmModal(false)
       setNotify({ open: true, title: 'Request Sent', message: 'Approval request has been sent successfully.' })
     } catch (e) {
       setNotify({ open: true, title: 'Send Failed', message: 'We could not send for approval. Please try again.' })
+    }
+  }
+
+  const handleDeleteQuotation = async () => {
+    try {
+      const token = localStorage.getItem('token')
+      await apiFetch(`/api/quotations/${quotation._id}`, {
+        method: 'DELETE'
+      })
+      setDeleteModal({ open: false })
+      setNotify({ open: true, title: 'Deleted', message: 'Quotation deleted successfully.' })
+      setTimeout(() => {
+        window.location.href = '/quotations'
+      }, 1500)
+    } catch (e) {
+      setDeleteModal({ open: false })
+      setNotify({ open: true, title: 'Delete Failed', message: e.message || 'We could not delete the quotation. Please try again.' })
     }
   }
 
@@ -483,7 +505,9 @@ function QuotationDetail() {
           try {
             const revRes = await apiFetch(`/api/revisions?parentQuotation=${qid}`)
             const revs = await revRes.json()
-            setHasRevisions(Array.isArray(revs) && revs.length > 0)
+            const revisionsList = Array.isArray(revs) ? revs : []
+            setRevisions(revisionsList)
+            setHasRevisions(revisionsList.length > 0)
           } catch {}
         } else if (initial) {
           setQuotation(initial)
@@ -498,7 +522,9 @@ function QuotationDetail() {
           try {
             const revRes = await apiFetch(`/api/revisions?parentQuotation=${initial._id || localStorage.getItem('quotationId')}`)
             const revs = await revRes.json()
-            setHasRevisions(Array.isArray(revs) && revs.length > 0)
+            const revisionsList = Array.isArray(revs) ? revs : []
+            setRevisions(revisionsList)
+            setHasRevisions(revisionsList.length > 0)
           } catch {}
         }
       } catch {}
@@ -542,13 +568,25 @@ function QuotationDetail() {
               const revRes = await apiFetch(`/api/revisions?parentQuotation=${quotation._id}`)
               const revs = await revRes.json()
               const approved = (Array.isArray(revs) ? revs : []).filter(r => r.managementApproval?.status === 'approved')
-              const latest = approved.slice().sort((a,b) => (b.revisionNumber||0)-(a.revisionNumber||0))[0]
+              const latest = approved.slice().sort((a,b) => {
+                // Extract numeric part from revisionNumber (e.g., "PROJ-REV-001" -> 1)
+                const getRevisionNum = (revNum) => {
+                  if (!revNum) return 0;
+                  if (typeof revNum === 'number') return revNum;
+                  const match = revNum.match(/-REV-(\d+)$/);
+                  return match ? parseInt(match[1], 10) : 0;
+                };
+                return getRevisionNum(b.revisionNumber) - getRevisionNum(a.revisionNumber);
+              })[0]
               if (!latest) { setNotify({ open: true, title: 'No Project', message: 'No approved revision found for project linking.' }); return }
               const pjRes = await apiFetch(`/api/projects/by-revision/${latest._id}`)
               if (!pjRes.ok) { setNotify({ open: true, title: 'No Project', message: 'No project exists for the latest approved revision.' }); return }
               const pj = await pjRes.json()
-              try { localStorage.setItem('projectsFocusId', pj._id) } catch {}
-              window.location.href = '/projects'
+              try { 
+                localStorage.setItem('projectsFocusId', pj._id)
+                localStorage.setItem('projectId', pj._id)
+              } catch {}
+              window.location.href = '/project-detail'
             } catch { setNotify({ open: true, title: 'Open Project Failed', message: 'We could not open the linked project.' }) }
           }}>View Project</button>
           {approvalStatus === 'approved' && !hasRevisions && (
@@ -571,7 +609,7 @@ function QuotationDetail() {
             } })}>Create Revision</button>
           )}
           {approvalStatus !== 'approved' && approvalStatus !== 'pending' && !(currentUser?.roles?.includes('manager') || currentUser?.roles?.includes('admin')) && (
-            <button className="save-btn" onClick={sendForApproval}>Send for Approval</button>
+            <button className="save-btn" onClick={() => setSendApprovalConfirmModal(true)}>Send for Approval</button>
           )}
           {quotation.lead?._id && (
             <button className="link-btn" onClick={async () => {
@@ -591,6 +629,11 @@ function QuotationDetail() {
           {quotation.edits?.length > 0 && (
             <button className="link-btn" onClick={() => setShowQuoteHistory(!showQuoteHistory)}>
               {showQuoteHistory ? 'Hide Quotation Edit History' : 'View Quotation Edit History'}
+            </button>
+          )}
+          {(quotation.managementApproval?.status !== 'approved' || currentUser?.roles?.includes('manager') || currentUser?.roles?.includes('admin')) && (
+            <button className="reject-btn" onClick={() => setDeleteModal({ open: true })}>
+              Delete
             </button>
           )}
         </div>
@@ -832,11 +875,137 @@ function QuotationDetail() {
           </div>
         </div>
       )}
+      {Array.isArray(revisions) && revisions.length > 0 && (
+        <div className="ld-card ld-section">
+          <h3>Revisions ({revisions.length})</h3>
+          <div className="table">
+            <table>
+              <thead>
+                <tr>
+                  <th>Revision #</th>
+                  <th>Offer Ref</th>
+                  <th>Offer Date</th>
+                  <th>Grand Total</th>
+                  <th>Status</th>
+                  <th>Created By</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {revisions.map((r) => (
+                  <>
+                    <tr key={r._id}>
+                      <td data-label="Revision #">
+                        {r.parentQuotation?._id || r.parentQuotation ? (
+                          <button
+                            className="link-btn"
+                            onClick={() => {
+                              try {
+                                const parentId = typeof r.parentQuotation === 'object' ? r.parentQuotation._id : r.parentQuotation;
+                                localStorage.setItem('quotationId', parentId);
+                                localStorage.setItem('quotationDetail', JSON.stringify(r.parentQuotation || {}));
+                              } catch {}
+                              window.location.href = '/quotation-detail';
+                            }}
+                            style={{
+                              fontSize: 'inherit',
+                              fontWeight: 600,
+                              padding: 0,
+                              textDecoration: 'underline'
+                            }}
+                          >
+                            {r.revisionNumber || 'N/A'}
+                          </button>
+                        ) : (
+                          r.revisionNumber || 'N/A'
+                        )}
+                      </td>
+                      <td data-label="Offer Ref">{r.offerReference || 'N/A'}</td>
+                      <td data-label="Offer Date">{r.offerDate ? new Date(r.offerDate).toLocaleDateString() : 'N/A'}</td>
+                      <td data-label="Grand Total">{(r.priceSchedule?.currency || 'AED')} {Number(r.priceSchedule?.grandTotal || 0).toFixed(2)}</td>
+                      <td data-label="Status">{r.managementApproval?.status || 'pending'}</td>
+                      <td data-label="Created By">
+                        {r.createdBy?._id === currentUser?.id ? 'You' : (r.createdBy?.name || 'N/A')}
+                        {r.createdBy?._id !== currentUser?.id && r.createdBy && (
+                          <button className="link-btn" onClick={() => setProfileUser(r.createdBy)} style={{ marginLeft: 6 }}>View Profile</button>
+                        )}
+                      </td>
+                      <td data-label="Actions">
+                        <div className="ld-actions">
+                          <button className="save-btn" onClick={() => {
+                            try {
+                              localStorage.setItem('revisionId', r._id)
+                              localStorage.setItem('revisionDetail', JSON.stringify(r))
+                              const leadId = typeof r.lead === 'object' ? r.lead?._id : r.lead
+                              if (leadId) localStorage.setItem('leadId', leadId)
+                            } catch {}
+                            window.location.href = '/revision-detail'
+                          }}>View Revision</button>
+                          {r.edits?.length > 0 && (
+                            <button className="link-btn" onClick={() => setRevisionHistoryOpen(prev => ({ ...prev, [r._id]: !prev[r._id] }))}>
+                              {revisionHistoryOpen[r._id] ? 'Hide History' : 'View History'}
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                    {revisionHistoryOpen[r._id] && r.edits?.length > 0 && (
+                      <tr className="history-row">
+                        <td colSpan={7}>
+                          <div className="history-panel">
+                            {r.edits.slice().reverse().map((e, j) => (
+                              <div key={j} className="edit-item" style={{ marginTop: 8 }}>
+                                <div className="edit-header">
+                                  <span>By {e.editedBy?._id === currentUser?.id ? 'You' : (e.editedBy?.name || 'N/A')}</span>
+                                  <span>{new Date(e.editedAt).toLocaleString()}</span>
+                                  {e.editedBy?._id !== currentUser?.id && e.editedBy && (
+                                    <button className="link-btn" onClick={() => setProfileUser(e.editedBy)}>View Profile</button>
+                                  )}
+                                </div>
+                                <ul className="changes-list">
+                                  {e.changes.map((c, k) => (
+                                    <li key={k}><strong>{c.field}:</strong> {String(c.from || '')} → {String(c.to || '')}</li>
+                                  ))}
+                                </ul>
+                              </div>
+                            ))}
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                  </>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
       {(currentUser?.roles?.includes('manager') || currentUser?.roles?.includes('admin')) && approvalStatus === 'pending' && (
         <div className="ld-card ld-section">
           <div className="ld-actions">
             <button className="approve-btn" onClick={() => setApprovalModal({ open: true, action: 'approved', note: '' })}>Approve</button>
             <button className="reject-btn" onClick={() => setApprovalModal({ open: true, action: 'rejected', note: '' })}>Reject</button>
+          </div>
+        </div>
+      )}
+
+      {sendApprovalConfirmModal && (
+        <div className="modal-overlay" onClick={() => setSendApprovalConfirmModal(false)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>Confirm Send for Approval</h2>
+              <button onClick={() => setSendApprovalConfirmModal(false)} className="close-btn">×</button>
+            </div>
+            <div className="lead-form">
+              <p>Are you sure you want to send this quotation for approval?</p>
+              <div className="form-actions">
+                <button type="button" className="cancel-btn" onClick={() => setSendApprovalConfirmModal(false)}>Cancel</button>
+                <button type="button" className="save-btn" onClick={sendForApproval}>
+                  Confirm & Send
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}
@@ -1009,6 +1178,26 @@ function QuotationDetail() {
               <p>{notify.message}</p>
               <div className="form-actions">
                 <button type="button" className="save-btn" onClick={() => setNotify({ open: false, title: '', message: '' })}>OK</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {deleteModal.open && (
+        <div className="modal-overlay" onClick={() => setDeleteModal({ open: false })}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>Delete Quotation</h2>
+              <button onClick={() => setDeleteModal({ open: false })} className="close-btn">×</button>
+            </div>
+            <div className="lead-form">
+              <p>Are you sure you want to delete this quotation? This action cannot be undone.</p>
+              <div className="form-actions">
+                <button type="button" className="cancel-btn" onClick={() => setDeleteModal({ open: false })}>Cancel</button>
+                <button type="button" className="reject-btn" onClick={handleDeleteQuotation}>
+                  Delete
+                </button>
               </div>
             </div>
           </div>

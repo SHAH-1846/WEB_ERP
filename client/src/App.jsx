@@ -8,6 +8,12 @@ import LeadDetail from './components/LeadDetail'
 import QuotationDetail from './components/QuotationDetail'
 import RevisionDetail from './components/RevisionDetail'
 import ProjectDetail from './components/ProjectDetail'
+import VariationDetail from './components/VariationDetail'
+import SiteVisitDetail from './components/SiteVisitDetail'
+import SiteVisitFormPage from './components/SiteVisitFormPage'
+import QuotationModal from './components/QuotationModal'
+import QuotationFormPage from './components/QuotationFormPage'
+import LeadFormPage from './components/LeadFormPage'
 import { initTheme, setTheme } from './utils/theme'
 
 function Login() {
@@ -188,6 +194,11 @@ function App() {
             <Dashboard />
           </ProtectedRoute>
         } />
+        <Route path="/estimations-dashboard" element={
+          <ProtectedRoute>
+            <Dashboard />
+          </ProtectedRoute>
+        } />
         <Route path="/users" element={
           <ProtectedRoute>
             <Dashboard />
@@ -213,6 +224,16 @@ function App() {
             <Dashboard />
           </ProtectedRoute>
         } />
+        <Route path="/project-variations" element={
+          <ProtectedRoute>
+            <Dashboard />
+          </ProtectedRoute>
+        } />
+        <Route path="/audit-logs" element={
+          <ProtectedRoute>
+            <Dashboard />
+          </ProtectedRoute>
+        } />
         <Route path="/lead-detail" element={
           <ProtectedRoute>
             <LeadDetail />
@@ -231,6 +252,66 @@ function App() {
         <Route path="/project-detail" element={
           <ProtectedRoute>
             <ProjectDetail />
+          </ProtectedRoute>
+        } />
+        <Route path="/variation-detail" element={
+          <ProtectedRoute>
+            <VariationDetail />
+          </ProtectedRoute>
+        } />
+        <Route path="/site-visit-detail" element={
+          <ProtectedRoute>
+            <SiteVisitDetail />
+          </ProtectedRoute>
+        } />
+        <Route path="/leads/create-quotation/:leadId" element={
+          <ProtectedRoute>
+            <QuotationFormPage />
+          </ProtectedRoute>
+        } />
+        <Route path="/leads/create-quotation" element={
+          <ProtectedRoute>
+            <QuotationFormPage />
+          </ProtectedRoute>
+        } />
+        <Route path="/quotations/create" element={
+          <ProtectedRoute>
+            <QuotationFormPage />
+          </ProtectedRoute>
+        } />
+        <Route path="/quotations/edit/:quotationId" element={
+          <ProtectedRoute>
+            <QuotationFormPage />
+          </ProtectedRoute>
+        } />
+        <Route path="/leads/create" element={
+          <ProtectedRoute>
+            <LeadFormPage />
+          </ProtectedRoute>
+        } />
+        <Route path="/leads/edit/:leadId" element={
+          <ProtectedRoute>
+            <LeadFormPage />
+          </ProtectedRoute>
+        } />
+        <Route path="/leads/:leadId/site-visits/create" element={
+          <ProtectedRoute>
+            <SiteVisitFormPage />
+          </ProtectedRoute>
+        } />
+        <Route path="/leads/:leadId/site-visits/edit/:visitId" element={
+          <ProtectedRoute>
+            <SiteVisitFormPage />
+          </ProtectedRoute>
+        } />
+        <Route path="/projects/:projectId/site-visits/create" element={
+          <ProtectedRoute>
+            <SiteVisitFormPage />
+          </ProtectedRoute>
+        } />
+        <Route path="/projects/:projectId/site-visits/edit/:visitId" element={
+          <ProtectedRoute>
+            <SiteVisitFormPage />
           </ProtectedRoute>
         } />
       </Routes>

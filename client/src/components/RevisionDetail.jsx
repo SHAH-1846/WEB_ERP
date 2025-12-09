@@ -358,6 +358,166 @@ function RevisionDetail() {
     }
   }
 
+  const formatHistoryValue = (field, value) => {
+    // Handle null/undefined
+    if (value === null || value === undefined) return '(empty)'
+    
+    // Handle date strings (from diffFromParent normalization)
+    if (['offerDate', 'enquiryDate'].includes(field)) {
+      if (typeof value === 'string' && value.match(/^\d{4}-\d{2}-\d{2}$/)) {
+        try {
+          const date = new Date(value)
+          if (!isNaN(date.getTime())) {
+            return date.toLocaleDateString()
+          }
+        } catch {}
+      }
+      // If it's already a Date object or ISO string
+      if (value instanceof Date || (typeof value === 'string' && value.includes('T'))) {
+        try {
+          const date = new Date(value)
+          if (!isNaN(date.getTime())) {
+            return date.toLocaleDateString()
+          }
+        } catch {}
+      }
+      // If it's a number (timestamp)
+      if (typeof value === 'number') {
+        try {
+          const date = new Date(value)
+          if (!isNaN(date.getTime())) {
+            return date.toLocaleDateString()
+          }
+        } catch {}
+      }
+    }
+    
+    // Handle arrays first (before string check, as arrays might be serialized)
+    if (Array.isArray(value)) {
+      if (value.length === 0) return '(empty)'
+      
+      if (field === 'paymentTerms') {
+        return value.map((t, i) => {
+          if (typeof t === 'string') return `${i + 1}. ${t}`
+          if (!t || typeof t !== 'object') return `${i + 1}. ${String(t)}`
+          return `${i + 1}. ${t?.milestoneDescription || '-'} — ${t?.amountPercent ?? ''}%`
+        }).join('\n')
+      }
+      
+      if (field === 'scopeOfWork') {
+        return value.map((s, i) => {
+          if (typeof s === 'string') return `${i + 1}. ${s}`
+          if (!s || typeof s !== 'object') return `${i + 1}. ${String(s)}`
+          const qtyUnit = [s?.quantity ?? '', s?.unit || ''].filter(x => String(x).trim().length > 0).join(' ')
+          const remarks = s?.locationRemarks ? ` — ${s.locationRemarks}` : ''
+          return `${i + 1}. ${s?.description || '-'}${qtyUnit ? ` — Qty: ${qtyUnit}` : ''}${remarks}`
+        }).join('\n')
+      }
+      
+      if (field === 'exclusions') {
+        return value.map((v, i) => `${i + 1}. ${String(v)}`).join('\n')
+      }
+      
+      // Generic array handling
+      return value.map((v, i) => {
+        if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') {
+          return `${i + 1}. ${String(v)}`
+        }
+        if (v && typeof v === 'object') {
+          const parts = Object.entries(v).map(([k, val]) => `${k}: ${val}`)
+          return `${i + 1}. ${parts.join(', ')}`
+        }
+        return `${i + 1}. ${String(v)}`
+      }).join('\n')
+    }
+    
+    // Handle objects (before string check)
+    if (typeof value === 'object' && value !== null && !(value instanceof Date)) {
+      if (field === 'priceSchedule') {
+        const ps = value || {}
+        const lines = []
+        if (ps?.currency) lines.push(`Currency: ${ps.currency}`)
+        const items = Array.isArray(ps?.items) ? ps.items : []
+        if (items.length > 0) {
+          lines.push('Items:')
+          items.forEach((it, i) => {
+            const qtyUnit = [it?.quantity ?? '', it?.unit || ''].filter(x => String(x).trim().length > 0).join(' ')
+            const unitRate = (it?.unitRate ?? '') !== '' ? ` x ${it.unitRate}` : ''
+            const amount = (it?.totalAmount ?? '') !== '' ? ` = ${it.totalAmount}` : ''
+            lines.push(`  ${i + 1}. ${it?.description || '-'}${qtyUnit ? ` — Qty: ${qtyUnit}` : ''}${unitRate}${amount}`)
+          })
+        }
+        if (ps?.subTotal !== undefined && ps?.subTotal !== null) lines.push(`Sub Total: ${ps.subTotal}`)
+        if (ps?.taxDetails) {
+          const rate = ps?.taxDetails?.vatRate ?? ''
+          const amt = ps?.taxDetails?.vatAmount ?? ''
+          if (rate !== '' || amt !== '') {
+            lines.push(`VAT: ${rate}%${amt !== '' ? ` = ${amt}` : ''}`)
+          }
+        }
+        if (ps?.grandTotal !== undefined && ps?.grandTotal !== null) lines.push(`Grand Total: ${ps.grandTotal}`)
+        return lines.length > 0 ? lines.join('\n') : '(empty)'
+      }
+      
+      if (field === 'deliveryCompletionWarrantyValidity') {
+        const d = value || {}
+        const lines = []
+        if (d?.deliveryTimeline) lines.push(`Delivery Timeline: ${d.deliveryTimeline}`)
+        if (d?.warrantyPeriod) lines.push(`Warranty Period: ${d.warrantyPeriod}`)
+        if (d?.offerValidity !== undefined && d?.offerValidity !== null) lines.push(`Offer Validity: ${d.offerValidity} days`)
+        if (d?.authorizedSignatory) lines.push(`Authorized Signatory: ${d.authorizedSignatory}`)
+        return lines.length > 0 ? lines.join('\n') : '(empty)'
+      }
+      
+      if (field === 'companyInfo') {
+        const ci = value || {}
+        const lines = []
+        if (ci?.name) lines.push(`Name: ${ci.name}`)
+        if (ci?.address) lines.push(`Address: ${ci.address}`)
+        if (ci?.phone) lines.push(`Phone: ${ci.phone}`)
+        if (ci?.email) lines.push(`Email: ${ci.email}`)
+        return lines.length > 0 ? lines.join('\n') : '(empty)'
+      }
+      
+      // Generic object handling
+      const entries = Object.entries(value).map(([k, v]) => {
+        if (v === null || v === undefined) return `${k}: (empty)`
+        if (typeof v === 'object') {
+          try {
+            return `${k}: ${JSON.stringify(v, null, 2)}`
+          } catch {
+            return `${k}: ${String(v)}`
+          }
+        }
+        return `${k}: ${String(v)}`
+      })
+      return entries.length > 0 ? entries.join('\n') : '(empty)'
+    }
+    
+    // Handle primitive types
+    if (typeof value === 'string') {
+      // Try to parse JSON string if value looks like JSON
+      if ((value.startsWith('{') || value.startsWith('[')) && value.length > 1) {
+        try {
+          const parsed = JSON.parse(value)
+          // Recursively format the parsed value
+          return formatHistoryValue(field, parsed)
+        } catch {
+          // Not valid JSON, return as string
+          return value.trim() || '(empty)'
+        }
+      }
+      return value.trim() || '(empty)'
+    }
+    
+    // Handle numbers and booleans
+    if (typeof value === 'number' || typeof value === 'boolean') {
+      return String(value)
+    }
+    
+    return String(value)
+  }
+
   if (!revision) return (
     <div className="lead-management" style={{ padding: 24 }}>
       <h2>Revision Details</h2>
@@ -384,8 +544,11 @@ function RevisionDetail() {
               const res = await apiFetch(`/api/projects/by-revision/${revision._id}`)
               if (res.ok) {
                 const pj = await res.json()
-                try { localStorage.setItem('projectsFocusId', pj._id) } catch {}
-                window.location.href = '/projects'
+                try {
+                  localStorage.setItem('projectsFocusId', pj._id)
+                  localStorage.setItem('projectId', pj._id)
+                } catch {}
+                window.location.href = '/project-detail'
               } else {
                 setNotify({ open: true, title: 'No Project', message: 'No project exists for this revision.' })
               }
@@ -444,7 +607,6 @@ function RevisionDetail() {
               <button className="reject-btn" onClick={() => setApprovalModal({ open: true, action: 'rejected', note: '' })}>Reject</button>
             </>
           )}
-          <button className="link-btn" onClick={() => setShowApprovals(!showApprovals)}>{showApprovals ? 'Hide Approvals/Rejections' : 'View Approvals/Rejections'}</button>
         </div>
       </div>
 
@@ -612,6 +774,100 @@ function RevisionDetail() {
             </div>
           </div>
         )}
+
+        {revision.diffFromParent && Array.isArray(revision.diffFromParent) && revision.diffFromParent.length > 0 && (
+          <div className="ld-card ld-section">
+            <h3>Changes from Parent</h3>
+            <p style={{ marginBottom: '16px', color: 'var(--text-muted)' }}>
+              This revision includes the following changes from the parent quotation:
+            </p>
+            <div className="table">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Field</th>
+                    <th>Previous Value</th>
+                    <th>New Value</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {revision.diffFromParent.map((diff, idx) => {
+                    const fieldNameMap = {
+                      'companyInfo': 'Company Info',
+                      'submittedTo': 'Submitted To',
+                      'attention': 'Attention',
+                      'offerReference': 'Offer Reference',
+                      'enquiryNumber': 'Enquiry Number',
+                      'offerDate': 'Offer Date',
+                      'enquiryDate': 'Enquiry Date',
+                      'projectTitle': 'Project Title',
+                      'introductionText': 'Introduction',
+                      'scopeOfWork': 'Scope of Work',
+                      'priceSchedule': 'Price Schedule',
+                      'ourViewpoints': 'Our Viewpoints',
+                      'exclusions': 'Exclusions',
+                      'paymentTerms': 'Payment Terms',
+                      'deliveryCompletionWarrantyValidity': 'Delivery & Warranty'
+                    }
+                    const fieldName = fieldNameMap[diff.field] || diff.field.replace(/([A-Z])/g, ' $1').replace(/^./, str => str.toUpperCase())
+                    
+                    // Format the values for display - ensure we're accessing the correct properties
+                    const fromVal = diff.from !== undefined ? diff.from : (diff.fromValue !== undefined ? diff.fromValue : null)
+                    const toVal = diff.to !== undefined ? diff.to : (diff.toValue !== undefined ? diff.toValue : null)
+                    const fromValue = formatHistoryValue(diff.field, fromVal)
+                    const toValue = formatHistoryValue(diff.field, toVal)
+                    
+                    return (
+                      <tr key={idx}>
+                        <td data-label="Field"><strong>{fieldName}</strong></td>
+                        <td data-label="Previous Value">
+                          <pre style={{ 
+                            margin: 0, 
+                            padding: '10px 12px', 
+                            background: '#FEF2F2', 
+                            border: '1px solid #FECACA', 
+                            borderRadius: '6px',
+                            whiteSpace: 'pre-wrap',
+                            wordBreak: 'break-word',
+                            fontSize: '13px',
+                            lineHeight: '1.5',
+                            maxHeight: '200px',
+                            overflow: 'auto',
+                            color: '#991B1B',
+                            fontFamily: 'inherit',
+                            fontWeight: 400
+                          }}>
+                            {fromValue || '(empty)'}
+                          </pre>
+                        </td>
+                        <td data-label="New Value">
+                          <pre style={{ 
+                            margin: 0, 
+                            padding: '10px 12px', 
+                            background: '#F0FDF4', 
+                            border: '1px solid #BBF7D0', 
+                            borderRadius: '6px',
+                            whiteSpace: 'pre-wrap',
+                            wordBreak: 'break-word',
+                            fontSize: '13px',
+                            lineHeight: '1.5',
+                            maxHeight: '200px',
+                            overflow: 'auto',
+                            color: '#166534',
+                            fontFamily: 'inherit',
+                            fontWeight: 400
+                          }}>
+                            {toValue || '(empty)'}
+                          </pre>
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
       </div>
 
       {revision && (
@@ -649,9 +905,14 @@ function RevisionDetail() {
         </div>
       )}
 
-      {showApprovals && (
+      {revision && (
         <div className="ld-card ld-section">
-          <h3>Approvals & Rejections</h3>
+          <button className="link-btn" onClick={() => setShowApprovals(!showApprovals)}>
+            {showApprovals ? 'Hide Approvals/Rejections' : 'View Approvals/Rejections'}
+          </button>
+          {showApprovals && (
+            <>
+              <h3 style={{ marginTop: '16px' }}>Approvals & Rejections</h3>
           {(() => {
             const rev = revision
             const rawLogs = Array.isArray(rev.managementApproval?.logs) ? rev.managementApproval.logs.slice().sort((a, b) => new Date(a.at || 0) - new Date(b.at || 0)) : []
@@ -731,6 +992,8 @@ function RevisionDetail() {
               </div>
             )
           })()}
+            </>
+          )}
         </div>
       )}
 

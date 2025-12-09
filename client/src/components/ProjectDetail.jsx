@@ -1,20 +1,27 @@
 import { useEffect, useState } from 'react'
 import { api } from '../lib/api'
 import './LeadManagement.css'
+import './LoadingComponents.css'
+import { Spinner, PageSkeleton, ButtonLoader } from './LoadingComponents'
 
 function ProjectDetail() {
   const [project, setProject] = useState(null)
   const [lead, setLead] = useState(null)
   const [quotation, setQuotation] = useState(null)
   const [revisions, setRevisions] = useState([])
+  const [variations, setVariations] = useState([])
   const [notify, setNotify] = useState({ open: false, title: '', message: '' })
   const [editModal, setEditModal] = useState({ open: false, form: { name: '', locationDetails: '', workingHours: '', manpowerCount: '', status: 'active' } })
+  const [editProjectWarningModal, setEditProjectWarningModal] = useState({ open: false, existingVariations: [] })
   const [projectEngineers, setProjectEngineers] = useState([])
   const [profileUser, setProfileUser] = useState(null)
   const [historyOpen, setHistoryOpen] = useState(true)
   const [currentUser, setCurrentUser] = useState(() => {
     try { return JSON.parse(localStorage.getItem('user')) } catch { return null }
   })
+  const [isLoading, setIsLoading] = useState(true)
+  const [isSubmitting, setIsSubmitting] = useState(false)
+  const [loadingAction, setLoadingAction] = useState(null)
 
   const ensurePdfMake = async () => {
     if (window.pdfMake) return
@@ -36,9 +43,13 @@ function ProjectDetail() {
 
   useEffect(() => {
     ;(async () => {
+      setIsLoading(true)
       try {
         const focus = localStorage.getItem('projectsFocusId') || localStorage.getItem('projectId')
-        if (!focus) return
+        if (!focus) {
+          setIsLoading(false)
+          return
+        }
         const res = await api.get(`/api/projects/${focus}`)
         const pj = res.data
         setProject(pj)
@@ -54,12 +65,24 @@ function ProjectDetail() {
           const resR = await api.get(`/api/revisions?parentQuotation=${pj.sourceRevision.parentQuotation}`)
           setRevisions(Array.isArray(resR.data) ? resR.data : [])
         }
+        // Fetch project variations
+        try {
+          const resV = await api.get(`/api/project-variations?parentProject=${focus}`)
+          setVariations(Array.isArray(resV.data) ? resV.data : [])
+        } catch (err) {
+          console.error('Error fetching variations:', err)
+          setVariations([])
+        }
         // Preload project engineers for name mapping and profile view
         try {
           const resEng = await api.get('/api/projects/project-engineers')
           setProjectEngineers(Array.isArray(resEng.data) ? resEng.data : [])
         } catch {}
-      } catch (e) {}
+      } catch (e) {
+        console.error('Error loading project:', e)
+      } finally {
+        setIsLoading(false)
+      }
     })()
   }, [])
 
@@ -525,6 +548,14 @@ function ProjectDetail() {
     }
   }
 
+  if (isLoading) {
+    return (
+      <div className="lead-management" style={{ padding: 24 }}>
+        <PageSkeleton showHeader={true} showContent={true} />
+      </div>
+    )
+  }
+
   if (!project) return (
     <div className="lead-management" style={{ padding: 24 }}>
       <h2>Project Details</h2>
@@ -549,6 +580,12 @@ function ProjectDetail() {
               const resEng = await api.get('/api/projects/project-engineers')
               setProjectEngineers(Array.isArray(resEng.data) ? resEng.data : [])
             } catch {}
+            // Check if variations already exist for this project
+            if (variations && Array.isArray(variations) && variations.length > 0) {
+              // Show warning modal instead of opening edit modal
+              setEditProjectWarningModal({ open: true, existingVariations: variations })
+              return
+            }
             setEditModal({ open: true, form: { name: project.name || '', locationDetails: project.locationDetails || '', workingHours: project.workingHours || '', manpowerCount: project.manpowerCount || '', status: project.status || 'active', assignedProjectEngineer: project.assignedProjectEngineer?._id || '' } })
           }}>Edit</button>
           {lead?._id && (
@@ -630,6 +667,36 @@ function ProjectDetail() {
                       <td data-label="Grand Total">{(r.priceSchedule?.currency || 'AED')} {Number(r.priceSchedule?.grandTotal || 0).toFixed(2)}</td>
                       <td data-label="Actions">
                         <button className="link-btn" onClick={() => { try { localStorage.setItem('revisionId', r._id) } catch {}; window.location.href = '/revision-detail' }}>View</button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {Array.isArray(variations) && variations.length > 0 && (
+          <div className="ld-card ld-section">
+            <h3>Related Variations ({variations.length})</h3>
+            <div className="table">
+              <table>
+                <thead>
+                  <tr>
+                    <th>#</th>
+                    <th>Status</th>
+                    <th>Grand Total</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {variations.sort((a,b)=> (a.variationNumber||0)-(b.variationNumber||0)).map(v => (
+                    <tr key={v._id}>
+                      <td data-label="#">{v.variationNumber}</td>
+                      <td data-label="Status">{v.managementApproval?.status || 'draft'}</td>
+                      <td data-label="Grand Total">{(v.priceSchedule?.currency || 'AED')} {Number(v.priceSchedule?.grandTotal || 0).toFixed(2)}</td>
+                      <td data-label="Actions">
+                        <button className="link-btn" onClick={() => { try { localStorage.setItem('variationId', v._id) } catch {}; window.location.href = '/variation-detail' }}>View</button>
                       </td>
                     </tr>
                   ))}
@@ -761,18 +828,98 @@ function ProjectDetail() {
               )}
               <div className="form-actions">
                 <button type="button" className="cancel-btn" onClick={() => setEditModal({ open: false, form: { name: '', locationDetails: '', workingHours: '', manpowerCount: '', status: 'active' } })}>Cancel</button>
-                <button type="button" className="save-btn" onClick={async () => {
-                  try {
-                    const token = localStorage.getItem('token')
-                    await api.put(`/api/projects/${project._id}`, editModal.form)
-                    const res = await api.get(`/api/projects/${project._id}`)
-                    setProject(res.data)
-                    setEditModal({ open: false, form: { name: '', locationDetails: '', workingHours: '', manpowerCount: '', status: 'active' } })
-                    setNotify({ open: true, title: 'Saved', message: 'Project updated successfully.' })
-                  } catch (error) {
-                    setNotify({ open: true, title: 'Save Failed', message: error.response?.data?.message || 'We could not update the project.' })
-                  }
-                }}>Save Changes</button>
+                <button 
+                  type="button" 
+                  className="save-btn" 
+                  onClick={async () => {
+                    if (isSubmitting) return
+                    setLoadingAction('save-project')
+                    setIsSubmitting(true)
+                    try {
+                      // Safety check: verify no variations exist before saving
+                      if (variations && Array.isArray(variations) && variations.length > 0) {
+                        setEditModal({ open: false, form: { name: '', locationDetails: '', workingHours: '', manpowerCount: '', status: 'active' } })
+                        setEditProjectWarningModal({ open: true, existingVariations: variations })
+                        return
+                      }
+                      
+                      const token = localStorage.getItem('token')
+                      await api.put(`/api/projects/${project._id}`, editModal.form)
+                      const res = await api.get(`/api/projects/${project._id}`)
+                      setProject(res.data)
+                      setEditModal({ open: false, form: { name: '', locationDetails: '', workingHours: '', manpowerCount: '', status: 'active' } })
+                      setNotify({ open: true, title: 'Saved', message: 'Project updated successfully.' })
+                    } catch (error) {
+                      setNotify({ open: true, title: 'Save Failed', message: error.response?.data?.message || 'We could not update the project.' })
+                    } finally {
+                      setIsSubmitting(false)
+                      setLoadingAction(null)
+                    }
+                  }}
+                  disabled={isSubmitting}
+                >
+                  <ButtonLoader loading={loadingAction === 'save-project'}>
+                    {isSubmitting ? 'Saving...' : 'Save Changes'}
+                  </ButtonLoader>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+      {editProjectWarningModal.open && (
+        <div className="modal-overlay" onClick={() => setEditProjectWarningModal({ open: false, existingVariations: [] })}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>Cannot Edit Project</h2>
+              <button onClick={() => setEditProjectWarningModal({ open: false, existingVariations: [] })} className="close-btn">×</button>
+            </div>
+            <div className="lead-form">
+              <div style={{ padding: '16px', background: '#FEF3C7', border: '1px solid #F59E0B', borderRadius: '8px', marginBottom: '16px' }}>
+                <p style={{ margin: 0, color: '#7C2D12', fontWeight: 500 }}>
+                  ⚠️ This project cannot be edited because it has {editProjectWarningModal.existingVariations.length} existing variation{editProjectWarningModal.existingVariations.length > 1 ? 's' : ''}.
+                </p>
+              </div>
+              <p style={{ marginBottom: '16px' }}>
+                This project has existing variation quotations. 
+                Editing the project is blocked to maintain data integrity and ensure consistency with approved variations.
+              </p>
+              {editProjectWarningModal.existingVariations.length > 0 && (
+                <div style={{ marginBottom: '16px' }}>
+                  <p style={{ marginBottom: '8px', fontWeight: 600 }}>Existing Variations:</p>
+                  <ul style={{ marginLeft: '20px', marginBottom: '16px' }}>
+                    {editProjectWarningModal.existingVariations.map((v, idx) => (
+                      <li key={v._id || idx} style={{ marginBottom: '4px' }}>
+                        Variation #{v.variationNumber} 
+                        {v.offerReference && ` - ${v.offerReference}`}
+                        {v.managementApproval?.status && (
+                          <span className={`status-badge ${v.managementApproval.status === 'approved' ? 'approved' : v.managementApproval.status === 'rejected' ? 'rejected' : 'blue'}`} style={{ marginLeft: '8px' }}>
+                            {v.managementApproval.status}
+                          </span>
+                        )}
+                        <button 
+                          className="link-btn" 
+                          onClick={() => {
+                            try {
+                              localStorage.setItem('variationId', v._id)
+                              window.location.href = '/variation-detail'
+                            } catch {}
+                          }}
+                          style={{ marginLeft: '8px' }}
+                        >
+                          View
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              <p style={{ marginBottom: '16px', color: 'var(--text-muted)' }}>
+                To make changes to this project, you must first delete or remove all associated variations. 
+                Please contact a manager or administrator if you need to modify project details.
+              </p>
+              <div className="form-actions">
+                <button type="button" className="save-btn" onClick={() => setEditProjectWarningModal({ open: false, existingVariations: [] })}>Understood</button>
               </div>
             </div>
           </div>

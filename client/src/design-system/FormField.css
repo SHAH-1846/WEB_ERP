@@ -1,0 +1,255 @@
+@import './tokens.css';
+
+/* Form Group */
+.form-group {
+  margin-bottom: var(--spacing-lg);
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  /* Prevent horizontal overflow beyond container */
+  overflow-x: hidden;
+  min-width: 0;
+}
+
+/* Ensure forms within modals respect container width */
+.modal-content form,
+.modal form {
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  overflow-x: hidden;
+  min-width: 0;
+}
+
+.form-group label {
+  display: block;
+  font-weight: var(--font-weight-semibold);
+  color: var(--text);
+  margin-bottom: var(--spacing-sm);
+  font-size: var(--font-size-base);
+}
+
+.required-indicator {
+  color: var(--danger);
+}
+
+/* Form Inputs */
+.form-group input,
+.form-group textarea,
+.form-group select {
+  width: 100%;
+  max-width: 100%;
+  padding: var(--spacing-md) var(--spacing-md);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--input);
+  color: var(--text);
+  font-size: var(--font-size-base);
+  transition: all var(--transition-base);
+  font-family: inherit;
+  box-sizing: border-box;
+  /* Prevent horizontal overflow beyond container */
+  min-width: 0;
+}
+
+/* Select dropdown specific styles to prevent width overflow */
+.form-group select {
+  /* Ensure select fits within container */
+  min-width: 0;
+  /* Prevent dropdown from expanding beyond modal */
+  max-width: 100%;
+  /* Handle long option text - truncate with ellipsis */
+  white-space: nowrap;
+  overflow-x: hidden;
+  text-overflow: ellipsis;
+  /* Ensure select respects container bounds */
+  box-sizing: border-box;
+}
+
+/* Ensure select options don't cause horizontal overflow */
+.form-group select option {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.form-group input:focus,
+.form-group textarea:focus,
+.form-group select:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
+}
+
+.form-group textarea {
+  min-height: 80px;
+  resize: vertical;
+}
+
+.form-group input[readonly] {
+  background: var(--bg);
+  cursor: not-allowed;
+}
+
+/* Form Row */
+.form-row {
+  display: flex;
+  gap: var(--spacing-md);
+  align-items: flex-start;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  /* Prevent horizontal overflow */
+  overflow-x: hidden;
+  min-width: 0;
+}
+
+.form-row .form-group {
+  flex: 1;
+  margin-bottom: var(--spacing-lg);
+  min-width: 0;
+  /* Ensure flex children respect container bounds */
+  overflow-x: hidden;
+}
+
+.form-group.flex-1 {
+  flex: 1;
+}
+
+.form-group.flex-2 {
+  flex: 2;
+}
+
+.form-group.flex-3 {
+  flex: 3;
+}
+
+/* Form Section */
+.form-section {
+  border-top: 1px solid var(--border);
+  padding-top: var(--spacing-md);
+  margin-top: var(--spacing-lg);
+}
+
+.form-section:first-of-type {
+  border-top: none;
+  padding-top: 0;
+  margin-top: 0;
+}
+
+.section-header {
+  margin-bottom: var(--spacing-md);
+}
+
+.section-header h3 {
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-semibold);
+  color: var(--text);
+  margin: 0 0 var(--spacing-sm) 0;
+}
+
+/* Form Error */
+.form-error {
+  color: var(--danger);
+  font-size: var(--font-size-sm);
+  margin-top: var(--spacing-xs);
+}
+
+/* Form Actions */
+.form-actions {
+  display: flex;
+  gap: var(--spacing-md);
+  justify-content: flex-end;
+  margin-top: var(--spacing-xl);
+  padding-top: var(--spacing-xl);
+  border-top: 1px solid var(--border);
+}
+
+/* Buttons */
+.cancel-btn,
+.save-btn {
+  padding: var(--spacing-md) var(--spacing-xl);
+  border: none;
+  border-radius: var(--radius-md);
+  font-weight: var(--font-weight-semibold);
+  cursor: pointer;
+  transition: all var(--transition-base);
+  font-size: var(--font-size-base);
+}
+
+.cancel-btn {
+  background: var(--bg);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+}
+
+.cancel-btn:hover {
+  background: var(--border);
+  color: var(--text);
+}
+
+.save-btn {
+  background: var(--primary);
+  color: #fff;
+}
+
+.save-btn:hover:not(:disabled) {
+  background: var(--primary-dark);
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);
+}
+
+.save-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.link-btn {
+  background: none;
+  border: none;
+  color: var(--primary);
+  font-weight: var(--font-weight-semibold);
+  cursor: pointer;
+  padding: 0;
+  font-size: var(--font-size-base);
+  transition: color var(--transition-base);
+}
+
+.link-btn:hover {
+  color: var(--primary-dark);
+  text-decoration: underline;
+}
+
+/* Item Card (for dynamic lists) */
+.item-card {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: var(--spacing-md);
+  margin-bottom: var(--spacing-md);
+}
+
+.item-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--spacing-md);
+  font-weight: var(--font-weight-semibold);
+  color: var(--text);
+  font-size: var(--font-size-base);
+}
+
+.section-actions {
+  margin-top: var(--spacing-sm);
+  display: flex;
+  justify-content: flex-start;
+}
+
+.totals-card {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: var(--spacing-md);
+  margin-top: var(--spacing-sm);
+}
+

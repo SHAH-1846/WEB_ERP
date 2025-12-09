@@ -2,6 +2,34 @@
   padding: 32px;
 }
 
+.project-management .header {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  background: var(--bg);
+  padding: 16px 0;
+  margin-bottom: 24px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 16px;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+.project-management .header::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -32px;
+  right: -32px;
+  height: 100%;
+  background: var(--bg);
+  z-index: -1;
+}
+
 .projects-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(450px, 1fr));

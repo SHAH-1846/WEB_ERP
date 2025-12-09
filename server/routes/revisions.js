@@ -2,6 +2,7 @@ const express = require('express');
 const jwt = require('jsonwebtoken');
 const Quotation = require('../models/Quotation');
 const Revision = require('../models/Revision');
+const AuditLog = require('../models/AuditLog');
 const router = express.Router();
 
 const auth = (req, res, next) => {
@@ -182,6 +183,45 @@ router.patch('/:id/approve', auth, async (req, res) => {
     }
 
     await r.save();
+    
+    // Create audit log for approval/rejection actions
+    try {
+      let auditAction = null;
+      if (status === 'pending') {
+        auditAction = 'revision_approval_requested';
+      } else if (status === 'approved') {
+        auditAction = 'revision_approved';
+      } else if (status === 'rejected') {
+        auditAction = 'revision_rejected';
+      }
+      
+      if (auditAction) {
+        await r.populate('parentQuotation', 'offerReference');
+        await r.populate('lead', 'customerName projectTitle');
+        const quotationData = typeof r.parentQuotation === 'object' ? r.parentQuotation : null;
+        const leadData = typeof r.lead === 'object' ? r.lead : null;
+        await AuditLog.create({
+          action: auditAction,
+          entityType: 'revision',
+          entityId: r._id,
+          entityData: {
+            revisionNumber: r.revisionNumber || null,
+            projectTitle: r.projectTitle || leadData?.projectTitle || null,
+            customerName: leadData?.customerName || null,
+            offerReference: quotationData?.offerReference || null,
+            managementApprovalStatus: status
+          },
+          performedBy: req.user.userId,
+          performedAt: new Date(),
+          reason: note || null,
+          ipAddress: req.ip || req.socket?.remoteAddress || 'unknown',
+          userAgent: req.get('user-agent') || 'unknown'
+        });
+      }
+    } catch (auditError) {
+      console.error('Error creating audit log:', auditError);
+    }
+    
     await r.populate('managementApproval.requestedBy', 'name email');
     await r.populate('managementApproval.approvedBy', 'name email');
     await r.populate('managementApproval.logs.requestedBy', 'name email');
@@ -217,8 +257,22 @@ router.post('/', auth, async (req, res) => {
         return res.status(400).json({ message: 'A child revision already exists for this revision.' });
       }
     }
+    
+    // Get the parent quotation to access lead information for project key
+    const parentQuotation = await Quotation.findById(parentQuotationId).populate('lead');
+    if (!parentQuotation) return res.status(404).json({ message: 'Parent quotation not found' });
+    
+    // Generate project key from project title or customer name (uppercase, alphanumeric, max 8 chars)
+    const projectName = parentQuotation.projectTitle || parentQuotation.lead?.projectTitle || parentQuotation.lead?.customerName || 'PROJ';
+    const projectKey = projectName
+      .toUpperCase()
+      .replace(/[^A-Z0-9]/g, '')
+      .substring(0, 8) || 'PROJ';
+    
+    // Count existing revisions for this quotation
     const existingCount = await Revision.countDocuments({ parentQuotation: parentQuotationId });
-    const revisionNumber = existingCount + 1;
+    const revisionNum = existingCount + 1;
+    const revisionNumber = `${projectKey}-REV-${String(revisionNum).padStart(3, '0')}`;
     if (sourceQuotationId && existingCount > 0) {
       return res.status(400).json({ message: 'A revision already exists for this quotation. Delete all revisions to create a new one from the approved quotation.' });
     }
@@ -290,8 +344,37 @@ router.post('/', auth, async (req, res) => {
       .populate('managementApproval.logs.requestedBy', 'name email')
       .populate('managementApproval.logs.decidedBy', 'name email');
 
+    // Create audit log for revision creation from quotation
+    if (sourceQuotationId) {
+      try {
+        const quotationData = typeof populated.parentQuotation === 'object' ? populated.parentQuotation : null;
+        const leadData = typeof populated.lead === 'object' ? populated.lead : null;
+        await AuditLog.create({
+          action: 'revision_created',
+          entityType: 'revision',
+          entityId: revision._id,
+          entityData: {
+            revisionNumber: revision.revisionNumber || null,
+            projectTitle: populated.projectTitle || leadData?.projectTitle || null,
+            customerName: leadData?.customerName || null,
+            offerReference: quotationData?.offerReference || null,
+            parentQuotationId: parentQuotationId,
+            changesCount: diffs.length
+          },
+          performedBy: req.user.userId,
+          performedAt: new Date(),
+          reason: `Created revision from quotation with ${diffs.length} change(s)`,
+          ipAddress: req.ip || req.socket?.remoteAddress || 'unknown',
+          userAgent: req.get('user-agent') || 'unknown'
+        });
+      } catch (auditError) {
+        console.error('Error creating audit log for revision creation:', auditError);
+      }
+    }
+
     res.status(201).json(populated);
   } catch (e) {
+    console.error('Error creating revision:', e);
     res.status(500).json({ message: 'Server error' });
   }
 });
@@ -303,16 +386,57 @@ router.delete('/:id', auth, async (req, res) => {
     if (!roles.includes('estimation_engineer')) {
       return res.status(403).json({ message: 'Only estimation engineers can delete revisions' });
     }
-    const rev = await Revision.findById(req.params.id);
+    const rev = await Revision.findById(req.params.id)
+      .populate('parentQuotation', 'offerReference')
+      .populate('lead', 'customerName projectTitle')
+      .populate('createdBy', 'name email');
     if (!rev) return res.status(404).json({ message: 'Revision not found' });
     if (rev?.managementApproval?.status === 'approved') {
       return res.status(400).json({ message: 'Cannot delete: revision is approved' });
     }
     const children = await Revision.countDocuments({ parentRevision: rev._id });
     if (children > 0) return res.status(400).json({ message: 'Cannot delete: subsequent revisions depend on this revision' });
+    
+    // Create audit log before deletion
+    const quotationData = typeof rev.parentQuotation === 'object' ? rev.parentQuotation : null;
+    const leadData = typeof rev.lead === 'object' ? rev.lead : null;
+    let createdById = null;
+    if (rev.createdBy) {
+      if (typeof rev.createdBy === 'object' && rev.createdBy._id) {
+        createdById = rev.createdBy._id;
+      } else {
+        createdById = rev.createdBy;
+      }
+    }
+    
+    try {
+      await AuditLog.create({
+        action: 'revision_deleted',
+        entityType: 'revision',
+        entityId: rev._id,
+        entityData: {
+          revisionNumber: rev.revisionNumber || null,
+          projectTitle: rev.projectTitle || leadData?.projectTitle || null,
+          customerName: leadData?.customerName || null,
+          offerReference: quotationData?.offerReference || null,
+          managementApprovalStatus: rev.managementApproval?.status || null,
+          createdBy: createdById,
+          createdAt: rev.createdAt || null
+        },
+        deletedBy: req.user.userId,
+        deletedAt: new Date(),
+        reason: (req.body && req.body.reason) ? req.body.reason : null,
+        ipAddress: req.ip || req.socket?.remoteAddress || 'unknown',
+        userAgent: req.get('user-agent') || 'unknown'
+      });
+    } catch (auditError) {
+      console.error('Error creating audit log:', auditError);
+    }
+    
     await Revision.deleteOne({ _id: rev._id });
     res.json({ success: true });
   } catch (e) {
+    console.error('Error deleting revision:', e);
     res.status(500).json({ message: 'Server error' });
   }
 });

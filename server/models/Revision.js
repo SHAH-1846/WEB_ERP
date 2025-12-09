@@ -2,7 +2,7 @@ const mongoose = require('mongoose');
 
 const RevisionSchema = new mongoose.Schema({
   parentQuotation: { type: mongoose.Schema.Types.ObjectId, ref: 'Quotation', required: true },
-  revisionNumber: { type: Number, required: true },
+  revisionNumber: { type: String, required: true },
   parentRevision: { type: mongoose.Schema.Types.ObjectId, ref: 'Revision' },
 
   lead: { type: mongoose.Schema.Types.ObjectId, ref: 'Lead', required: true },

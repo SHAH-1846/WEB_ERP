@@ -2,6 +2,7 @@ const express = require('express');
 const jwt = require('jsonwebtoken');
 const Quotation = require('../models/Quotation');
 const Lead = require('../models/Lead');
+const AuditLog = require('../models/AuditLog');
 const router = express.Router();
 
 const auth = (req, res, next) => {
@@ -69,11 +70,38 @@ router.post('/', auth, async (req, res) => {
       ...req.body,
       createdBy: req.user.userId
     });
+    
+    // Create audit log for quotation creation
+    try {
+      // Lead is already fetched above, use it
+      await AuditLog.create({
+        action: 'quotation_created',
+        entityType: 'quotation',
+        entityId: quotation._id,
+        entityData: {
+          offerReference: quotation.offerReference || null,
+          projectTitle: quotation.projectTitle || lead?.projectTitle || null,
+          customerName: lead?.customerName || null,
+          grandTotal: quotation.priceSchedule?.grandTotal || null,
+          currency: quotation.priceSchedule?.currency || null,
+          createdBy: req.user.userId,
+          createdAt: quotation.createdAt || null
+        },
+        performedBy: req.user.userId,
+        performedAt: new Date(),
+        ipAddress: req.ip || req.socket?.remoteAddress || 'unknown',
+        userAgent: req.get('user-agent') || 'unknown'
+      });
+    } catch (auditError) {
+      console.error('Error creating audit log for quotation creation:', auditError);
+    }
+    
     const populated = await Quotation.findById(quotation._id)
       .populate('lead', 'customerName projectTitle enquiryNumber enquiryDate')
       .populate('createdBy', 'name email');
     res.status(201).json(populated);
   } catch (e) {
+    console.error('Error creating quotation:', e);
     res.status(500).json({ message: 'Server error' });
   }
 });
@@ -165,10 +193,105 @@ router.put('/:id', auth, async (req, res) => {
     }
 
     await q.save();
+    
+    // Create audit log for quotation update if there were changes
+    if (changes.length > 0) {
+      try {
+        await q.populate('lead', 'customerName projectTitle');
+        const leadData = typeof q.lead === 'object' ? q.lead : null;
+        await AuditLog.create({
+          action: 'quotation_updated',
+          entityType: 'quotation',
+          entityId: q._id,
+          entityData: {
+            offerReference: q.offerReference || null,
+            projectTitle: q.projectTitle || leadData?.projectTitle || null,
+            customerName: leadData?.customerName || null,
+            grandTotal: q.priceSchedule?.grandTotal || null,
+            currency: q.priceSchedule?.currency || null,
+            managementApprovalStatus: q.managementApproval?.status || null,
+            changesCount: changes.length
+          },
+          performedBy: req.user.userId,
+          performedAt: new Date(),
+          reason: `Updated ${changes.length} field(s)`,
+          ipAddress: req.ip || req.socket?.remoteAddress || 'unknown',
+          userAgent: req.get('user-agent') || 'unknown'
+        });
+      } catch (auditError) {
+        console.error('Error creating audit log for quotation update:', auditError);
+      }
+    }
+    
     await q.populate('edits.editedBy', 'name email');
     res.json(q);
   } catch (e) {
+    console.error('Error updating quotation:', e);
     res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Delete quotation
+router.delete('/:id', auth, async (req, res) => {
+  try {
+    const q = await Quotation.findById(req.params.id)
+      .populate('lead', 'customerName projectTitle')
+      .populate('createdBy', 'name email');
+    if (!q) return res.status(404).json({ message: 'Quotation not found' });
+
+    const roles = req.user.roles || [];
+    const isApproved = q.managementApproval?.status === 'approved';
+    
+    // If approved, only manager or admin can delete
+    if (isApproved && !roles.includes('manager') && !roles.includes('admin')) {
+      return res.status(403).json({ message: 'Only managers and admins can delete approved quotations' });
+    }
+
+    // Create audit log before deletion
+    const leadData = typeof q.lead === 'object' ? q.lead : null;
+    // Handle createdBy - could be populated object or ObjectId
+    let createdById = null;
+    if (q.createdBy) {
+      if (typeof q.createdBy === 'object' && q.createdBy._id) {
+        createdById = q.createdBy._id;
+      } else if (typeof q.createdBy === 'object' && q.createdBy.toString) {
+        createdById = q.createdBy;
+      } else {
+        createdById = q.createdBy;
+      }
+    }
+    
+    try {
+      await AuditLog.create({
+        action: 'quotation_deleted',
+        entityType: 'quotation',
+        entityId: q._id,
+        entityData: {
+          offerReference: q.offerReference || null,
+          projectTitle: q.projectTitle || leadData?.projectTitle || null,
+          customerName: leadData?.customerName || null,
+          grandTotal: q.priceSchedule?.grandTotal || null,
+          currency: q.priceSchedule?.currency || null,
+          managementApprovalStatus: q.managementApproval?.status || null,
+          createdBy: createdById,
+          createdAt: q.createdAt || null
+        },
+        deletedBy: req.user.userId,
+        deletedAt: new Date(),
+        reason: (req.body && req.body.reason) ? req.body.reason : null,
+        ipAddress: req.ip || req.socket?.remoteAddress || 'unknown',
+        userAgent: req.get('user-agent') || 'unknown'
+      });
+    } catch (auditError) {
+      console.error('Error creating audit log:', auditError);
+      // Continue with deletion even if audit log fails
+    }
+
+    await Quotation.findByIdAndDelete(req.params.id);
+    res.json({ message: 'Quotation deleted successfully' });
+  } catch (e) {
+    console.error('Error deleting quotation:', e);
+    res.status(500).json({ message: 'Server error', error: process.env.NODE_ENV === 'development' ? e.message : undefined });
   }
 });
 
@@ -220,6 +343,44 @@ router.patch('/:id/approve', auth, async (req, res) => {
     }
 
     await q.save();
+    
+    // Create audit log for approval/rejection actions
+    try {
+      let auditAction = null;
+      if (status === 'pending') {
+        auditAction = 'quotation_approval_requested';
+      } else if (status === 'approved') {
+        auditAction = 'quotation_approved';
+      } else if (status === 'rejected') {
+        auditAction = 'quotation_rejected';
+      }
+      
+      if (auditAction) {
+        await q.populate('lead', 'customerName projectTitle');
+        const leadData = typeof q.lead === 'object' ? q.lead : null;
+        await AuditLog.create({
+          action: auditAction,
+          entityType: 'quotation',
+          entityId: q._id,
+          entityData: {
+            offerReference: q.offerReference || null,
+            projectTitle: q.projectTitle || leadData?.projectTitle || null,
+            customerName: leadData?.customerName || null,
+            grandTotal: q.priceSchedule?.grandTotal || null,
+            currency: q.priceSchedule?.currency || null,
+            managementApprovalStatus: status
+          },
+          performedBy: req.user.userId,
+          performedAt: new Date(),
+          reason: note || null,
+          ipAddress: req.ip || req.socket?.remoteAddress || 'unknown',
+          userAgent: req.get('user-agent') || 'unknown'
+        });
+      }
+    } catch (auditError) {
+      console.error('Error creating audit log:', auditError);
+    }
+    
     await q.populate('managementApproval.requestedBy', 'name email');
     await q.populate('managementApproval.approvedBy', 'name email');
     await q.populate('managementApproval.logs.requestedBy', 'name email');

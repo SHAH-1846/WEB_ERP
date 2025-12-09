@@ -13,6 +13,14 @@ const siteVisitSchema = new mongoose.Schema({
   actionItems: { type: String },
   weatherConditions: { type: String },
   description: { type: String, required: true },
+  attachments: [{
+    filename: { type: String, required: true },
+    originalName: { type: String, required: true },
+    path: { type: String, required: true },
+    mimetype: { type: String, required: true },
+    size: { type: Number, required: true },
+    uploadedAt: { type: Date, default: Date.now }
+  }],
   createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
   edits: [{
     editedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
