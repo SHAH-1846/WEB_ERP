@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, useRef } from 'react'
 import { useNavigate, useParams, useLocation } from 'react-router-dom'
 import { api } from '../lib/api'
 import { FormField, FormRow, FormSection } from '../design-system/FormField'
@@ -7,6 +7,558 @@ import '../design-system/FormField.css'
 import '../design-system/Modal.css'
 import './LeadManagement.css'
 import logo from '../assets/logo/WBES_Logo.png'
+
+// Google Docs-style Rich Text Editor using contentEditable (compatible with React 19)
+function ScopeOfWorkEditor({ value, onChange }) {
+  const editorRef = useRef(null)
+  const [isFocused, setIsFocused] = useState(false)
+  const [fontSize, setFontSize] = useState('14')
+  const [customFontSize, setCustomFontSize] = useState('')
+  const [fontFamily, setFontFamily] = useState('Arial')
+  const [textColor, setTextColor] = useState('#000000')
+  const [highlightColor, setHighlightColor] = useState('#ffff00')
+  const [showLinkModal, setShowLinkModal] = useState(false)
+  const [linkUrl, setLinkUrl] = useState('')
+
+  useEffect(() => {
+    if (editorRef.current) {
+      const currentHtml = editorRef.current.innerHTML
+      const newValue = value || ''
+      if (currentHtml !== newValue) {
+        editorRef.current.innerHTML = newValue
+      }
+    }
+  }, [value])
+
+  const handleInput = (e) => {
+    const html = e.target.innerHTML
+    onChange(html)
+  }
+
+  const handlePaste = (e) => {
+    e.preventDefault()
+    const text = e.clipboardData.getData('text/plain')
+    document.execCommand('insertText', false, text)
+  }
+
+  const execCommand = (command, value = null) => {
+    document.execCommand(command, false, value)
+    editorRef.current?.focus()
+  }
+
+  const handleUndo = () => {
+    document.execCommand('undo', false, null)
+    editorRef.current?.focus()
+  }
+
+  const handleRedo = () => {
+    document.execCommand('redo', false, null)
+    editorRef.current?.focus()
+  }
+
+  const applyFontSize = (size) => {
+    const selection = window.getSelection()
+    if (selection.rangeCount > 0 && !selection.isCollapsed) {
+      const range = selection.getRangeAt(0)
+      const span = document.createElement('span')
+      span.style.fontSize = `${size}px`
+      try {
+        range.surroundContents(span)
+      } catch (e) {
+        // If surroundContents fails, try a different approach
+        const contents = range.extractContents()
+        span.appendChild(contents)
+        range.insertNode(span)
+      }
+    }
+    editorRef.current?.focus()
+  }
+
+  const handleFontSizeChange = (e) => {
+    const size = e.target.value
+    setFontSize(size)
+    setCustomFontSize('')
+    applyFontSize(size)
+  }
+
+  const handleCustomFontSizeChange = (e) => {
+    const value = e.target.value
+    setCustomFontSize(value)
+    if (value && !isNaN(value) && value > 0) {
+      applyFontSize(value)
+    }
+  }
+
+  const handleCustomFontSizeKeyPress = (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      if (customFontSize && !isNaN(customFontSize) && customFontSize > 0) {
+        setFontSize(customFontSize)
+        applyFontSize(customFontSize)
+      }
+    }
+  }
+
+  const handleFontFamilyChange = (e) => {
+    const family = e.target.value
+    setFontFamily(family)
+    document.execCommand('fontName', false, family)
+    editorRef.current?.focus()
+  }
+
+  const handleTextColorChange = (e) => {
+    const color = e.target.value
+    setTextColor(color)
+    document.execCommand('foreColor', false, color)
+    editorRef.current?.focus()
+  }
+
+  const handleHighlightColorChange = (e) => {
+    const color = e.target.value
+    setHighlightColor(color)
+    document.execCommand('backColor', false, color)
+    editorRef.current?.focus()
+  }
+
+  const handleFormatBlock = (e) => {
+    const format = e.target.value
+    if (format === 'p') {
+      document.execCommand('formatBlock', false, '<p>')
+    } else {
+      document.execCommand('formatBlock', false, `<${format}>`)
+    }
+    editorRef.current?.focus()
+  }
+
+  const handleInsertLink = () => {
+    setShowLinkModal(true)
+    setLinkUrl('')
+  }
+
+  const handleLinkModalSave = () => {
+    if (linkUrl && linkUrl.trim()) {
+      const url = linkUrl.trim()
+      // Ensure URL has protocol
+      const finalUrl = url.startsWith('http://') || url.startsWith('https://') ? url : `https://${url}`
+      document.execCommand('createLink', false, finalUrl)
+    }
+    setShowLinkModal(false)
+    setLinkUrl('')
+    editorRef.current?.focus()
+  }
+
+  const handleLinkModalCancel = () => {
+    setShowLinkModal(false)
+    setLinkUrl('')
+    editorRef.current?.focus()
+  }
+
+  const handleListStyleChange = (listType, style) => {
+    const selection = window.getSelection()
+    if (selection.rangeCount > 0) {
+      const range = selection.getRangeAt(0)
+      const listElement = range.commonAncestorContainer.nodeType === 1 
+        ? range.commonAncestorContainer.closest('ul, ol')
+        : range.commonAncestorContainer.parentElement?.closest('ul, ol')
+      
+      if (listElement) {
+        listElement.style.listStyleType = style
+      } else {
+        // Create new list with style
+        if (listType === 'ul') {
+          document.execCommand('insertUnorderedList', false, null)
+          setTimeout(() => {
+            const newList = editorRef.current?.querySelector('ul:last-of-type')
+            if (newList) {
+              newList.style.listStyleType = style
+            }
+          }, 10)
+        } else {
+          document.execCommand('insertOrderedList', false, null)
+          setTimeout(() => {
+            const newList = editorRef.current?.querySelector('ol:last-of-type')
+            if (newList) {
+              newList.style.listStyleType = style
+            }
+          }, 10)
+        }
+      }
+    }
+    editorRef.current?.focus()
+  }
+
+  return (
+    <div style={{ border: '1px solid var(--border)', borderRadius: '6px', background: 'var(--input)', width: '100%', minWidth: '100%' }}>
+      {/* Toolbar - Row 1: Undo/Redo and Format */}
+      <div style={{ 
+        display: 'flex', 
+        gap: '4px', 
+        padding: '8px', 
+        borderBottom: '1px solid var(--border)',
+        background: 'var(--bg)',
+        flexWrap: 'wrap',
+        alignItems: 'center',
+        width: '100%'
+      }}>
+        {/* Undo/Redo */}
+        <button type="button" onClick={handleUndo} style={{ padding: '4px 8px', border: '1px solid var(--border)', borderRadius: '4px', background: 'var(--input)', cursor: 'pointer' }} title="Undo">
+          ↶
+        </button>
+        <button type="button" onClick={handleRedo} style={{ padding: '4px 8px', border: '1px solid var(--border)', borderRadius: '4px', background: 'var(--input)', cursor: 'pointer' }} title="Redo">
+          ↷
+        </button>
+        <div style={{ width: '1px', height: '20px', background: 'var(--border)', margin: '0 4px' }} />
+        
+        {/* Font Style Dropdown */}
+        <select 
+          onChange={handleFormatBlock}
+          style={{ padding: '4px 6px', border: '1px solid var(--border)', borderRadius: '4px', background: 'var(--input)', cursor: 'pointer', fontSize: '12px', width: '120px', minWidth: '120px', maxWidth: '120px' }}
+          title="Format"
+        >
+          <option value="p">Normal text</option>
+          <option value="h1">Heading 1</option>
+          <option value="h2">Heading 2</option>
+          <option value="h3">Heading 3</option>
+          <option value="h4">Heading 4</option>
+        </select>
+        
+        {/* Font Family */}
+        <select 
+          value={fontFamily}
+          onChange={handleFontFamilyChange}
+          style={{ padding: '4px 6px', border: '1px solid var(--border)', borderRadius: '4px', background: 'var(--input)', cursor: 'pointer', fontSize: '12px', width: '140px', minWidth: '140px', maxWidth: '140px' }}
+          title="Font Family"
+        >
+          <option value="Arial">Arial</option>
+          <option value="Times New Roman">Times New Roman</option>
+          <option value="Courier New">Courier New</option>
+          <option value="Georgia">Georgia</option>
+          <option value="Verdana">Verdana</option>
+          <option value="Helvetica">Helvetica</option>
+          <option value="Comic Sans MS">Comic Sans MS</option>
+        </select>
+        
+        {/* Font Size */}
+        <select 
+          value={fontSize}
+          onChange={handleFontSizeChange}
+          style={{ padding: '4px 6px', border: '1px solid var(--border)', borderRadius: '4px', background: 'var(--input)', cursor: 'pointer', fontSize: '12px', width: '60px' }}
+          title="Font Size"
+        >
+          <option value="8">8</option>
+          <option value="9">9</option>
+          <option value="10">10</option>
+          <option value="11">11</option>
+          <option value="12">12</option>
+          <option value="14">14</option>
+          <option value="16">16</option>
+          <option value="18">18</option>
+          <option value="20">20</option>
+          <option value="24">24</option>
+          <option value="28">28</option>
+          <option value="32">32</option>
+          <option value="36">36</option>
+          <option value="48">48</option>
+          <option value="72">72</option>
+        </select>
+        <input
+          type="number"
+          value={customFontSize}
+          onChange={handleCustomFontSizeChange}
+          onKeyPress={handleCustomFontSizeKeyPress}
+          placeholder="Custom"
+          min="1"
+          max="200"
+          style={{ 
+            padding: '4px 6px', 
+            border: '1px solid var(--border)', 
+            borderRadius: '4px', 
+            background: 'var(--input)', 
+            fontSize: '12px', 
+            width: '60px',
+            marginLeft: '4px'
+          }}
+          title="Custom Font Size (press Enter to apply)"
+        />
+        
+        <div style={{ width: '1px', height: '20px', background: 'var(--border)', margin: '0 4px' }} />
+        
+        {/* Text Formatting */}
+        <button type="button" onClick={() => execCommand('bold')} style={{ padding: '4px 8px', border: '1px solid var(--border)', borderRadius: '4px', background: 'var(--input)', cursor: 'pointer', fontWeight: 'bold' }} title="Bold">
+          <strong>B</strong>
+        </button>
+        <button type="button" onClick={() => execCommand('italic')} style={{ padding: '4px 8px', border: '1px solid var(--border)', borderRadius: '4px', background: 'var(--input)', cursor: 'pointer', fontStyle: 'italic' }} title="Italic">
+          <em>I</em>
+        </button>
+        <button type="button" onClick={() => execCommand('underline')} style={{ padding: '4px 8px', border: '1px solid var(--border)', borderRadius: '4px', background: 'var(--input)', cursor: 'pointer', textDecoration: 'underline' }} title="Underline">
+          <u>U</u>
+        </button>
+        
+        {/* Text Color */}
+        <div style={{ position: 'relative', display: 'inline-block' }}>
+          <input
+            type="color"
+            value={textColor}
+            onChange={handleTextColorChange}
+            style={{ width: '32px', height: '28px', border: '1px solid var(--border)', borderRadius: '4px', cursor: 'pointer', padding: 0 }}
+            title="Text Color"
+          />
+        </div>
+        
+        {/* Highlight Color */}
+        <div style={{ position: 'relative', display: 'inline-block' }}>
+          <input
+            type="color"
+            value={highlightColor}
+            onChange={handleHighlightColorChange}
+            style={{ width: '32px', height: '28px', border: '1px solid var(--border)', borderRadius: '4px', cursor: 'pointer', padding: 0 }}
+            title="Highlight Color"
+          />
+        </div>
+      </div>
+      
+      {/* Toolbar - Row 2: Alignment, Lists, Links */}
+      <div style={{ 
+        display: 'flex', 
+        gap: '4px', 
+        padding: '8px', 
+        borderBottom: '1px solid var(--border)',
+        background: 'var(--bg)',
+        flexWrap: 'wrap',
+        alignItems: 'center',
+        width: '100%'
+      }}>
+        {/* Alignment */}
+        <button type="button" onClick={() => execCommand('justifyLeft')} style={{ padding: '4px 8px', border: '1px solid var(--border)', borderRadius: '4px', background: 'var(--input)', cursor: 'pointer' }} title="Align Left">
+          ⬅
+        </button>
+        <button type="button" onClick={() => execCommand('justifyCenter')} style={{ padding: '4px 8px', border: '1px solid var(--border)', borderRadius: '4px', background: 'var(--input)', cursor: 'pointer' }} title="Align Center">
+          ⬌
+        </button>
+        <button type="button" onClick={() => execCommand('justifyRight')} style={{ padding: '4px 8px', border: '1px solid var(--border)', borderRadius: '4px', background: 'var(--input)', cursor: 'pointer' }} title="Align Right">
+          ➡
+        </button>
+        <button type="button" onClick={() => execCommand('justifyFull')} style={{ padding: '4px 8px', border: '1px solid var(--border)', borderRadius: '4px', background: 'var(--input)', cursor: 'pointer' }} title="Justify">
+          ⬌⬌
+        </button>
+        
+        <div style={{ width: '1px', height: '20px', background: 'var(--border)', margin: '0 4px' }} />
+        
+        {/* Bullet List with Styles */}
+        <div style={{ position: 'relative', display: 'inline-block' }}>
+          <button type="button" onClick={() => handleListStyleChange('ul', 'disc')} style={{ padding: '4px 8px', border: '1px solid var(--border)', borderRadius: '4px', background: 'var(--input)', cursor: 'pointer' }} title="Bullet List">
+            •
+          </button>
+          <select 
+            onChange={(e) => handleListStyleChange('ul', e.target.value)}
+            style={{ 
+              position: 'absolute', 
+              left: 0, 
+              top: 0, 
+              width: '100%', 
+              height: '100%', 
+              opacity: 0, 
+              cursor: 'pointer',
+              fontSize: '12px'
+            }}
+            title="Bullet List Style"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <option value="disc">• Disc</option>
+            <option value="circle">○ Circle</option>
+            <option value="square">■ Square</option>
+            <option value="none">None</option>
+          </select>
+        </div>
+        
+        {/* Numbered List with Styles */}
+        <div style={{ position: 'relative', display: 'inline-block' }}>
+          <button type="button" onClick={() => handleListStyleChange('ol', 'decimal')} style={{ padding: '4px 8px', border: '1px solid var(--border)', borderRadius: '4px', background: 'var(--input)', cursor: 'pointer' }} title="Numbered List">
+            1.
+          </button>
+          <select 
+            onChange={(e) => handleListStyleChange('ol', e.target.value)}
+            style={{ 
+              position: 'absolute', 
+              left: 0, 
+              top: 0, 
+              width: '100%', 
+              height: '100%', 
+              opacity: 0, 
+              cursor: 'pointer',
+              fontSize: '12px'
+            }}
+            title="Numbered List Style"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <option value="decimal">1. Decimal</option>
+            <option value="decimal-leading-zero">01. Decimal Leading Zero</option>
+            <option value="lower-roman">i. Lower Roman</option>
+            <option value="upper-roman">I. Upper Roman</option>
+            <option value="lower-alpha">a. Lower Alpha</option>
+            <option value="upper-alpha">A. Upper Alpha</option>
+            <option value="lower-latin">a. Lower Latin</option>
+            <option value="upper-latin">A. Upper Latin</option>
+          </select>
+        </div>
+        
+        {/* Indentation */}
+        <button type="button" onClick={() => execCommand('outdent')} style={{ padding: '4px 8px', border: '1px solid var(--border)', borderRadius: '4px', background: 'var(--input)', cursor: 'pointer' }} title="Decrease Indent">
+          ⬅
+        </button>
+        <button type="button" onClick={() => execCommand('indent')} style={{ padding: '4px 8px', border: '1px solid var(--border)', borderRadius: '4px', background: 'var(--input)', cursor: 'pointer' }} title="Increase Indent">
+          ➡
+        </button>
+        
+        <div style={{ width: '1px', height: '20px', background: 'var(--border)', margin: '0 4px' }} />
+        
+        {/* Link */}
+        <button type="button" onClick={handleInsertLink} style={{ padding: '4px 8px', border: '1px solid var(--border)', borderRadius: '4px', background: 'var(--input)', cursor: 'pointer' }} title="Insert Link">
+          🔗
+        </button>
+        
+        <div style={{ width: '1px', height: '20px', background: 'var(--border)', margin: '0 4px' }} />
+        
+        {/* Clear Formatting */}
+        <button type="button" onClick={() => execCommand('removeFormat')} style={{ padding: '4px 8px', border: '1px solid var(--border)', borderRadius: '4px', background: 'var(--input)', cursor: 'pointer' }} title="Clear Formatting">
+          Clear
+        </button>
+      </div>
+      
+      {/* Editor */}
+      <div
+        ref={editorRef}
+        contentEditable
+        onInput={handleInput}
+        onPaste={handlePaste}
+        onFocus={() => setIsFocused(true)}
+        onBlur={() => setIsFocused(false)}
+        style={{
+          minHeight: '200px',
+          padding: '12px 12px 12px 24px',
+          outline: isFocused ? '2px solid var(--primary)' : 'none',
+          outlineOffset: '-2px',
+          color: 'var(--text)',
+          fontFamily: fontFamily,
+          fontSize: `${fontSize}px`,
+          lineHeight: '1.5',
+          width: '100%',
+          boxSizing: 'border-box',
+          overflowX: 'auto'
+        }}
+      />
+      <style>{`
+        [contenteditable="true"] ul,
+        [contenteditable="true"] ol {
+          padding-left: 32px !important;
+          margin-left: 0 !important;
+          margin-top: 8px !important;
+          margin-bottom: 8px !important;
+          list-style-position: outside !important;
+        }
+        [contenteditable="true"] li {
+          margin-bottom: 4px !important;
+          padding-left: 8px !important;
+        }
+        [contenteditable="true"] ul {
+          list-style-type: disc !important;
+        }
+        [contenteditable="true"] ol {
+          list-style-type: decimal !important;
+        }
+        [contenteditable="true"] img {
+          max-width: 100%;
+          height: auto;
+          margin: 8px 0;
+        }
+        [contenteditable="true"] a {
+          color: var(--primary);
+          text-decoration: underline;
+        }
+        [contenteditable="true"] h1,
+        [contenteditable="true"] h2,
+        [contenteditable="true"] h3,
+        [contenteditable="true"] h4 {
+          margin-top: 12px;
+          margin-bottom: 8px;
+          font-weight: bold;
+        }
+        [contenteditable="true"] h1 { font-size: 2em; }
+        [contenteditable="true"] h2 { font-size: 1.5em; }
+        [contenteditable="true"] h3 { font-size: 1.17em; }
+        [contenteditable="true"] h4 { font-size: 1em; }
+      `}</style>
+      
+      {/* Link Insert Modal */}
+      <Modal
+        isOpen={showLinkModal}
+        onClose={handleLinkModalCancel}
+        title="Insert Link"
+        size="small"
+      >
+        <div style={{ padding: '20px' }}>
+          <div style={{ marginBottom: '16px' }}>
+            <label style={{ display: 'block', marginBottom: '8px', fontWeight: '500', fontSize: '14px' }}>
+              URL:
+            </label>
+            <input
+              type="text"
+              value={linkUrl}
+              onChange={(e) => setLinkUrl(e.target.value)}
+              placeholder="https://example.com"
+              style={{
+                width: '100%',
+                padding: '8px 12px',
+                border: '1px solid var(--border)',
+                borderRadius: '6px',
+                fontSize: '14px',
+                boxSizing: 'border-box'
+              }}
+              onKeyPress={(e) => {
+                if (e.key === 'Enter') {
+                  handleLinkModalSave()
+                }
+              }}
+              autoFocus
+            />
+          </div>
+          <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+            <button
+              type="button"
+              onClick={handleLinkModalCancel}
+              style={{
+                padding: '8px 16px',
+                border: '1px solid var(--border)',
+                borderRadius: '6px',
+                background: 'var(--input)',
+                cursor: 'pointer',
+                fontSize: '14px'
+              }}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={handleLinkModalSave}
+              style={{
+                padding: '8px 16px',
+                border: 'none',
+                borderRadius: '6px',
+                background: 'var(--primary)',
+                color: 'white',
+                cursor: 'pointer',
+                fontSize: '14px',
+                fontWeight: '500'
+              }}
+            >
+              Insert
+            </button>
+          </div>
+        </div>
+      </Modal>
+    </div>
+  )
+}
 
 function QuotationFormPage() {
   const navigate = useNavigate()
@@ -37,7 +589,7 @@ function QuotationFormPage() {
     enquiryDate: '',
     projectTitle: '',
     introductionText: '',
-    scopeOfWork: [{ description: '', quantity: '', unit: '', locationRemarks: '' }],
+    scopeOfWork: '',
     priceSchedule: {
       items: [{ description: '', quantity: 0, unit: '', unitRate: 0, totalAmount: 0 }],
       subTotal: 0,
@@ -92,7 +644,11 @@ function QuotationFormPage() {
         enquiryDate: editing.enquiryDate ? editing.enquiryDate.substring(0, 10) : '',
         projectTitle: editing.projectTitle || editing.lead?.projectTitle || '',
         introductionText: editing.introductionText || '',
-        scopeOfWork: editing.scopeOfWork?.length ? editing.scopeOfWork : [{ description: '', quantity: '', unit: '', locationRemarks: '' }],
+        scopeOfWork: editing.scopeOfWork?.length 
+          ? (Array.isArray(editing.scopeOfWork) 
+              ? editing.scopeOfWork.map(item => item.description || '').join('<br>') 
+              : editing.scopeOfWork)
+          : '',
         priceSchedule: editing.priceSchedule || {
           items: [{ description: '', quantity: 0, unit: '', unitRate: 0, totalAmount: 0 }],
           subTotal: 0,
@@ -123,7 +679,7 @@ function QuotationFormPage() {
         enquiryDate: '',
         projectTitle: '',
         introductionText: '',
-        scopeOfWork: [{ description: '', quantity: '', unit: '', locationRemarks: '' }],
+        scopeOfWork: '',
         priceSchedule: {
           items: [{ description: '', quantity: 0, unit: '', unitRate: 0, totalAmount: 0 }],
           subTotal: 0,
@@ -181,6 +737,11 @@ function QuotationFormPage() {
       payload.priceSchedule.subTotal = totals.subTotal
       payload.priceSchedule.taxDetails.vatAmount = totals.vatAmount
       payload.priceSchedule.grandTotal = totals.grandTotal
+      
+      // Convert scopeOfWork string to array format for backend compatibility
+      if (typeof payload.scopeOfWork === 'string') {
+        payload.scopeOfWork = payload.scopeOfWork ? [{ description: payload.scopeOfWork, quantity: '', unit: '', locationRemarks: '' }] : []
+      }
       
       if (editing) {
         await api.put(`/api/quotations/${editing._id}`, payload)
@@ -357,58 +918,12 @@ function QuotationFormPage() {
           </FormSection>
 
           <FormSection title="Scope of Work">
-            {form.scopeOfWork.map((s, i) => (
-              <div key={i} className="item-card">
-                <div className="item-header">
-                  <span>Item {i + 1}</span>
-                  <button 
-                    type="button" 
-                    className="cancel-btn" 
-                    onClick={() => setForm({ ...form, scopeOfWork: form.scopeOfWork.filter((_, idx) => idx !== i) })}
-                  >
-                    Remove
-                  </button>
-                </div>
-                <FormRow>
-                  <FormField label="Description" className="flex-3">
-                    <textarea 
-                      value={s.description} 
-                      onChange={e => setForm({ ...form, scopeOfWork: form.scopeOfWork.map((x, idx) => idx === i ? { ...x, description: e.target.value } : x) })} 
-                    />
-                  </FormField>
-                  <FormField label="Qty" className="flex-1">
-                    <input 
-                      type="number" 
-                      value={s.quantity} 
-                      onChange={e => setForm({ ...form, scopeOfWork: form.scopeOfWork.map((x, idx) => idx === i ? { ...x, quantity: e.target.value } : x) })} 
-                    />
-                  </FormField>
-                  <FormField label="Unit" className="flex-1">
-                    <input 
-                      type="text" 
-                      value={s.unit} 
-                      onChange={e => setForm({ ...form, scopeOfWork: form.scopeOfWork.map((x, idx) => idx === i ? { ...x, unit: e.target.value } : x) })} 
-                    />
-                  </FormField>
-                  <FormField label="Location/Remarks" className="flex-2">
-                    <input 
-                      type="text" 
-                      value={s.locationRemarks} 
-                      onChange={e => setForm({ ...form, scopeOfWork: form.scopeOfWork.map((x, idx) => idx === i ? { ...x, locationRemarks: e.target.value } : x) })} 
-                    />
-                  </FormField>
-                </FormRow>
-              </div>
-            ))}
-            <div className="section-actions">
-              <button 
-                type="button" 
-                className="link-btn" 
-                onClick={() => setForm({ ...form, scopeOfWork: [...form.scopeOfWork, { description: '', quantity: '', unit: '', locationRemarks: '' }] })}
-              >
-                + Add Scope Item
-              </button>
-            </div>
+            <FormField>
+              <ScopeOfWorkEditor
+                value={typeof form.scopeOfWork === 'string' ? form.scopeOfWork : ''}
+                onChange={(value) => setForm({ ...form, scopeOfWork: value })}
+              />
+            </FormField>
           </FormSection>
 
           <FormSection title="Price Schedule">
