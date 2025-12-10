@@ -21,6 +21,7 @@ function QuotationDetail() {
   const [revisionHistoryOpen, setRevisionHistoryOpen] = useState({})
   const [notify, setNotify] = useState({ open: false, title: '', message: '' })
   const [deleteModal, setDeleteModal] = useState({ open: false })
+  const [printPreviewModal, setPrintPreviewModal] = useState({ open: false, pdfUrl: null, quotation: null })
 
   const ensurePdfMake = async () => {
     if (window.pdfMake) return
@@ -331,6 +332,289 @@ function QuotationDetail() {
     }
   }
 
+  const generatePDFPreview = async (q) => {
+    try {
+      await ensurePdfMake()
+      const logoDataUrl = await toDataURL(q.companyInfo?.logo || logo)
+      const isPending = q.managementApproval?.status === 'pending'
+      const currency = q.priceSchedule?.currency || 'AED'
+
+      // Use already loaded lead info when available
+      const leadFull = lead || (typeof q.lead === 'object' ? q.lead : null)
+      const siteVisits = Array.isArray(lead?.siteVisits) ? lead.siteVisits : []
+
+      const coverFieldsRaw = [
+        ['Submitted To', q.submittedTo],
+        ['Attention', q.attention],
+        ['Offer Reference', q.offerReference],
+        ['Enquiry Number', q.enquiryNumber || leadFull?.enquiryNumber],
+        ['Offer Date', q.offerDate ? new Date(q.offerDate).toLocaleDateString() : ''],
+        ['Enquiry Date', q.enquiryDate ? new Date(q.enquiryDate).toLocaleDateString() : ''],
+        ['Project Title', q.projectTitle || leadFull?.projectTitle]
+      ]
+      const coverFields = coverFieldsRaw.filter(([, v]) => v && String(v).trim().length > 0)
+
+      const scopeRows = (q.scopeOfWork || [])
+        .filter(s => (s?.description || '').trim().length > 0)
+        .map((s, i) => [
+          String(i + 1),
+          s.description,
+          String(s.quantity || ''),
+          s.unit || '',
+          s.locationRemarks || ''
+        ])
+
+      const priceItems = (q.priceSchedule?.items || [])
+        .filter(it => (it?.description || '').trim().length > 0 || Number(it.quantity) > 0 || Number(it.unitRate) > 0)
+      const priceRows = priceItems.map((it, i) => [
+        String(i + 1),
+        it.description || '',
+        String(it.quantity || 0),
+        it.unit || '',
+        `${currency} ${Number(it.unitRate || 0).toFixed(2)}`,
+        `${currency} ${Number((it.quantity || 0) * (it.unitRate || 0)).toFixed(2)}`
+      ])
+
+      const exclusions = (q.exclusions || []).map(x => String(x || '').trim()).filter(Boolean)
+      const paymentTerms = (q.paymentTerms || []).filter(p => (p?.milestoneDescription || '').trim().length > 0 || String(p?.amountPercent || '').trim().length > 0)
+
+      const dcwv = q.deliveryCompletionWarrantyValidity || {}
+      const deliveryRowsRaw = [
+        ['Delivery / Completion Timeline', dcwv.deliveryTimeline],
+        ['Warranty Period', dcwv.warrantyPeriod],
+        ['Offer Validity (Days)', typeof dcwv.offerValidity === 'number' ? String(dcwv.offerValidity) : (dcwv.offerValidity || '')],
+        ['Authorized Signatory', dcwv.authorizedSignatory]
+      ]
+      const deliveryRows = deliveryRowsRaw.filter(([, v]) => v && String(v).trim().length > 0)
+
+      const header = {
+        margin: [36, 20, 36, 8],
+        stack: [
+          {
+            columns: [
+              { image: logoDataUrl, width: 60 },
+              [
+                { text: q.companyInfo?.name || 'Company', style: 'brand' },
+                { text: [q.companyInfo?.address, q.companyInfo?.phone, q.companyInfo?.email].filter(Boolean).join(' | '), color: '#64748b', fontSize: 9 }
+              ]
+            ],
+            columnGap: 12
+          },
+          { canvas: [{ type: 'line', x1: 0, y1: 0, x2: 523, y2: 0, lineWidth: 0.5, lineColor: '#e5e7eb' }] }
+        ]
+      }
+
+      const content = []
+      content.push({ text: 'Commercial Quotation', style: 'h1', margin: [0, 0, 0, 8] })
+
+      if (coverFields.length > 0) {
+        content.push({ text: 'Cover & Basic Details', style: 'h2', margin: [0, 6, 0, 6] })
+        content.push({
+          table: {
+            widths: ['30%', '70%'],
+            body: [
+              [{ text: 'Field', style: 'th' }, { text: 'Value', style: 'th' }],
+              ...coverFields.map(([k, v]) => [{ text: k, style: 'tdKey' }, { text: v, style: 'tdVal' }])
+            ]
+          },
+          layout: 'lightHorizontalLines'
+        })
+      }
+
+      if (leadFull) {
+        const leadDetailsRaw = [
+          ['Customer', leadFull.customerName],
+          ['Project Title', leadFull.projectTitle],
+          ['Enquiry #', leadFull.enquiryNumber],
+          ['Enquiry Date', leadFull.enquiryDate ? new Date(leadFull.enquiryDate).toLocaleDateString() : ''],
+          ['Submission Due', leadFull.submissionDueDate ? new Date(leadFull.submissionDueDate).toLocaleDateString() : ''],
+          ['Scope Summary', leadFull.scopeSummary]
+        ]
+        const leadDetails = leadDetailsRaw.filter(([, v]) => v && String(v).trim().length > 0)
+        if (leadDetails.length > 0) {
+          content.push({ text: 'Project Details', style: 'h2', margin: [0, 12, 0, 6] })
+          content.push({
+            table: {
+              widths: ['30%', '70%'],
+              body: [
+                [{ text: 'Field', style: 'th' }, { text: 'Value', style: 'th' }],
+                ...leadDetails.map(([k, v]) => [{ text: k, style: 'tdKey' }, { text: v, style: 'tdVal' }])
+              ]
+            },
+            layout: 'lightHorizontalLines'
+          })
+        }
+      }
+
+      if ((q.introductionText || '').trim().length > 0) {
+        content.push({ text: 'Introduction', style: 'h2', margin: [0, 10, 0, 6] })
+        content.push({ text: q.introductionText, margin: [0, 0, 0, 6] })
+      }
+
+      if (scopeRows.length > 0) {
+        content.push({ text: 'Scope of Work', style: 'h2', margin: [0, 12, 0, 6] })
+        content.push({
+          table: {
+            widths: ['6%', '54%', '10%', '10%', '20%'],
+            body: [
+              [{ text: '#', style: 'th' }, { text: 'Description', style: 'th' }, { text: 'Qty', style: 'th' }, { text: 'Unit', style: 'th' }, { text: 'Location/Remarks', style: 'th' }],
+              ...scopeRows
+            ]
+          },
+          layout: 'lightHorizontalLines'
+        })
+      }
+
+      if (Array.isArray(siteVisits) && siteVisits.length > 0) {
+        const visitRows = siteVisits.map((v, i) => [
+          String(i + 1),
+          v.visitAt ? new Date(v.visitAt).toLocaleString() : '',
+          v.siteLocation || '',
+          v.engineerName || '',
+          (v.workProgressSummary || '').slice(0, 140)
+        ])
+        content.push({ text: 'Site Visit Reports', style: 'h2', margin: [0, 12, 0, 6] })
+        content.push({
+          table: {
+            widths: ['6%', '22%', '22%', '20%', '30%'],
+            body: [
+              [
+                { text: '#', style: 'th' },
+                { text: 'Date & Time', style: 'th' },
+                { text: 'Location', style: 'th' },
+                { text: 'Engineer', style: 'th' },
+                { text: 'Progress Summary', style: 'th' }
+              ],
+              ...visitRows
+            ]
+          },
+          layout: 'lightHorizontalLines'
+        })
+      }
+
+      if (priceRows.length > 0) {
+        content.push({ text: 'Price Schedule', style: 'h2', margin: [0, 12, 0, 6] })
+        content.push({
+          table: {
+            widths: ['6%', '44%', '10%', '10%', '15%', '15%'],
+            body: [
+              [
+                { text: '#', style: 'th' },
+                { text: 'Description', style: 'th' },
+                { text: 'Qty', style: 'th' },
+                { text: 'Unit', style: 'th' },
+                { text: `Unit Rate (${currency})`, style: 'th' },
+                { text: `Amount (${currency})`, style: 'th' }
+              ],
+              ...priceRows
+            ]
+          },
+          layout: 'lightHorizontalLines'
+        })
+
+        content.push({
+          columns: [
+            { width: '*', text: '' },
+            {
+              width: '40%',
+              table: {
+                widths: ['55%', '45%'],
+                body: [
+                  [{ text: 'Sub Total', style: 'tdKey' }, { text: `${currency} ${Number(q.priceSchedule?.subTotal || 0).toFixed(2)}`, alignment: 'right' }],
+                  [{ text: `VAT (${q.priceSchedule?.taxDetails?.vatRate || 0}%)`, style: 'tdKey' }, { text: `${currency} ${Number(q.priceSchedule?.taxDetails?.vatAmount || 0).toFixed(2)}`, alignment: 'right' }],
+                  [{ text: 'Grand Total', style: 'th' }, { text: `${currency} ${Number(q.priceSchedule?.grandTotal || 0).toFixed(2)}`, style: 'th', alignment: 'right' }]
+                ]
+              },
+              layout: 'lightHorizontalLines'
+            }
+          ],
+          margin: [0, 8, 0, 0]
+        })
+      }
+
+      if ((q.ourViewpoints || '').trim().length > 0 || exclusions.length > 0) {
+        content.push({ text: 'Our Viewpoints / Special Terms', style: 'h2', margin: [0, 12, 0, 6] })
+        if ((q.ourViewpoints || '').trim().length > 0) {
+          content.push({ text: q.ourViewpoints, margin: [0, 0, 0, 6] })
+        }
+        if (exclusions.length > 0) {
+          content.push({ text: 'Exclusions', style: 'h3', margin: [0, 6, 0, 4] })
+          content.push({ ul: exclusions })
+        }
+      }
+
+      if (paymentTerms.length > 0) {
+        content.push({ text: 'Payment Terms', style: 'h2', margin: [0, 12, 0, 6] })
+        content.push({
+          table: {
+            widths: ['10%', '70%', '20%'],
+            body: [
+              [{ text: '#', style: 'th' }, { text: 'Milestone', style: 'th' }, { text: 'Amount %', style: 'th' }],
+              ...paymentTerms.map((p, i) => [String(i + 1), p.milestoneDescription || '', String(p.amountPercent || '')])
+            ]
+          },
+          layout: 'lightHorizontalLines'
+        })
+      }
+
+      if (deliveryRows.length > 0) {
+        content.push({ text: 'Delivery, Completion, Warranty & Validity', style: 'h2', margin: [0, 12, 0, 6] })
+        content.push({
+          table: {
+            widths: ['30%', '70%'],
+            body: [
+              ...deliveryRows.map(([k, v]) => [{ text: k, style: 'tdKey' }, { text: v, style: 'tdVal' }])
+            ]
+          },
+          layout: 'lightHorizontalLines'
+        })
+      }
+      if (isPending) {
+        content.push({ text: 'Management Approval: Pending', italics: true, color: '#b45309', margin: [0, 12, 0, 0] })
+      } else if (q.managementApproval?.status === 'approved') {
+        content.push({ text: `Approved by: ${q.managementApproval?.approvedBy?.name || 'Management'}`, italics: true, color: '#16a34a', margin: [0, 12, 0, 0] })
+      }
+
+      const docDefinition = {
+        pageMargins: [36, 96, 36, 60],
+        header,
+        footer: function (currentPage, pageCount) {
+          return {
+            margin: [36, 0, 36, 20],
+            stack: [
+              { canvas: [{ type: 'line', x1: 0, y1: 0, x2: 523, y2: 0, lineWidth: 0.5, lineColor: '#e5e7eb' }] },
+              {
+                columns: [
+                  { text: isPending ? 'Approval Pending' : (q.managementApproval?.status === 'approved' ? 'Approved' : ''), color: isPending ? '#b45309' : '#16a34a' },
+                  { text: `Page ${currentPage} of ${pageCount}`, alignment: 'right', color: '#94a3b8' }
+                ]
+              }
+            ]
+          }
+        },
+        content,
+        styles: {
+          brand: { fontSize: 14, color: '#1f2937', bold: true, margin: [0, 0, 0, 2] },
+          h1: { fontSize: 18, bold: true, color: '#0f172a' },
+          h2: { fontSize: 12, bold: true, color: '#0f172a' },
+          h3: { fontSize: 11, bold: true, color: '#0f172a' },
+          th: { bold: true, fillColor: '#f1f5f9' },
+          tdKey: { color: '#64748b' },
+          tdVal: { color: '#0f172a' }
+        },
+        defaultStyle: { fontSize: 10, lineHeight: 1.2 },
+        watermark: isPending ? { text: 'Approval Pending', color: '#94a3b8', opacity: 0.12, bold: true } : undefined
+      }
+
+      const pdfDoc = window.pdfMake.createPdf(docDefinition)
+      pdfDoc.getDataUrl((dataUrl) => {
+        setPrintPreviewModal({ open: true, pdfUrl: dataUrl, quotation: q })
+      })
+    } catch (e) {
+      setNotify({ open: true, title: 'Preview Failed', message: 'We could not generate the PDF preview. Please try again.' })
+    }
+  }
+
   const hasRevisionChanges = (original, form) => {
     if (!original || !form) return false
     const fields = [
@@ -560,7 +844,12 @@ function QuotationDetail() {
               <span className="status-pill rejected">rejected</span>
             ) : null
           ) : null}
-          <button className="save-btn" onClick={() => exportPDF(quotation)}>Export</button>
+          <button className="assign-btn" onClick={() => {
+            if (quotation?._id) {
+              window.location.href = `/quotations/edit/${quotation._id}`
+            }
+          }}>Edit</button>
+          <button className="save-btn" onClick={() => generatePDFPreview(quotation)}>Print Preview</button>
           <button className="link-btn" onClick={async () => {
             try {
               const token = localStorage.getItem('token')
@@ -1125,18 +1414,343 @@ function QuotationDetail() {
           <div className="modal" onClick={e => e.stopPropagation()}>
             <div className="modal-header">
               <h2>Create Revision</h2>
-              <button onClick={() => setRevisionModal({ open: false, form: null })} className="close-btn">×</button>
+              <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                {revisionModal.form && quotation?._id && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        try {
+                          localStorage.setItem('revisionCreateMode', 'true')
+                          localStorage.setItem('revisionSourceQuotationId', quotation._id)
+                          localStorage.setItem('revisionFormData', JSON.stringify(revisionModal.form))
+                          window.open('/revision-detail', '_blank')
+                        } catch {}
+                      }}
+                      className="link-btn"
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                        fontSize: '14px',
+                        padding: '6px 12px',
+                        border: '1px solid var(--border)',
+                        borderRadius: '6px',
+                        background: 'transparent',
+                        color: 'var(--text)',
+                        cursor: 'pointer',
+                        transition: 'all 0.2s'
+                      }}
+                      title="Open in New Tab"
+                    >
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
+                        <polyline points="15 3 21 3 21 9"></polyline>
+                        <line x1="10" y1="14" x2="21" y2="3"></line>
+                      </svg>
+                      Open in New Tab
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        try {
+                          localStorage.setItem('revisionCreateMode', 'true')
+                          localStorage.setItem('revisionSourceQuotationId', quotation._id)
+                          localStorage.setItem('revisionFormData', JSON.stringify(revisionModal.form))
+                          window.location.href = '/revision-detail'
+                        } catch {}
+                      }}
+                      className="link-btn"
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                        fontSize: '14px',
+                        padding: '6px 12px',
+                        border: '1px solid var(--border)',
+                        borderRadius: '6px',
+                        background: 'transparent',
+                        color: 'var(--text)',
+                        cursor: 'pointer',
+                        transition: 'all 0.2s'
+                      }}
+                      title="Open Full Form"
+                    >
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                        <line x1="9" y1="3" x2="9" y2="21"></line>
+                      </svg>
+                      Open Full Form
+                    </button>
+                  </>
+                )}
+                <button onClick={() => setRevisionModal({ open: false, form: null })} className="close-btn">×</button>
+              </div>
             </div>
             {revisionModal.form && (
               <div className="lead-form" style={{ maxHeight: '70vh', overflow: 'auto' }}>
-                <div className="form-group">
-                  <label>Project Title</label>
-                  <input type="text" value={revisionModal.form.projectTitle} onChange={e => setRevisionModal({ ...revisionModal, form: { ...revisionModal.form, projectTitle: e.target.value } })} />
+                <div className="form-section">
+                  <div className="section-header">
+                    <h3>Cover & Basic Details</h3>
+                  </div>
+                  <div className="form-group">
+                    <label>Submitted To (Client Company)</label>
+                    <input type="text" value={revisionModal.form.submittedTo || ''} onChange={e => setRevisionModal({ ...revisionModal, form: { ...revisionModal.form, submittedTo: e.target.value } })} />
+                  </div>
+                  <div className="form-group">
+                    <label>Attention (Contact Person)</label>
+                    <input type="text" value={revisionModal.form.attention || ''} onChange={e => setRevisionModal({ ...revisionModal, form: { ...revisionModal.form, attention: e.target.value } })} />
+                  </div>
+                  <div className="form-row">
+                    <div className="form-group" style={{ flex: 1 }}>
+                      <label>Offer Reference</label>
+                      <input type="text" value={revisionModal.form.offerReference || ''} onChange={e => setRevisionModal({ ...revisionModal, form: { ...revisionModal.form, offerReference: e.target.value } })} />
+                    </div>
+                    <div className="form-group" style={{ flex: 1 }}>
+                      <label>Enquiry Number</label>
+                      <input type="text" value={revisionModal.form.enquiryNumber || ''} onChange={e => setRevisionModal({ ...revisionModal, form: { ...revisionModal.form, enquiryNumber: e.target.value } })} />
+                    </div>
+                  </div>
+                  <div className="form-row">
+                    <div className="form-group" style={{ flex: 1 }}>
+                      <label>Offer Date</label>
+                      <input type="date" value={revisionModal.form.offerDate || ''} onChange={e => setRevisionModal({ ...revisionModal, form: { ...revisionModal.form, offerDate: e.target.value } })} />
+                    </div>
+                    <div className="form-group" style={{ flex: 1 }}>
+                      <label>Enquiry Date</label>
+                      <input type="date" value={revisionModal.form.enquiryDate || ''} onChange={e => setRevisionModal({ ...revisionModal, form: { ...revisionModal.form, enquiryDate: e.target.value } })} />
+                    </div>
+                  </div>
                 </div>
-                <div className="form-group">
-                  <label>Introduction</label>
-                  <textarea value={revisionModal.form.introductionText} onChange={e => setRevisionModal({ ...revisionModal, form: { ...revisionModal.form, introductionText: e.target.value } })} />
+
+                <div className="form-section">
+                  <div className="section-header">
+                    <h3>Project Details</h3>
+                  </div>
+                  <div className="form-group">
+                    <label>Project Title</label>
+                    <input type="text" value={revisionModal.form.projectTitle || ''} onChange={e => setRevisionModal({ ...revisionModal, form: { ...revisionModal.form, projectTitle: e.target.value } })} />
+                  </div>
+                  <div className="form-group">
+                    <label>Introduction</label>
+                    <textarea value={revisionModal.form.introductionText || ''} onChange={e => setRevisionModal({ ...revisionModal, form: { ...revisionModal.form, introductionText: e.target.value } })} />
+                  </div>
                 </div>
+
+                <div className="form-section">
+                  <div className="section-header">
+                    <h3>Scope of Work</h3>
+                  </div>
+                  {(revisionModal.form.scopeOfWork || []).map((s, i) => (
+                    <div key={i} className="item-card">
+                      <div className="item-header">
+                        <span>Item {i + 1}</span>
+                        <button type="button" className="cancel-btn" onClick={() => setRevisionModal({ ...revisionModal, form: { ...revisionModal.form, scopeOfWork: (revisionModal.form.scopeOfWork || []).filter((_, idx) => idx !== i) } })}>Remove</button>
+                      </div>
+                      <div className="form-row">
+                        <div className="form-group" style={{ flex: 3 }}>
+                          <label>Description</label>
+                          <textarea value={s.description || ''} onChange={e => setRevisionModal({ ...revisionModal, form: { ...revisionModal.form, scopeOfWork: (revisionModal.form.scopeOfWork || []).map((x, idx) => idx === i ? { ...x, description: e.target.value } : x) } })} />
+                        </div>
+                        <div className="form-group" style={{ flex: 1 }}>
+                          <label>Qty</label>
+                          <input type="number" value={s.quantity || ''} onChange={e => setRevisionModal({ ...revisionModal, form: { ...revisionModal.form, scopeOfWork: (revisionModal.form.scopeOfWork || []).map((x, idx) => idx === i ? { ...x, quantity: e.target.value } : x) } })} />
+                        </div>
+                        <div className="form-group" style={{ flex: 1 }}>
+                          <label>Unit</label>
+                          <input type="text" value={s.unit || ''} onChange={e => setRevisionModal({ ...revisionModal, form: { ...revisionModal.form, scopeOfWork: (revisionModal.form.scopeOfWork || []).map((x, idx) => idx === i ? { ...x, unit: e.target.value } : x) } })} />
+                        </div>
+                        <div className="form-group" style={{ flex: 2 }}>
+                          <label>Location/Remarks</label>
+                          <input type="text" value={s.locationRemarks || ''} onChange={e => setRevisionModal({ ...revisionModal, form: { ...revisionModal.form, scopeOfWork: (revisionModal.form.scopeOfWork || []).map((x, idx) => idx === i ? { ...x, locationRemarks: e.target.value } : x) } })} />
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                  <div className="section-actions">
+                    <button type="button" className="link-btn" onClick={() => setRevisionModal({ ...revisionModal, form: { ...revisionModal.form, scopeOfWork: [...(revisionModal.form.scopeOfWork || []), { description: '', quantity: '', unit: '', locationRemarks: '' }] } })}>+ Add Scope Item</button>
+                  </div>
+                </div>
+
+                <div className="form-section">
+                  <div className="section-header">
+                    <h3>Price Schedule</h3>
+                  </div>
+                  <div className="form-row">
+                    <div className="form-group" style={{ flex: 1 }}>
+                      <label>Currency</label>
+                      <input type="text" value={revisionModal.form.priceSchedule?.currency || 'AED'} onChange={e => setRevisionModal({ ...revisionModal, form: { ...revisionModal.form, priceSchedule: { ...revisionModal.form.priceSchedule, currency: e.target.value } } })} />
+                    </div>
+                    <div className="form-group" style={{ flex: 1 }}>
+                      <label>VAT %</label>
+                      <input type="number" value={revisionModal.form.priceSchedule?.taxDetails?.vatRate || 5} onChange={e => {
+                        const items = revisionModal.form.priceSchedule?.items || []
+                        const sub = items.reduce((sum, it) => sum + (Number(it.quantity || 0) * Number(it.unitRate || 0)), 0)
+                        const vat = sub * (Number(e.target.value || 0) / 100)
+                        const grand = sub + vat
+                        setRevisionModal({ ...revisionModal, form: { ...revisionModal.form, priceSchedule: { ...revisionModal.form.priceSchedule, subTotal: Number(sub.toFixed(2)), grandTotal: Number(grand.toFixed(2)), taxDetails: { ...revisionModal.form.priceSchedule.taxDetails, vatRate: e.target.value, vatAmount: Number(vat.toFixed(2)) } } } })
+                      }} />
+                    </div>
+                  </div>
+                  {(revisionModal.form.priceSchedule?.items || []).map((it, i) => (
+                    <div key={i} className="item-card">
+                      <div className="item-header">
+                        <span>Item {i + 1}</span>
+                        <button type="button" className="cancel-btn" onClick={() => {
+                          const items = (revisionModal.form.priceSchedule?.items || []).filter((_, idx) => idx !== i)
+                          const sub = items.reduce((sum, it) => sum + (Number(it.quantity || 0) * Number(it.unitRate || 0)), 0)
+                          const vat = sub * (Number(revisionModal.form.priceSchedule?.taxDetails?.vatRate || 0) / 100)
+                          const grand = sub + vat
+                          setRevisionModal({ ...revisionModal, form: { ...revisionModal.form, priceSchedule: { ...revisionModal.form.priceSchedule, items, subTotal: Number(sub.toFixed(2)), grandTotal: Number(grand.toFixed(2)), taxDetails: { ...revisionModal.form.priceSchedule.taxDetails, vatAmount: Number(vat.toFixed(2)) } } } })
+                        }}>Remove</button>
+                      </div>
+                      <div className="form-row">
+                        <div className="form-group" style={{ flex: 3 }}>
+                          <label>Description</label>
+                          <input type="text" value={it.description || ''} onChange={e => {
+                            const items = (revisionModal.form.priceSchedule?.items || []).map((x, idx) => idx === i ? { ...x, description: e.target.value } : x)
+                            setRevisionModal({ ...revisionModal, form: { ...revisionModal.form, priceSchedule: { ...revisionModal.form.priceSchedule, items } } })
+                          }} />
+                        </div>
+                        <div className="form-group" style={{ flex: 1 }}>
+                          <label>Qty</label>
+                          <input type="number" value={it.quantity || 0} onChange={e => {
+                            const items = (revisionModal.form.priceSchedule?.items || []).map((x, idx) => idx === i ? { ...x, quantity: e.target.value, totalAmount: Number((Number(e.target.value || 0) * Number(x.unitRate || 0)).toFixed(2)) } : x)
+                            const sub = items.reduce((sum, it) => sum + (Number(it.quantity || 0) * Number(it.unitRate || 0)), 0)
+                            const vat = sub * (Number(revisionModal.form.priceSchedule?.taxDetails?.vatRate || 0) / 100)
+                            const grand = sub + vat
+                            setRevisionModal({ ...revisionModal, form: { ...revisionModal.form, priceSchedule: { ...revisionModal.form.priceSchedule, items, subTotal: Number(sub.toFixed(2)), grandTotal: Number(grand.toFixed(2)), taxDetails: { ...revisionModal.form.priceSchedule.taxDetails, vatAmount: Number(vat.toFixed(2)) } } } })
+                          }} />
+                        </div>
+                        <div className="form-group" style={{ flex: 1 }}>
+                          <label>Unit</label>
+                          <input type="text" value={it.unit || ''} onChange={e => {
+                            const items = (revisionModal.form.priceSchedule?.items || []).map((x, idx) => idx === i ? { ...x, unit: e.target.value } : x)
+                            setRevisionModal({ ...revisionModal, form: { ...revisionModal.form, priceSchedule: { ...revisionModal.form.priceSchedule, items } } })
+                          }} />
+                        </div>
+                        <div className="form-group" style={{ flex: 1 }}>
+                          <label>Unit Rate</label>
+                          <input type="number" value={it.unitRate || 0} onChange={e => {
+                            const items = (revisionModal.form.priceSchedule?.items || []).map((x, idx) => idx === i ? { ...x, unitRate: e.target.value, totalAmount: Number((Number(x.quantity || 0) * Number(e.target.value || 0)).toFixed(2)) } : x)
+                            const sub = items.reduce((sum, it) => sum + (Number(it.quantity || 0) * Number(it.unitRate || 0)), 0)
+                            const vat = sub * (Number(revisionModal.form.priceSchedule?.taxDetails?.vatRate || 0) / 100)
+                            const grand = sub + vat
+                            setRevisionModal({ ...revisionModal, form: { ...revisionModal.form, priceSchedule: { ...revisionModal.form.priceSchedule, items, subTotal: Number(sub.toFixed(2)), grandTotal: Number(grand.toFixed(2)), taxDetails: { ...revisionModal.form.priceSchedule.taxDetails, vatAmount: Number(vat.toFixed(2)) } } } })
+                          }} />
+                        </div>
+                        <div className="form-group" style={{ flex: 1 }}>
+                          <label>Amount</label>
+                          <input type="number" value={Number(it.totalAmount || 0)} readOnly />
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                  <div className="section-actions">
+                    <button type="button" className="link-btn" onClick={() => setRevisionModal({ ...revisionModal, form: { ...revisionModal.form, priceSchedule: { ...revisionModal.form.priceSchedule, items: [...(revisionModal.form.priceSchedule?.items || []), { description: '', quantity: 0, unit: '', unitRate: 0, totalAmount: 0 }] } } })}>+ Add Item</button>
+                  </div>
+
+                  <div className="totals-card">
+                    <div className="form-row">
+                      <div className="form-group" style={{ flex: 1 }}>
+                        <label>Sub Total</label>
+                        <input type="number" readOnly value={Number(revisionModal.form.priceSchedule?.subTotal || 0)} />
+                      </div>
+                      <div className="form-group" style={{ flex: 1 }}>
+                        <label>VAT Amount</label>
+                        <input type="number" readOnly value={Number(revisionModal.form.priceSchedule?.taxDetails?.vatAmount || 0)} />
+                      </div>
+                      <div className="form-group" style={{ flex: 1 }}>
+                        <label>Grand Total</label>
+                        <input type="number" readOnly value={Number(revisionModal.form.priceSchedule?.grandTotal || 0)} />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="form-section">
+                  <div className="section-header">
+                    <h3>Our Viewpoints / Special Terms</h3>
+                  </div>
+                  <div className="form-group">
+                    <label>Our Viewpoints / Special Terms</label>
+                    <textarea value={revisionModal.form.ourViewpoints || ''} onChange={e => setRevisionModal({ ...revisionModal, form: { ...revisionModal.form, ourViewpoints: e.target.value } })} />
+                  </div>
+                </div>
+
+                <div className="form-section">
+                  <div className="section-header">
+                    <h3>Exclusions</h3>
+                  </div>
+                  {(revisionModal.form.exclusions || []).map((ex, i) => (
+                    <div key={i} className="item-card">
+                      <div className="item-header">
+                        <span>Item {i + 1}</span>
+                        <button type="button" className="cancel-btn" onClick={() => setRevisionModal({ ...revisionModal, form: { ...revisionModal.form, exclusions: (revisionModal.form.exclusions || []).filter((_, idx) => idx !== i) } })}>Remove</button>
+                      </div>
+                      <div className="form-row">
+                        <div className="form-group" style={{ flex: 1 }}>
+                          <input type="text" value={ex || ''} onChange={e => setRevisionModal({ ...revisionModal, form: { ...revisionModal.form, exclusions: (revisionModal.form.exclusions || []).map((x, idx) => idx === i ? e.target.value : x) } })} />
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                  <div className="section-actions">
+                    <button type="button" className="link-btn" onClick={() => setRevisionModal({ ...revisionModal, form: { ...revisionModal.form, exclusions: [...(revisionModal.form.exclusions || []), ''] } })}>+ Add Exclusion</button>
+                  </div>
+                </div>
+
+                <div className="form-section">
+                  <div className="section-header">
+                    <h3>Payment Terms</h3>
+                  </div>
+                  {(revisionModal.form.paymentTerms || []).map((p, i) => (
+                    <div key={i} className="item-card">
+                      <div className="item-header">
+                        <span>Term {i + 1}</span>
+                        <button type="button" className="cancel-btn" onClick={() => setRevisionModal({ ...revisionModal, form: { ...revisionModal.form, paymentTerms: (revisionModal.form.paymentTerms || []).filter((_, idx) => idx !== i) } })}>Remove</button>
+                      </div>
+                      <div className="form-row">
+                        <div className="form-group" style={{ flex: 3 }}>
+                          <label>Milestone</label>
+                          <input type="text" value={p.milestoneDescription || ''} onChange={e => setRevisionModal({ ...revisionModal, form: { ...revisionModal.form, paymentTerms: (revisionModal.form.paymentTerms || []).map((x, idx) => idx === i ? { ...x, milestoneDescription: e.target.value } : x) } })} />
+                        </div>
+                        <div className="form-group" style={{ flex: 1 }}>
+                          <label>Amount %</label>
+                          <input type="number" value={p.amountPercent || ''} onChange={e => setRevisionModal({ ...revisionModal, form: { ...revisionModal.form, paymentTerms: (revisionModal.form.paymentTerms || []).map((x, idx) => idx === i ? { ...x, amountPercent: e.target.value } : x) } })} />
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                  <div className="section-actions">
+                    <button type="button" className="link-btn" onClick={() => setRevisionModal({ ...revisionModal, form: { ...revisionModal.form, paymentTerms: [...(revisionModal.form.paymentTerms || []), { milestoneDescription: '', amountPercent: '' }] } })}>+ Add Payment Term</button>
+                  </div>
+                </div>
+
+                <div className="form-section">
+                  <div className="section-header">
+                    <h3>Delivery, Completion, Warranty & Validity</h3>
+                  </div>
+                  <div className="form-group">
+                    <label>Delivery / Completion Timeline</label>
+                    <input type="text" value={revisionModal.form.deliveryCompletionWarrantyValidity?.deliveryTimeline || ''} onChange={e => setRevisionModal({ ...revisionModal, form: { ...revisionModal.form, deliveryCompletionWarrantyValidity: { ...revisionModal.form.deliveryCompletionWarrantyValidity, deliveryTimeline: e.target.value } } })} />
+                  </div>
+                  <div className="form-row">
+                    <div className="form-group" style={{ flex: 1 }}>
+                      <label>Warranty Period</label>
+                      <input type="text" value={revisionModal.form.deliveryCompletionWarrantyValidity?.warrantyPeriod || ''} onChange={e => setRevisionModal({ ...revisionModal, form: { ...revisionModal.form, deliveryCompletionWarrantyValidity: { ...revisionModal.form.deliveryCompletionWarrantyValidity, warrantyPeriod: e.target.value } } })} />
+                    </div>
+                    <div className="form-group" style={{ flex: 1 }}>
+                      <label>Offer Validity (Days)</label>
+                      <input type="number" value={revisionModal.form.deliveryCompletionWarrantyValidity?.offerValidity || 30} onChange={e => setRevisionModal({ ...revisionModal, form: { ...revisionModal.form, deliveryCompletionWarrantyValidity: { ...revisionModal.form.deliveryCompletionWarrantyValidity, offerValidity: e.target.value } } })} />
+                    </div>
+                  </div>
+                  <div className="form-group">
+                    <label>Authorized Signatory</label>
+                    <input type="text" value={revisionModal.form.deliveryCompletionWarrantyValidity?.authorizedSignatory || ''} onChange={e => setRevisionModal({ ...revisionModal, form: { ...revisionModal.form, deliveryCompletionWarrantyValidity: { ...revisionModal.form.deliveryCompletionWarrantyValidity, authorizedSignatory: e.target.value } } })} />
+                  </div>
+                </div>
+
                 <div className="form-actions">
                   <button type="button" className="cancel-btn" onClick={() => setRevisionModal({ open: false, form: null })}>Cancel</button>
                   <button type="button" className="save-btn" disabled={!hasRevisionChanges(quotation, revisionModal.form)} onClick={createRevision}>Confirm Revision</button>
@@ -1199,6 +1813,74 @@ function QuotationDetail() {
                   Delete
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {printPreviewModal.open && printPreviewModal.pdfUrl && (
+        <div className="modal-overlay" onClick={() => setPrintPreviewModal({ open: false, pdfUrl: null, quotation: null })} style={{ zIndex: 10000 }}>
+          <div className="modal" onClick={e => e.stopPropagation()} style={{ zIndex: 10001, maxWidth: '95%', width: '100%', height: '95vh', display: 'flex', flexDirection: 'column' }}>
+            <div className="modal-header" style={{ flexShrink: 0, borderBottom: '1px solid var(--border)', padding: '16px 24px' }}>
+              <h2>PDF Preview - Commercial Quotation</h2>
+              <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                <button 
+                  className="save-btn" 
+                  onClick={async () => {
+                    if (printPreviewModal.quotation) {
+                      try {
+                        await exportPDF(printPreviewModal.quotation)
+                      } catch (e) {
+                        setNotify({ open: true, title: 'Export Failed', message: 'We could not generate the PDF. Please try again.' })
+                      }
+                    }
+                  }}
+                >
+                  Download PDF
+                </button>
+                <button 
+                  className="save-btn" 
+                  onClick={() => {
+                    if (printPreviewModal.pdfUrl) {
+                      const printWindow = window.open('', '_blank')
+                      printWindow.document.write(`
+                        <!DOCTYPE html>
+                        <html>
+                          <head>
+                            <title>Commercial Quotation</title>
+                            <style>
+                              body { margin: 0; padding: 0; }
+                              iframe { width: 100%; height: 100vh; border: none; }
+                            </style>
+                          </head>
+                          <body>
+                            <iframe src="${printPreviewModal.pdfUrl}"></iframe>
+                          </body>
+                        </html>
+                      `)
+                      printWindow.document.close()
+                      setTimeout(() => {
+                        printWindow.frames[0].print()
+                      }, 500)
+                    }
+                  }}
+                >
+                  Print
+                </button>
+                <button onClick={() => setPrintPreviewModal({ open: false, pdfUrl: null, quotation: null })} className="close-btn">×</button>
+              </div>
+            </div>
+            <div style={{ flex: 1, overflow: 'hidden', background: '#525252', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <iframe 
+                src={printPreviewModal.pdfUrl}
+                style={{ 
+                  width: '100%', 
+                  height: '100%', 
+                  border: 'none',
+                  background: 'white'
+                }}
+                title="PDF Preview"
+              />
             </div>
           </div>
         </div>

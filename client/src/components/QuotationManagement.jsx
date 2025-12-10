@@ -37,6 +37,7 @@ function QuotationManagement() {
   const [currentPage, setCurrentPage] = useState(1)
   const [itemsPerPage, setItemsPerPage] = useState(10)
   const [search, setSearch] = useState('')
+  const [printPreviewModal, setPrintPreviewModal] = useState({ open: false, pdfUrl: null, quotation: null })
   // New filter states
   const [nameFilter, setNameFilter] = useState('')
   const [dateModifiedFilter, setDateModifiedFilter] = useState('')
@@ -646,6 +647,310 @@ function QuotationManagement() {
     }
   }
 
+  const generatePDFPreview = async (q) => {
+    try {
+      await ensurePdfMake()
+      const logoDataUrl = await toDataURL(q.companyInfo?.logo || logo)
+      const isPending = q.managementApproval?.status === 'pending'
+
+      const currency = q.priceSchedule?.currency || 'AED'
+      // Fetch lead details and site visits for inclusion
+      let leadFull = q.lead || null
+      let siteVisits = []
+      try {
+        const leadId = typeof q.lead === 'object' ? q.lead?._id : q.lead
+        if (leadId) {
+          const resLead = await api.get(`/api/leads/${leadId}`)
+          leadFull = resLead.data
+          const resVisits = await api.get(`/api/leads/${leadId}/site-visits`)
+          siteVisits = Array.isArray(resVisits.data) ? resVisits.data : []
+        }
+      } catch {}
+      const coverFieldsRaw = [
+        ['Submitted To', q.submittedTo],
+        ['Attention', q.attention],
+        ['Offer Reference', q.offerReference],
+        ['Enquiry Number', q.enquiryNumber || leadFull?.enquiryNumber],
+        ['Offer Date', q.offerDate ? new Date(q.offerDate).toLocaleDateString() : ''],
+        ['Enquiry Date', q.enquiryDate ? new Date(q.enquiryDate).toLocaleDateString() : ''],
+        ['Project Title', q.projectTitle || leadFull?.projectTitle]
+      ]
+      const coverFields = coverFieldsRaw.filter(([, v]) => v && String(v).trim().length > 0)
+
+      const scopeRows = (q.scopeOfWork || [])
+        .filter(s => (s?.description || '').trim().length > 0)
+        .map((s, i) => [
+          String(i + 1),
+          s.description,
+          String(s.quantity || ''),
+          s.unit || '',
+          s.locationRemarks || ''
+        ])
+
+      const priceItems = (q.priceSchedule?.items || [])
+        .filter(it => (it?.description || '').trim().length > 0 || Number(it.quantity) > 0 || Number(it.unitRate) > 0)
+      const priceRows = priceItems.map((it, i) => [
+        String(i + 1),
+        it.description || '',
+        String(it.quantity || 0),
+        it.unit || '',
+        `${currency} ${Number(it.unitRate || 0).toFixed(2)}`,
+        `${currency} ${Number((it.quantity || 0) * (it.unitRate || 0)).toFixed(2)}`
+      ])
+
+      const exclusions = (q.exclusions || []).map(x => String(x || '').trim()).filter(Boolean)
+      const paymentTerms = (q.paymentTerms || []).filter(p => (p?.milestoneDescription || '').trim().length > 0 || String(p?.amountPercent || '').trim().length > 0)
+
+      const dcwv = q.deliveryCompletionWarrantyValidity || {}
+      const deliveryRowsRaw = [
+        ['Delivery / Completion Timeline', dcwv.deliveryTimeline],
+        ['Warranty Period', dcwv.warrantyPeriod],
+        ['Offer Validity (Days)', typeof dcwv.offerValidity === 'number' ? String(dcwv.offerValidity) : (dcwv.offerValidity || '')],
+        ['Authorized Signatory', dcwv.authorizedSignatory]
+      ]
+      const deliveryRows = deliveryRowsRaw.filter(([, v]) => v && String(v).trim().length > 0)
+
+      const header = {
+        margin: [36, 20, 36, 8],
+        stack: [
+          {
+            columns: [
+              { image: logoDataUrl, width: 60 },
+              [
+                { text: q.companyInfo?.name || 'Company', style: 'brand' },
+                { text: [q.companyInfo?.address, q.companyInfo?.phone, q.companyInfo?.email].filter(Boolean).join(' | '), color: '#64748b', fontSize: 9 }
+              ]
+            ],
+            columnGap: 12
+          },
+          { canvas: [{ type: 'line', x1: 0, y1: 0, x2: 523, y2: 0, lineWidth: 0.5, lineColor: '#e5e7eb' }] }
+        ]
+      }
+
+      const content = []
+
+      // Title
+      content.push({ text: 'Commercial Quotation', style: 'h1', margin: [0, 0, 0, 8] })
+
+      // Cover & Basic Details
+      if (coverFields.length > 0) {
+        content.push({ text: 'Cover & Basic Details', style: 'h2', margin: [0, 6, 0, 6] })
+        content.push({
+          table: {
+            widths: ['30%', '70%'],
+            body: [
+              [{ text: 'Field', style: 'th' }, { text: 'Value', style: 'th' }],
+              ...coverFields.map(([k, v]) => [{ text: k, style: 'tdKey' }, { text: v, style: 'tdVal' }])
+            ]
+          },
+          layout: 'lightHorizontalLines'
+        })
+      }
+
+      // Lead Details (from lead module)
+      if (leadFull) {
+        const leadDetailsRaw = [
+          ['Customer', leadFull.customerName],
+          ['Project Title', leadFull.projectTitle],
+          ['Enquiry #', leadFull.enquiryNumber],
+          ['Enquiry Date', leadFull.enquiryDate ? new Date(leadFull.enquiryDate).toLocaleDateString() : ''],
+          ['Submission Due', leadFull.submissionDueDate ? new Date(leadFull.submissionDueDate).toLocaleDateString() : ''],
+          ['Scope Summary', leadFull.scopeSummary]
+        ]
+        const leadDetails = leadDetailsRaw.filter(([, v]) => v && String(v).trim().length > 0)
+        if (leadDetails.length > 0) {
+          content.push({ text: 'Project Details', style: 'h2', margin: [0, 12, 0, 6] })
+          content.push({
+            table: {
+              widths: ['30%', '70%'],
+              body: [
+                [{ text: 'Field', style: 'th' }, { text: 'Value', style: 'th' }],
+                ...leadDetails.map(([k, v]) => [{ text: k, style: 'tdKey' }, { text: v, style: 'tdVal' }])
+              ]
+            },
+            layout: 'lightHorizontalLines'
+          })
+        }
+      }
+
+      // Introduction
+      if ((q.introductionText || '').trim().length > 0) {
+        content.push({ text: 'Introduction', style: 'h2', margin: [0, 10, 0, 6] })
+        content.push({ text: q.introductionText, margin: [0, 0, 0, 6] })
+      }
+
+      // Scope of Work
+      if (scopeRows.length > 0) {
+        content.push({ text: 'Scope of Work', style: 'h2', margin: [0, 12, 0, 6] })
+        content.push({
+          table: {
+            widths: ['6%', '54%', '10%', '10%', '20%'],
+            body: [
+              [{ text: '#', style: 'th' }, { text: 'Description', style: 'th' }, { text: 'Qty', style: 'th' }, { text: 'Unit', style: 'th' }, { text: 'Location/Remarks', style: 'th' }],
+              ...scopeRows
+            ]
+          },
+          layout: 'lightHorizontalLines'
+        })
+      }
+
+      // Site Visit Reports (compact table)
+      if (Array.isArray(siteVisits) && siteVisits.length > 0) {
+        const visitRows = siteVisits.map((v, i) => [
+          String(i + 1),
+          v.visitAt ? new Date(v.visitAt).toLocaleString() : '',
+          v.siteLocation || '',
+          v.engineerName || '',
+          (v.workProgressSummary || '').slice(0, 140)
+        ])
+        content.push({ text: 'Site Visit Reports', style: 'h2', margin: [0, 12, 0, 6] })
+        content.push({
+          table: {
+            widths: ['6%', '22%', '22%', '20%', '30%'],
+            body: [
+              [
+                { text: '#', style: 'th' },
+                { text: 'Date & Time', style: 'th' },
+                { text: 'Location', style: 'th' },
+                { text: 'Engineer', style: 'th' },
+                { text: 'Progress Summary', style: 'th' }
+              ],
+              ...visitRows
+            ]
+          },
+          layout: 'lightHorizontalLines'
+        })
+      }
+
+      // Price Schedule
+      if (priceRows.length > 0) {
+        content.push({ text: 'Price Schedule', style: 'h2', margin: [0, 12, 0, 6] })
+        content.push({
+          table: {
+            widths: ['6%', '44%', '10%', '10%', '15%', '15%'],
+            body: [
+              [
+                { text: '#', style: 'th' },
+                { text: 'Description', style: 'th' },
+                { text: 'Qty', style: 'th' },
+                { text: 'Unit', style: 'th' },
+                { text: `Unit Rate (${currency})`, style: 'th' },
+                { text: `Amount (${currency})`, style: 'th' }
+              ],
+              ...priceRows
+            ]
+          },
+          layout: 'lightHorizontalLines'
+        })
+
+        content.push({
+          columns: [
+            { width: '*', text: '' },
+            {
+              width: '40%',
+              table: {
+                widths: ['55%', '45%'],
+                body: [
+                  [{ text: 'Sub Total', style: 'tdKey' }, { text: `${currency} ${Number(q.priceSchedule?.subTotal || 0).toFixed(2)}`, alignment: 'right' }],
+                  [{ text: `VAT (${q.priceSchedule?.taxDetails?.vatRate || 0}%)`, style: 'tdKey' }, { text: `${currency} ${Number(q.priceSchedule?.taxDetails?.vatAmount || 0).toFixed(2)}`, alignment: 'right' }],
+                  [{ text: 'Grand Total', style: 'th' }, { text: `${currency} ${Number(q.priceSchedule?.grandTotal || 0).toFixed(2)}`, style: 'th', alignment: 'right' }]
+                ]
+              },
+              layout: 'lightHorizontalLines'
+            }
+          ],
+          margin: [0, 8, 0, 0]
+        })
+      }
+
+      // Our Viewpoints / Exclusions
+      if ((q.ourViewpoints || '').trim().length > 0 || exclusions.length > 0) {
+        content.push({ text: 'Our Viewpoints / Special Terms', style: 'h2', margin: [0, 12, 0, 6] })
+        if ((q.ourViewpoints || '').trim().length > 0) {
+          content.push({ text: q.ourViewpoints, margin: [0, 0, 0, 6] })
+        }
+        if (exclusions.length > 0) {
+          content.push({ text: 'Exclusions', style: 'h3', margin: [0, 6, 0, 4] })
+          content.push({ ul: exclusions })
+        }
+      }
+
+      // Payment Terms
+      if (paymentTerms.length > 0) {
+        content.push({ text: 'Payment Terms', style: 'h2', margin: [0, 12, 0, 6] })
+        content.push({
+          table: {
+            widths: ['10%', '70%', '20%'],
+            body: [
+              [{ text: '#', style: 'th' }, { text: 'Milestone', style: 'th' }, { text: 'Amount %', style: 'th' }],
+              ...paymentTerms.map((p, i) => [String(i + 1), p.milestoneDescription || '', String(p.amountPercent || '')])
+            ]
+          },
+          layout: 'lightHorizontalLines'
+        })
+      }
+
+      // Delivery/Completion/Warranty/Validity
+      if (deliveryRows.length > 0) {
+        content.push({ text: 'Delivery, Completion, Warranty & Validity', style: 'h2', margin: [0, 12, 0, 6] })
+        content.push({
+          table: {
+            widths: ['30%', '70%'],
+            body: [
+              ...deliveryRows.map(([k, v]) => [{ text: k, style: 'tdKey' }, { text: v, style: 'tdVal' }])
+            ]
+          },
+          layout: 'lightHorizontalLines'
+        })
+      }
+
+      // Approval status line
+      if (isPending) {
+        content.push({ text: 'Management Approval: Pending', italics: true, color: '#b45309', margin: [0, 12, 0, 0] })
+      } else if (q.managementApproval?.status === 'approved') {
+        content.push({ text: `Approved by: ${q.managementApproval?.approvedBy?.name || 'Management'}`, italics: true, color: '#16a34a', margin: [0, 12, 0, 0] })
+      }
+
+      const docDefinition = {
+        pageMargins: [36, 96, 36, 60],
+        header,
+        footer: function (currentPage, pageCount) {
+          return {
+            margin: [36, 0, 36, 20],
+            stack: [
+              { canvas: [{ type: 'line', x1: 0, y1: 0, x2: 523, y2: 0, lineWidth: 0.5, lineColor: '#e5e7eb' }] },
+              {
+                columns: [
+                  { text: isPending ? 'Approval Pending' : (q.managementApproval?.status === 'approved' ? 'Approved' : ''), color: isPending ? '#b45309' : '#16a34a' },
+                  { text: `Page ${currentPage} of ${pageCount}`, alignment: 'right', color: '#94a3b8' }
+                ]
+              }
+            ]
+          }
+        },
+        content,
+        styles: {
+          brand: { fontSize: 14, color: '#1f2937', bold: true, margin: [0, 0, 0, 2] },
+          h1: { fontSize: 18, bold: true, color: '#0f172a' },
+          h2: { fontSize: 12, bold: true, color: '#0f172a' },
+          h3: { fontSize: 11, bold: true, color: '#0f172a' },
+          th: { bold: true, fillColor: '#f1f5f9' },
+          tdKey: { color: '#64748b' },
+          tdVal: { color: '#0f172a' }
+        },
+        defaultStyle: { fontSize: 10, lineHeight: 1.2 },
+        watermark: isPending ? { text: 'Approval Pending', color: '#94a3b8', opacity: 0.12, bold: true } : undefined
+      }
+
+      const pdfDoc = window.pdfMake.createPdf(docDefinition)
+      pdfDoc.getDataUrl((dataUrl) => {
+        setPrintPreviewModal({ open: true, pdfUrl: dataUrl, quotation: q })
+      })
+    } catch (e) {
+      setNotify({ open: true, title: 'Preview Failed', message: 'We could not generate the PDF preview. Please try again.' })
+    }
+  }
+
   const hasRevisionChanges = (original, form) => {
     if (!original || !form) return false
     const fields = [
@@ -844,7 +1149,7 @@ function QuotationManagement() {
         setEditing(q)
         setShowModal(true)
       }}>Edit</button>
-      <button className="save-btn" onClick={() => exportPDF(q)}>Export</button>
+      <button className="save-btn" onClick={() => generatePDFPreview(q)}>Print Preview</button>
       {canDelete && (
         <button 
           className="reject-btn" 
@@ -2152,7 +2457,78 @@ function QuotationManagement() {
           <div className="modal" onClick={e => e.stopPropagation()}>
             <div className="modal-header">
               <h2>Create Revision</h2>
-              <button onClick={() => setRevisionModal({ open: false, quote: null, form: null })} className="close-btn">×</button>
+              <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                {revisionModal.form && revisionModal.quote?._id && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        try {
+                          localStorage.setItem('revisionCreateMode', 'true')
+                          localStorage.setItem('revisionSourceQuotationId', revisionModal.quote._id)
+                          localStorage.setItem('revisionFormData', JSON.stringify(revisionModal.form))
+                          window.open('/revision-detail', '_blank')
+                        } catch {}
+                      }}
+                      className="link-btn"
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                        fontSize: '14px',
+                        padding: '6px 12px',
+                        border: '1px solid var(--border)',
+                        borderRadius: '6px',
+                        background: 'transparent',
+                        color: 'var(--text)',
+                        cursor: 'pointer',
+                        transition: 'all 0.2s'
+                      }}
+                      title="Open in New Tab"
+                    >
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
+                        <polyline points="15 3 21 3 21 9"></polyline>
+                        <line x1="10" y1="14" x2="21" y2="3"></line>
+                      </svg>
+                      Open in New Tab
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        try {
+                          localStorage.setItem('revisionCreateMode', 'true')
+                          localStorage.setItem('revisionSourceQuotationId', revisionModal.quote._id)
+                          localStorage.setItem('revisionFormData', JSON.stringify(revisionModal.form))
+                          window.location.href = '/revision-detail'
+                        } catch {}
+                      }}
+                      className="link-btn"
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                        fontSize: '14px',
+                        padding: '6px 12px',
+                        border: '1px solid var(--border)',
+                        borderRadius: '6px',
+                        background: 'transparent',
+                        color: 'var(--text)',
+                        cursor: 'pointer',
+                        transition: 'all 0.2s'
+                      }}
+                      title="Open Full Form"
+                    >
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                        <line x1="9" y1="3" x2="9" y2="21"></line>
+                      </svg>
+                      Open Full Form
+                    </button>
+                  </>
+                )}
+                <button onClick={() => setRevisionModal({ open: false, quote: null, form: null })} className="close-btn">×</button>
+              </div>
             </div>
             {revisionModal.form && (
               <div className="lead-form" style={{ maxHeight: '70vh', overflow: 'auto' }}>
@@ -2820,6 +3196,74 @@ function QuotationManagement() {
               <div className="form-actions">
                 <button type="button" className="save-btn" onClick={() => setNotify({ open: false, title: '', message: '' })}>OK</button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {printPreviewModal.open && printPreviewModal.pdfUrl && (
+        <div className="modal-overlay" onClick={() => setPrintPreviewModal({ open: false, pdfUrl: null, quotation: null })} style={{ zIndex: 10000 }}>
+          <div className="modal" onClick={e => e.stopPropagation()} style={{ zIndex: 10001, maxWidth: '95%', width: '100%', height: '95vh', display: 'flex', flexDirection: 'column' }}>
+            <div className="modal-header" style={{ flexShrink: 0, borderBottom: '1px solid var(--border)', padding: '16px 24px' }}>
+              <h2>PDF Preview - Commercial Quotation</h2>
+              <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                <button 
+                  className="save-btn" 
+                  onClick={async () => {
+                    if (printPreviewModal.quotation) {
+                      try {
+                        await exportPDF(printPreviewModal.quotation)
+                      } catch (e) {
+                        setNotify({ open: true, title: 'Export Failed', message: 'We could not generate the PDF. Please try again.' })
+                      }
+                    }
+                  }}
+                >
+                  Download PDF
+                </button>
+                <button 
+                  className="save-btn" 
+                  onClick={() => {
+                    if (printPreviewModal.pdfUrl) {
+                      const printWindow = window.open('', '_blank')
+                      printWindow.document.write(`
+                        <!DOCTYPE html>
+                        <html>
+                          <head>
+                            <title>Commercial Quotation</title>
+                            <style>
+                              body { margin: 0; padding: 0; }
+                              iframe { width: 100%; height: 100vh; border: none; }
+                            </style>
+                          </head>
+                          <body>
+                            <iframe src="${printPreviewModal.pdfUrl}"></iframe>
+                          </body>
+                        </html>
+                      `)
+                      printWindow.document.close()
+                      setTimeout(() => {
+                        printWindow.frames[0].print()
+                      }, 500)
+                    }
+                  }}
+                >
+                  Print
+                </button>
+                <button onClick={() => setPrintPreviewModal({ open: false, pdfUrl: null, quotation: null })} className="close-btn">×</button>
+              </div>
+            </div>
+            <div style={{ flex: 1, overflow: 'hidden', background: '#525252', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <iframe 
+                src={printPreviewModal.pdfUrl}
+                style={{ 
+                  width: '100%', 
+                  height: '100%', 
+                  border: 'none',
+                  background: 'white'
+                }}
+                title="PDF Preview"
+              />
             </div>
           </div>
         </div>

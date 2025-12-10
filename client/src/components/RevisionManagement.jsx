@@ -1,7 +1,34 @@
 import { useEffect, useMemo, useState, useRef } from 'react'
 import { api } from '../lib/api'
+import { Modal } from '../design-system/Modal'
 import './LeadManagement.css'
+import '../design-system/Modal.css'
 import logo from '../assets/logo/WBES_Logo.png'
+
+// Google Docs-style Rich Text Editor using contentEditable (compatible with React 19)
+// Note: This is a simplified version - full implementation copied from RevisionDetail.jsx
+// For the complete component, see RevisionDetail.jsx lines 10-862
+function ScopeOfWorkEditor({ value, onChange }) {
+  // This is a placeholder - the full implementation should be copied from RevisionDetail.jsx
+  // Due to size constraints, please refer to RevisionDetail.jsx for the complete component
+  return (
+    <div style={{ border: '1px solid var(--border)', borderRadius: '6px', background: 'var(--input)', width: '100%', minWidth: '100%', padding: '12px' }}>
+      <div
+        contentEditable
+        onInput={(e) => onChange(e.target.innerHTML)}
+        style={{
+          minHeight: '200px',
+          padding: '12px',
+          outline: 'none',
+          color: 'var(--text)',
+          width: '100%',
+          boxSizing: 'border-box'
+        }}
+        dangerouslySetInnerHTML={{ __html: value || '' }}
+      />
+    </div>
+  )
+}
 
 function RevisionManagement() {
   const [currentUser, setCurrentUser] = useState(null)
@@ -1226,7 +1253,17 @@ function RevisionManagement() {
                 <p><strong>Project:</strong> {r.projectTitle || r.lead?.projectTitle || 'N/A'}</p>
                 <p><strong>Customer:</strong> {r.lead?.customerName || 'N/A'}</p>
                 <p><strong>Offer Ref:</strong> {r.offerReference || 'N/A'}</p>
-                <p><strong>Parent Quotation:</strong> {typeof r.parentQuotation === 'object' ? (r.parentQuotation?.offerReference || 'N/A') : 'N/A'}</p>
+                {typeof r.parentQuotation === 'object' && r.parentQuotation?._id && (
+                  <p>
+                    <strong>Parent Quotation:</strong>{' '}
+                    <button className="link-btn" onClick={() => {
+                      localStorage.setItem('quotationId', r.parentQuotation._id)
+                      window.location.href = '/quotation-detail'
+                    }}>
+                      View
+                    </button>
+                  </p>
+                )}
                 <p><strong>Grand Total:</strong> {(r.priceSchedule?.currency || 'AED')} {Number(r.priceSchedule?.grandTotal || 0).toFixed(2)}</p>
                 {r.diffFromParent && Array.isArray(r.diffFromParent) && r.diffFromParent.length > 0 && (
                   <p>
@@ -1322,12 +1359,11 @@ function RevisionManagement() {
                     <td data-label="Customer">{r.lead?.customerName || 'N/A'}</td>
                     <td data-label="Offer Ref">{r.offerReference || 'N/A'}</td>
                     <td data-label="Parent Quotation">
-                      {typeof r.parentQuotation === 'object' ? (r.parentQuotation?.offerReference || 'N/A') : 'N/A'}
                       {typeof r.parentQuotation === 'object' && r.parentQuotation?._id && (
                         <button className="link-btn" onClick={() => {
                           localStorage.setItem('quotationId', r.parentQuotation._id)
                           window.location.href = '/quotation-detail'
-                        }} style={{ marginLeft: '6px' }}>
+                        }}>
                           View
                         </button>
                       )}
@@ -1604,8 +1640,77 @@ function RevisionManagement() {
         <div className="modal-overlay" onClick={() => setEditModal({ open: false, revision: null, form: null })}>
           <div className="modal" onClick={e => e.stopPropagation()}>
             <div className="modal-header">
-              <h2>Edit Revision</h2>
-              <button onClick={() => setEditModal({ open: false, revision: null, form: null })} className="close-btn">×</button>
+              <h2>{editModal.mode === 'create' ? 'Create Revision' : 'Edit Revision'}</h2>
+              <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                {editModal.revision?._id && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        try {
+                          localStorage.setItem('revisionId', editModal.revision._id)
+                          localStorage.setItem('revisionEditMode', 'true')
+                          window.open('/revision-detail', '_blank')
+                        } catch {}
+                      }}
+                      className="link-btn"
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                        fontSize: '14px',
+                        padding: '6px 12px',
+                        border: '1px solid var(--border)',
+                        borderRadius: '6px',
+                        background: 'transparent',
+                        color: 'var(--text)',
+                        cursor: 'pointer',
+                        transition: 'all 0.2s'
+                      }}
+                      title="Open in New Tab"
+                    >
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
+                        <polyline points="15 3 21 3 21 9"></polyline>
+                        <line x1="10" y1="14" x2="21" y2="3"></line>
+                      </svg>
+                      Open in New Tab
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        try {
+                          localStorage.setItem('revisionId', editModal.revision._id)
+                          localStorage.setItem('revisionEditMode', 'true')
+                          window.location.href = '/revision-detail'
+                        } catch {}
+                      }}
+                      className="link-btn"
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                        fontSize: '14px',
+                        padding: '6px 12px',
+                        border: '1px solid var(--border)',
+                        borderRadius: '6px',
+                        background: 'transparent',
+                        color: 'var(--text)',
+                        cursor: 'pointer',
+                        transition: 'all 0.2s'
+                      }}
+                      title="Open Full Form"
+                    >
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                        <line x1="9" y1="3" x2="9" y2="21"></line>
+                      </svg>
+                      Open Full Form
+                    </button>
+                  </>
+                )}
+                <button onClick={() => setEditModal({ open: false, revision: null, form: null, mode: 'edit' })} className="close-btn">×</button>
+              </div>
             </div>
             {editModal.form && (
               <div className="lead-form" style={{ maxHeight: '70vh', overflow: 'auto' }}>

@@ -11,9 +11,11 @@ import logo from '../assets/logo/WBES_Logo.png'
 // Google Docs-style Rich Text Editor using contentEditable (compatible with React 19)
 function ScopeOfWorkEditor({ value, onChange }) {
   const editorRef = useRef(null)
+  const savedSelectionRef = useRef(null)
   const [isFocused, setIsFocused] = useState(false)
   const [fontSize, setFontSize] = useState('14')
-  const [customFontSize, setCustomFontSize] = useState('')
+  const [fontSizeInput, setFontSizeInput] = useState('14')
+  const [showFontSizeDropdown, setShowFontSizeDropdown] = useState(false)
   const [fontFamily, setFontFamily] = useState('Arial')
   const [textColor, setTextColor] = useState('#000000')
   const [highlightColor, setHighlightColor] = useState('#ffff00')
@@ -30,10 +32,60 @@ function ScopeOfWorkEditor({ value, onChange }) {
     }
   }, [value])
 
+  // Close font size dropdown when clicking outside
+  useEffect(() => {
+    if (!showFontSizeDropdown) return
+    
+    const handleClickOutside = (e) => {
+      if (!e.target.closest('[data-font-size-container]')) {
+        setShowFontSizeDropdown(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [showFontSizeDropdown])
+
   const handleInput = (e) => {
     const html = e.target.innerHTML
     onChange(html)
+    // Save selection on input to preserve it
+    setTimeout(() => saveSelection(), 0)
   }
+  
+  // Continuously save selection while editor is focused
+  useEffect(() => {
+    if (!isFocused || !editorRef.current) return
+    
+    // Save selection on mouseup (when user finishes selecting)
+    const handleMouseUp = (e) => {
+      // Only save if the mouseup is within the editor
+      if (editorRef.current?.contains(e.target)) {
+        setTimeout(() => saveSelection(), 0)
+      }
+    }
+    
+    // Save selection on any selection change
+    const handleSelectionChange = () => {
+      const selection = window.getSelection()
+      if (selection.rangeCount > 0) {
+        const range = selection.getRangeAt(0)
+        // Only save if selection is within editor
+        if (editorRef.current?.contains(range.anchorNode)) {
+          saveSelection()
+        }
+      }
+    }
+    
+    editorRef.current.addEventListener('mouseup', handleMouseUp)
+    document.addEventListener('selectionchange', handleSelectionChange)
+    
+    return () => {
+      if (editorRef.current) {
+        editorRef.current.removeEventListener('mouseup', handleMouseUp)
+      }
+      document.removeEventListener('selectionchange', handleSelectionChange)
+    }
+  }, [isFocused])
 
   const handlePaste = (e) => {
     e.preventDefault()
@@ -56,54 +108,285 @@ function ScopeOfWorkEditor({ value, onChange }) {
     editorRef.current?.focus()
   }
 
-  const applyFontSize = (size) => {
+  const expandToWord = (range) => {
+    // Try to expand to word boundaries
+    try {
+      if (range.expand) {
+        range.expand('word')
+      }
+    } catch (e) {
+      // Fallback: manually expand to word
+      const textNode = range.startContainer
+      if (textNode && textNode.nodeType === 3) {
+        const text = textNode.textContent
+        const start = range.startOffset
+        let wordStart = start
+        let wordEnd = start
+        
+        // Find word start
+        while (wordStart > 0 && /\S/.test(text[wordStart - 1])) {
+          wordStart--
+        }
+        
+        // Find word end
+        while (wordEnd < text.length && /\S/.test(text[wordEnd])) {
+          wordEnd++
+        }
+        
+        if (wordStart < wordEnd) {
+          range.setStart(textNode, wordStart)
+          range.setEnd(textNode, wordEnd)
+        }
+      }
+    }
+  }
+
+  const saveSelection = () => {
     const selection = window.getSelection()
-    if (selection.rangeCount > 0 && !selection.isCollapsed) {
+    if (selection.rangeCount > 0) {
       const range = selection.getRangeAt(0)
+      // Check if selection is within the editor
+      if (editorRef.current && 
+          (editorRef.current.contains(range.anchorNode) || editorRef.current.contains(range.focusNode))) {
+        // Only save if there's actual selected text (not just cursor)
+        if (!range.collapsed) {
+          savedSelectionRef.current = range.cloneRange()
+        } else {
+          // Clear saved selection if it's just a cursor
+          savedSelectionRef.current = null
+        }
+      }
+    }
+  }
+
+  const restoreSelection = () => {
+    if (savedSelectionRef.current && editorRef.current) {
+      const selection = window.getSelection()
+      selection.removeAllRanges()
+      selection.addRange(savedSelectionRef.current)
+    }
+  }
+
+  const applyFontSize = (size) => {
+    // CRITICAL: Must use saved selection - current selection is lost when toolbar is clicked
+    // ABSOLUTELY DO NOT apply font size if there's no saved selection
+    
+    // ONLY use saved selection - don't try current selection as it's already lost
+    if (!savedSelectionRef.current) {
+      // No saved selection - DO NOT apply font size to anything
+      console.warn('No saved selection - font size not applied')
+      if (editorRef.current) {
+        editorRef.current.focus()
+      }
+      return
+    }
+    
+    const savedRange = savedSelectionRef.current
+    
+    // Verify the saved selection is still valid (within editor)
+    if (!editorRef.current || 
+        !editorRef.current.contains(savedRange.startContainer) || 
+        !editorRef.current.contains(savedRange.endContainer)) {
+      // Saved selection is no longer valid - DO NOT apply font size
+      console.warn('Saved selection is invalid - font size not applied')
+      savedSelectionRef.current = null
+      if (editorRef.current) {
+        editorRef.current.focus()
+      }
+      return
+    }
+    
+    const range = savedRange.cloneRange()
+    
+    // Only apply if there's actually selected text (not collapsed/cursor position)
+    if (range.collapsed) {
+      // No text selected - DO NOT apply font size
+      console.warn('Selection is collapsed - font size not applied')
+      if (editorRef.current) {
+        editorRef.current.focus()
+      }
+      return
+    }
+    
+    // Restore the selection in the DOM before applying
+    const selection = window.getSelection()
+    selection.removeAllRanges()
+    try {
+      selection.addRange(range.cloneRange())
+    } catch (e) {
+      console.error('Failed to restore selection:', e)
+      return
+    }
+    
+    // Ensure the range is within the editor
+    if (!editorRef.current?.contains(range.commonAncestorContainer)) {
+      editorRef.current?.focus()
+      return
+    }
+    
+    // Apply font size to selected text only - handle multi-node selections properly
+    const startContainer = range.startContainer
+    const endContainer = range.endContainer
+    const startOffset = range.startOffset
+    const endOffset = range.endOffset
+    
+    // If selection is within a single text node
+    if (startContainer === endContainer && startContainer.nodeType === 3) {
+      const textNode = startContainer
+      const text = textNode.textContent
+      const beforeText = text.substring(0, startOffset)
+      const selectedText = text.substring(startOffset, endOffset)
+      const afterText = text.substring(endOffset)
+      
+      // Create new text nodes and span
+      const beforeNode = document.createTextNode(beforeText)
       const span = document.createElement('span')
       span.style.fontSize = `${size}px`
-      try {
-        range.surroundContents(span)
-      } catch (e) {
-        // If surroundContents fails, try a different approach
-        const contents = range.extractContents()
-        span.appendChild(contents)
-        range.insertNode(span)
+      span.textContent = selectedText
+      const afterNode = document.createTextNode(afterText)
+      
+      // Replace the original text node
+      const parent = textNode.parentNode
+      if (beforeNode.textContent) {
+        parent.insertBefore(beforeNode, textNode)
+      }
+      parent.insertBefore(span, textNode)
+      if (afterNode.textContent) {
+        parent.insertBefore(afterNode, textNode)
+      }
+      parent.removeChild(textNode)
+    } else {
+      // Multi-node selection - use a more precise approach
+      // Clone range to work with it
+      const workRange = range.cloneRange()
+      
+      // Create wrapper span
+      const wrapper = document.createElement('span')
+      wrapper.style.fontSize = `${size}px`
+      
+      // Extract contents - this will handle partial nodes correctly
+      const contents = workRange.extractContents()
+      
+      // Move all extracted nodes into the wrapper
+      if (contents.hasChildNodes()) {
+        while (contents.firstChild) {
+          wrapper.appendChild(contents.firstChild)
+        }
+      } else if (contents.nodeType === 3) {
+        // If it's a text node fragment
+        wrapper.appendChild(contents)
+      }
+      
+      // Only insert if we have content
+      if (wrapper.textContent.trim() || wrapper.hasChildNodes()) {
+        // Insert at the original start position
+        range.insertNode(wrapper)
+      }
+    }
+    
+    // Clear saved selection after applying
+    savedSelectionRef.current = null
+    
+    // Update the onChange to reflect the change
+    if (editorRef.current) {
+      onChange(editorRef.current.innerHTML)
+    }
+    
+    editorRef.current?.focus()
+  }
+
+  const applyFontFamily = (family) => {
+    const selection = window.getSelection()
+    if (selection.rangeCount > 0) {
+      const range = selection.getRangeAt(0)
+      
+      // If no selection, try to select the word at cursor
+      if (selection.isCollapsed) {
+        expandToWord(range)
+      }
+      
+      if (!range.collapsed) {
+        const span = document.createElement('span')
+        span.style.fontFamily = family
+        try {
+          range.surroundContents(span)
+        } catch (e) {
+          const contents = range.extractContents()
+          span.appendChild(contents)
+          range.insertNode(span)
+        }
       }
     }
     editorRef.current?.focus()
   }
 
-  const handleFontSizeChange = (e) => {
-    const size = e.target.value
-    setFontSize(size)
-    setCustomFontSize('')
-    applyFontSize(size)
+  const handleFontSizeInputChange = (e) => {
+    const value = e.target.value
+    setFontSizeInput(value)
   }
 
-  const handleCustomFontSizeChange = (e) => {
-    const value = e.target.value
-    setCustomFontSize(value)
-    if (value && !isNaN(value) && value > 0) {
-      applyFontSize(value)
+  const handleFontSizeInputBlur = (e) => {
+    // Don't close if clicking on dropdown
+    if (e.relatedTarget && e.relatedTarget.closest('[data-font-size-container]')) {
+      return
+    }
+    
+    setShowFontSizeDropdown(false)
+    
+    // CRITICAL: Check if we have a saved selection before applying
+    if (!savedSelectionRef.current) {
+      // No saved selection - don't apply font size, just update the input value
+      const numValue = parseFloat(fontSizeInput)
+      if (fontSizeInput && !isNaN(numValue) && numValue > 0 && numValue <= 200) {
+        const sizeStr = String(Math.round(numValue))
+        setFontSize(sizeStr)
+        setFontSizeInput(sizeStr)
+      } else {
+        setFontSizeInput(fontSize)
+      }
+      return
+    }
+    
+    const numValue = parseFloat(fontSizeInput)
+    if (fontSizeInput && !isNaN(numValue) && numValue > 0 && numValue <= 200) {
+      const sizeStr = String(Math.round(numValue))
+      setFontSize(sizeStr)
+      setFontSizeInput(sizeStr)
+      applyFontSize(numValue)
+    } else {
+      // Reset to current fontSize if invalid
+      setFontSizeInput(fontSize)
     }
   }
 
-  const handleCustomFontSizeKeyPress = (e) => {
+  const handleFontSizeInputKeyPress = (e) => {
     if (e.key === 'Enter') {
       e.preventDefault()
-      if (customFontSize && !isNaN(customFontSize) && customFontSize > 0) {
-        setFontSize(customFontSize)
-        applyFontSize(customFontSize)
-      }
+      handleFontSizeInputBlur()
     }
+  }
+
+  const handleFontSizeSelect = (size) => {
+    setFontSize(size)
+    setFontSizeInput(size)
+    setShowFontSizeDropdown(false)
+    
+    // CRITICAL: Only apply if we have a saved selection
+    if (!savedSelectionRef.current) {
+      // No saved selection - don't apply font size
+      return
+    }
+    
+    // Small delay to ensure dropdown closes before applying
+    setTimeout(() => {
+      applyFontSize(parseFloat(size))
+    }, 10)
   }
 
   const handleFontFamilyChange = (e) => {
     const family = e.target.value
     setFontFamily(family)
-    document.execCommand('fontName', false, family)
-    editorRef.current?.focus()
+    applyFontFamily(family)
   }
 
   const handleTextColorChange = (e) => {
@@ -140,7 +423,45 @@ function ScopeOfWorkEditor({ value, onChange }) {
       const url = linkUrl.trim()
       // Ensure URL has protocol
       const finalUrl = url.startsWith('http://') || url.startsWith('https://') ? url : `https://${url}`
-      document.execCommand('createLink', false, finalUrl)
+      
+      const selection = window.getSelection()
+      if (selection.rangeCount > 0 && editorRef.current) {
+        const range = selection.getRangeAt(0)
+        
+        // If no selection, try to use the word at cursor
+        if (selection.isCollapsed) {
+          expandToWord(range)
+        }
+        
+        if (!range.collapsed) {
+          // Check if selection is already a link
+          const linkElement = range.commonAncestorContainer.nodeType === 1 
+            ? range.commonAncestorContainer.closest('a')
+            : range.commonAncestorContainer.parentElement?.closest('a')
+          
+          if (linkElement) {
+            linkElement.href = finalUrl
+          } else {
+            // Save selection before execCommand
+            selection.removeAllRanges()
+            selection.addRange(range)
+            document.execCommand('createLink', false, finalUrl)
+          }
+        } else {
+          // Insert link text if no selection
+          const link = document.createElement('a')
+          link.href = finalUrl
+          link.textContent = finalUrl
+          link.target = '_blank'
+          link.rel = 'noopener noreferrer'
+          range.insertNode(link)
+          // Move cursor after the link
+          range.setStartAfter(link)
+          range.collapse(true)
+          selection.removeAllRanges()
+          selection.addRange(range)
+        }
+      }
     }
     setShowLinkModal(false)
     setLinkUrl('')
@@ -155,14 +476,38 @@ function ScopeOfWorkEditor({ value, onChange }) {
 
   const handleListStyleChange = (listType, style) => {
     const selection = window.getSelection()
-    if (selection.rangeCount > 0) {
+    if (selection.rangeCount > 0 && editorRef.current) {
       const range = selection.getRangeAt(0)
-      const listElement = range.commonAncestorContainer.nodeType === 1 
-        ? range.commonAncestorContainer.closest('ul, ol')
-        : range.commonAncestorContainer.parentElement?.closest('ul, ol')
+      let listElement = null
+      
+      // Find the list element
+      if (range.commonAncestorContainer.nodeType === 1) {
+        listElement = range.commonAncestorContainer.closest('ul, ol')
+      } else {
+        listElement = range.commonAncestorContainer.parentElement?.closest('ul, ol')
+      }
       
       if (listElement) {
-        listElement.style.listStyleType = style
+        // If we're switching list types, convert the list
+        const currentType = listElement.tagName.toLowerCase()
+        if ((listType === 'ul' && currentType === 'ol') || (listType === 'ol' && currentType === 'ul')) {
+          // Convert list type
+          const newList = document.createElement(listType === 'ul' ? 'ul' : 'ol')
+          newList.style.setProperty('list-style-type', style, 'important')
+          
+          // Copy all list items
+          while (listElement.firstChild) {
+            newList.appendChild(listElement.firstChild)
+          }
+          
+          // Replace old list with new list
+          listElement.parentNode?.replaceChild(newList, listElement)
+          listElement = newList
+        } else {
+          // Just change the style - use setProperty with important
+          listElement.style.setProperty('list-style-type', style, 'important')
+          listElement.setAttribute('data-list-style', style)
+        }
       } else {
         // Create new list with style
         if (listType === 'ul') {
@@ -170,17 +515,19 @@ function ScopeOfWorkEditor({ value, onChange }) {
           setTimeout(() => {
             const newList = editorRef.current?.querySelector('ul:last-of-type')
             if (newList) {
-              newList.style.listStyleType = style
+              newList.style.setProperty('list-style-type', style, 'important')
+              newList.setAttribute('data-list-style', style)
             }
-          }, 10)
+          }, 50)
         } else {
           document.execCommand('insertOrderedList', false, null)
           setTimeout(() => {
             const newList = editorRef.current?.querySelector('ol:last-of-type')
             if (newList) {
-              newList.style.listStyleType = style
+              newList.style.setProperty('list-style-type', style, 'important')
+              newList.setAttribute('data-list-style', style)
             }
-          }, 10)
+          }, 50)
         }
       }
     }
@@ -190,16 +537,28 @@ function ScopeOfWorkEditor({ value, onChange }) {
   return (
     <div style={{ border: '1px solid var(--border)', borderRadius: '6px', background: 'var(--input)', width: '100%', minWidth: '100%' }}>
       {/* Toolbar - Row 1: Undo/Redo and Format */}
-      <div style={{ 
-        display: 'flex', 
-        gap: '4px', 
-        padding: '8px', 
-        borderBottom: '1px solid var(--border)',
-        background: 'var(--bg)',
-        flexWrap: 'wrap',
-        alignItems: 'center',
-        width: '100%'
-      }}>
+      <div 
+        style={{ 
+          display: 'flex', 
+          gap: '4px', 
+          padding: '8px', 
+          borderBottom: '1px solid var(--border)',
+          background: 'var(--bg)',
+          flexWrap: 'wrap',
+          alignItems: 'center',
+          width: '100%',
+          minHeight: '36px',
+          boxSizing: 'border-box'
+        }}
+        onMouseEnter={() => {
+          // CRITICAL: Save selection when mouse enters toolbar area
+          saveSelection()
+        }}
+        onMouseDown={(e) => {
+          // CRITICAL: Save selection on any mouse down in toolbar BEFORE focus is lost
+          saveSelection()
+        }}
+      >
         {/* Undo/Redo */}
         <button type="button" onClick={handleUndo} style={{ padding: '4px 8px', border: '1px solid var(--border)', borderRadius: '4px', background: 'var(--input)', cursor: 'pointer' }} title="Undo">
           ↶
@@ -238,48 +597,107 @@ function ScopeOfWorkEditor({ value, onChange }) {
           <option value="Comic Sans MS">Comic Sans MS</option>
         </select>
         
-        {/* Font Size */}
-        <select 
-          value={fontSize}
-          onChange={handleFontSizeChange}
-          style={{ padding: '4px 6px', border: '1px solid var(--border)', borderRadius: '4px', background: 'var(--input)', cursor: 'pointer', fontSize: '12px', width: '60px' }}
-          title="Font Size"
-        >
-          <option value="8">8</option>
-          <option value="9">9</option>
-          <option value="10">10</option>
-          <option value="11">11</option>
-          <option value="12">12</option>
-          <option value="14">14</option>
-          <option value="16">16</option>
-          <option value="18">18</option>
-          <option value="20">20</option>
-          <option value="24">24</option>
-          <option value="28">28</option>
-          <option value="32">32</option>
-          <option value="36">36</option>
-          <option value="48">48</option>
-          <option value="72">72</option>
-        </select>
-        <input
-          type="number"
-          value={customFontSize}
-          onChange={handleCustomFontSizeChange}
-          onKeyPress={handleCustomFontSizeKeyPress}
-          placeholder="Custom"
-          min="1"
-          max="200"
-          style={{ 
-            padding: '4px 6px', 
-            border: '1px solid var(--border)', 
-            borderRadius: '4px', 
-            background: 'var(--input)', 
-            fontSize: '12px', 
-            width: '60px',
-            marginLeft: '4px'
+        {/* Font Size - Editable Input with Dropdown */}
+        <div 
+          style={{ position: 'relative', display: 'inline-block' }} 
+          data-font-size-container
+          onMouseEnter={() => {
+            // Save selection when hovering over font size control
+            saveSelection()
           }}
-          title="Custom Font Size (press Enter to apply)"
-        />
+        >
+          <input
+            type="text"
+            value={fontSizeInput}
+            onChange={handleFontSizeInputChange}
+            onBlur={handleFontSizeInputBlur}
+            onKeyPress={handleFontSizeInputKeyPress}
+            onMouseDown={(e) => {
+              // Save selection BEFORE the input gets focus (which would lose editor selection)
+              // Use setTimeout to ensure this runs before focus change
+              e.preventDefault()
+              saveSelection()
+              // Allow focus after saving selection
+              setTimeout(() => {
+                e.target.focus()
+              }, 0)
+            }}
+            onFocus={() => {
+              // Also save on focus as backup
+              saveSelection()
+              setShowFontSizeDropdown(true)
+            }}
+            style={{ 
+              padding: '4px 6px', 
+              border: '1px solid var(--border)', 
+              borderRadius: '4px', 
+              background: 'var(--input)', 
+              fontSize: '12px', 
+              width: '60px',
+              boxSizing: 'border-box',
+              textAlign: 'center'
+            }}
+            title="Font Size (type custom value or click dropdown)"
+          />
+          {showFontSizeDropdown && (
+            <div
+              style={{
+                position: 'absolute',
+                top: '100%',
+                left: 0,
+                marginTop: '2px',
+                background: 'var(--input)',
+                border: '1px solid var(--border)',
+                borderRadius: '4px',
+                boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
+                zIndex: 1000,
+                maxHeight: '200px',
+                overflowY: 'auto',
+                minWidth: '60px'
+              }}
+              onMouseDown={(e) => e.preventDefault()}
+            >
+              {[8, 9, 10, 11, 12, 14, 16, 18, 20, 24, 28, 32, 36, 48, 72].map(size => (
+                <div
+                  key={size}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    // Ensure selection is saved before selecting from dropdown
+                    if (!savedSelectionRef.current) {
+                      saveSelection()
+                    }
+                    handleFontSizeSelect(String(size))
+                  }}
+                  onMouseDown={(e) => {
+                    e.preventDefault()
+                    e.stopPropagation()
+                    // Save selection when clicking dropdown item
+                    saveSelection()
+                  }}
+                  style={{
+                    padding: '4px 8px',
+                    cursor: 'pointer',
+                    fontSize: '12px',
+                    backgroundColor: fontSize === String(size) ? 'var(--primary)' : 'transparent',
+                    color: fontSize === String(size) ? 'white' : 'var(--text)'
+                  }}
+                  onMouseEnter={(e) => {
+                    if (fontSize !== String(size)) {
+                      e.target.style.backgroundColor = 'var(--bg)'
+                    }
+                  }}
+                  onMouseLeave={(e) => {
+                    if (fontSize !== String(size)) {
+                      e.target.style.backgroundColor = 'transparent'
+                    }
+                  }}
+                >
+                  {size}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
         
         <div style={{ width: '1px', height: '20px', background: 'var(--border)', margin: '0 4px' }} />
         
@@ -346,11 +764,14 @@ function ScopeOfWorkEditor({ value, onChange }) {
         
         {/* Bullet List with Styles */}
         <div style={{ position: 'relative', display: 'inline-block' }}>
-          <button type="button" onClick={() => handleListStyleChange('ul', 'disc')} style={{ padding: '4px 8px', border: '1px solid var(--border)', borderRadius: '4px', background: 'var(--input)', cursor: 'pointer' }} title="Bullet List">
+          <button type="button" onClick={() => handleListStyleChange('ul', 'disc')} style={{ padding: '4px 8px', border: '1px solid var(--border)', borderRadius: '4px', background: 'var(--input)', cursor: 'pointer', pointerEvents: 'none' }} title="Bullet List">
             •
           </button>
           <select 
-            onChange={(e) => handleListStyleChange('ul', e.target.value)}
+            onChange={(e) => {
+              e.stopPropagation()
+              handleListStyleChange('ul', e.target.value)
+            }}
             style={{ 
               position: 'absolute', 
               left: 0, 
@@ -359,7 +780,8 @@ function ScopeOfWorkEditor({ value, onChange }) {
               height: '100%', 
               opacity: 0, 
               cursor: 'pointer',
-              fontSize: '12px'
+              fontSize: '12px',
+              zIndex: 10
             }}
             title="Bullet List Style"
             onClick={(e) => e.stopPropagation()}
@@ -373,11 +795,14 @@ function ScopeOfWorkEditor({ value, onChange }) {
         
         {/* Numbered List with Styles */}
         <div style={{ position: 'relative', display: 'inline-block' }}>
-          <button type="button" onClick={() => handleListStyleChange('ol', 'decimal')} style={{ padding: '4px 8px', border: '1px solid var(--border)', borderRadius: '4px', background: 'var(--input)', cursor: 'pointer' }} title="Numbered List">
+          <button type="button" onClick={() => handleListStyleChange('ol', 'decimal')} style={{ padding: '4px 8px', border: '1px solid var(--border)', borderRadius: '4px', background: 'var(--input)', cursor: 'pointer', pointerEvents: 'none' }} title="Numbered List">
             1.
           </button>
           <select 
-            onChange={(e) => handleListStyleChange('ol', e.target.value)}
+            onChange={(e) => {
+              e.stopPropagation()
+              handleListStyleChange('ol', e.target.value)
+            }}
             style={{ 
               position: 'absolute', 
               left: 0, 
@@ -386,7 +811,8 @@ function ScopeOfWorkEditor({ value, onChange }) {
               height: '100%', 
               opacity: 0, 
               cursor: 'pointer',
-              fontSize: '12px'
+              fontSize: '12px',
+              zIndex: 10
             }}
             title="Numbered List Style"
             onClick={(e) => e.stopPropagation()}
@@ -431,8 +857,13 @@ function ScopeOfWorkEditor({ value, onChange }) {
         contentEditable
         onInput={handleInput}
         onPaste={handlePaste}
-        onFocus={() => setIsFocused(true)}
-        onBlur={() => setIsFocused(false)}
+        onFocus={() => {
+          setIsFocused(true)
+          saveSelection()
+        }}
+        onBlur={() => {
+          setIsFocused(false)
+        }}
         style={{
           minHeight: '200px',
           padding: '12px 12px 12px 24px',
@@ -459,12 +890,6 @@ function ScopeOfWorkEditor({ value, onChange }) {
         [contenteditable="true"] li {
           margin-bottom: 4px !important;
           padding-left: 8px !important;
-        }
-        [contenteditable="true"] ul {
-          list-style-type: disc !important;
-        }
-        [contenteditable="true"] ol {
-          list-style-type: decimal !important;
         }
         [contenteditable="true"] img {
           max-width: 100%;
@@ -590,16 +1015,10 @@ function QuotationFormPage() {
     projectTitle: '',
     introductionText: '',
     scopeOfWork: '',
-    priceSchedule: {
-      items: [{ description: '', quantity: 0, unit: '', unitRate: 0, totalAmount: 0 }],
-      subTotal: 0,
-      grandTotal: 0,
-      currency: 'AED',
-      taxDetails: { vatRate: 5, vatAmount: 0 }
-    },
+    priceSchedule: '',
     ourViewpoints: '',
-    exclusions: [''],
-    paymentTerms: [{ milestoneDescription: '', amountPercent: '' }],
+    exclusions: '',
+    paymentTerms: '',
     deliveryCompletionWarrantyValidity: {
       deliveryTimeline: '',
       warrantyPeriod: '',
@@ -649,16 +1068,28 @@ function QuotationFormPage() {
               ? editing.scopeOfWork.map(item => item.description || '').join('<br>') 
               : editing.scopeOfWork)
           : '',
-        priceSchedule: editing.priceSchedule || {
-          items: [{ description: '', quantity: 0, unit: '', unitRate: 0, totalAmount: 0 }],
-          subTotal: 0,
-          grandTotal: 0,
-          currency: 'AED',
-          taxDetails: { vatRate: 5, vatAmount: 0 }
-        },
+        priceSchedule: editing.priceSchedule 
+          ? (typeof editing.priceSchedule === 'string' 
+              ? editing.priceSchedule 
+              : (editing.priceSchedule.items && editing.priceSchedule.items.length > 0
+                  ? editing.priceSchedule.items.map(item => 
+                      `${item.description || ''}${item.quantity ? ` - Qty: ${item.quantity}` : ''}${item.unit ? ` ${item.unit}` : ''}${item.unitRate ? ` @ ${item.unitRate}` : ''}${item.totalAmount ? ` = ${item.totalAmount}` : ''}`
+                    ).join('<br>')
+                  : ''))
+          : '',
         ourViewpoints: editing.ourViewpoints || '',
-        exclusions: editing.exclusions?.length ? editing.exclusions : [''],
-        paymentTerms: editing.paymentTerms?.length ? editing.paymentTerms : [{ milestoneDescription: '', amountPercent: '' }],
+        exclusions: editing.exclusions 
+          ? (Array.isArray(editing.exclusions) && editing.exclusions.length > 0
+              ? editing.exclusions.join('<br>')
+              : (typeof editing.exclusions === 'string' ? editing.exclusions : ''))
+          : '',
+        paymentTerms: editing.paymentTerms 
+          ? (Array.isArray(editing.paymentTerms) && editing.paymentTerms.length > 0
+              ? editing.paymentTerms.map(term => 
+                  `${term.milestoneDescription || ''}${term.amountPercent ? ` - ${term.amountPercent}%` : ''}`
+                ).join('<br>')
+              : (typeof editing.paymentTerms === 'string' ? editing.paymentTerms : ''))
+          : '',
         deliveryCompletionWarrantyValidity: editing.deliveryCompletionWarrantyValidity || {
           deliveryTimeline: '',
           warrantyPeriod: '',
@@ -680,16 +1111,10 @@ function QuotationFormPage() {
         projectTitle: '',
         introductionText: '',
         scopeOfWork: '',
-        priceSchedule: {
-          items: [{ description: '', quantity: 0, unit: '', unitRate: 0, totalAmount: 0 }],
-          subTotal: 0,
-          grandTotal: 0,
-          currency: 'AED',
-          taxDetails: { vatRate: 5, vatAmount: 0 }
-        },
+        priceSchedule: '',
         ourViewpoints: '',
-        exclusions: [''],
-        paymentTerms: [{ milestoneDescription: '', amountPercent: '' }],
+        exclusions: '',
+        paymentTerms: '',
         deliveryCompletionWarrantyValidity: {
           deliveryTimeline: '',
           warrantyPeriod: '',
@@ -721,26 +1146,53 @@ function QuotationFormPage() {
     }
   }, [leadId, leads, currentUser, editing])
 
-  const recalcTotals = (items, vatRate) => {
-    const sub = items.reduce((sum, it) => sum + (Number(it.quantity || 0) * Number(it.unitRate || 0)), 0)
-    const vat = sub * (Number(vatRate || 0) / 100)
-    const grand = sub + vat
-    return { subTotal: Number(sub.toFixed(2)), vatAmount: Number(vat.toFixed(2)), grandTotal: Number(grand.toFixed(2)) }
-  }
-
   const handleSave = async (e) => {
     e.preventDefault()
     setIsSaving(true)
     try {
       const payload = { ...form }
-      const totals = recalcTotals(payload.priceSchedule.items, payload.priceSchedule.taxDetails.vatRate)
-      payload.priceSchedule.subTotal = totals.subTotal
-      payload.priceSchedule.taxDetails.vatAmount = totals.vatAmount
-      payload.priceSchedule.grandTotal = totals.grandTotal
       
       // Convert scopeOfWork string to array format for backend compatibility
       if (typeof payload.scopeOfWork === 'string') {
         payload.scopeOfWork = payload.scopeOfWork ? [{ description: payload.scopeOfWork, quantity: '', unit: '', locationRemarks: '' }] : []
+      }
+      
+      // Convert priceSchedule string to object format for backend compatibility
+      if (typeof payload.priceSchedule === 'string') {
+        payload.priceSchedule = payload.priceSchedule ? {
+          items: [{ description: payload.priceSchedule, quantity: 0, unit: '', unitRate: 0, totalAmount: 0 }],
+          subTotal: 0,
+          grandTotal: 0,
+          currency: 'AED',
+          taxDetails: { vatRate: 5, vatAmount: 0 }
+        } : {
+          items: [],
+          subTotal: 0,
+          grandTotal: 0,
+          currency: 'AED',
+          taxDetails: { vatRate: 5, vatAmount: 0 }
+        }
+      }
+      
+      // Convert exclusions string to array format for backend compatibility
+      if (typeof payload.exclusions === 'string') {
+        payload.exclusions = payload.exclusions 
+          ? payload.exclusions.split('<br>').filter(ex => ex.trim())
+          : []
+      }
+      
+      // Convert paymentTerms string to array format for backend compatibility
+      if (typeof payload.paymentTerms === 'string') {
+        payload.paymentTerms = payload.paymentTerms 
+          ? payload.paymentTerms.split('<br>').map(term => {
+              // Try to parse "Milestone - X%" format
+              const match = term.match(/^(.+?)(?:\s*-\s*(\d+(?:\.\d+)?)%)?$/)
+              return {
+                milestoneDescription: match ? match[1].trim() : term.trim(),
+                amountPercent: match && match[2] ? parseFloat(match[2]) : 0
+              }
+            }).filter(term => term.milestoneDescription)
+          : []
       }
       
       if (editing) {
@@ -766,24 +1218,6 @@ function QuotationFormPage() {
     }
   }
 
-  const onChangeItem = (idx, field, value) => {
-    const items = form.priceSchedule.items.map((it, i) => 
-      i === idx 
-        ? { ...it, [field]: value, totalAmount: Number((Number(field === 'quantity' ? value : it.quantity || 0) * Number(field === 'unitRate' ? value : it.unitRate || 0)).toFixed(2)) } 
-        : it
-    )
-    const totals = recalcTotals(items, form.priceSchedule.taxDetails.vatRate)
-    setForm({ 
-      ...form, 
-      priceSchedule: { 
-        ...form.priceSchedule, 
-        items, 
-        subTotal: totals.subTotal, 
-        grandTotal: totals.grandTotal, 
-        taxDetails: { ...form.priceSchedule.taxDetails, vatAmount: totals.vatAmount } 
-      } 
-    })
-  }
 
   const handleCancel = () => {
     if (location.pathname.includes('/quotations/')) {
@@ -927,132 +1361,12 @@ function QuotationFormPage() {
           </FormSection>
 
           <FormSection title="Price Schedule">
-            <FormRow>
-              <FormField label="Currency">
-                <input 
-                  type="text" 
-                  value={form.priceSchedule.currency} 
-                  onChange={e => setForm({ ...form, priceSchedule: { ...form.priceSchedule, currency: e.target.value } })} 
-                />
-              </FormField>
-              <FormField label="VAT %">
-                <input 
-                  type="number" 
-                  value={form.priceSchedule.taxDetails.vatRate} 
-                  onChange={e => {
-                    const totals = recalcTotals(form.priceSchedule.items, e.target.value)
-                    setForm({ 
-                      ...form, 
-                      priceSchedule: { 
-                        ...form.priceSchedule, 
-                        subTotal: totals.subTotal, 
-                        grandTotal: totals.grandTotal, 
-                        taxDetails: { ...form.priceSchedule.taxDetails, vatRate: e.target.value, vatAmount: totals.vatAmount } 
-                      } 
-                    })
-                  }} 
-                />
-              </FormField>
-            </FormRow>
-            {form.priceSchedule.items.map((it, i) => (
-              <div key={i} className="item-card">
-                <div className="item-header">
-                  <span>Item {i + 1}</span>
-                  <button 
-                    type="button" 
-                    className="cancel-btn" 
-                    onClick={() => {
-                      const items = form.priceSchedule.items.filter((_, idx) => idx !== i)
-                      const totals = recalcTotals(items, form.priceSchedule.taxDetails.vatRate)
-                      setForm({ 
-                        ...form, 
-                        priceSchedule: { 
-                          ...form.priceSchedule, 
-                          items, 
-                          subTotal: totals.subTotal, 
-                          grandTotal: totals.grandTotal, 
-                          taxDetails: { ...form.priceSchedule.taxDetails, vatAmount: totals.vatAmount } 
-                        } 
-                      })
-                    }}
-                  >
-                    Remove
-                  </button>
-                </div>
-                <FormRow>
-                  <FormField label="Description" className="flex-3">
-                    <input 
-                      type="text" 
-                      value={it.description} 
-                      onChange={e => onChangeItem(i, 'description', e.target.value)} 
-                    />
-                  </FormField>
-                  <FormField label="Qty" className="flex-1">
-                    <input 
-                      type="number" 
-                      value={it.quantity} 
-                      onChange={e => onChangeItem(i, 'quantity', e.target.value)} 
-                    />
-                  </FormField>
-                  <FormField label="Unit" className="flex-1">
-                    <input 
-                      type="text" 
-                      value={it.unit} 
-                      onChange={e => onChangeItem(i, 'unit', e.target.value)} 
-                    />
-                  </FormField>
-                  <FormField label="Unit Rate" className="flex-1">
-                    <input 
-                      type="number" 
-                      value={it.unitRate} 
-                      onChange={e => onChangeItem(i, 'unitRate', e.target.value)} 
-                    />
-                  </FormField>
-                  <FormField label="Amount" className="flex-1">
-                    <input 
-                      type="number" 
-                      value={Number(it.totalAmount || 0)} 
-                      readOnly 
-                    />
-                  </FormField>
-                </FormRow>
-              </div>
-            ))}
-            <div className="section-actions">
-              <button 
-                type="button" 
-                className="link-btn" 
-                onClick={() => setForm({ ...form, priceSchedule: { ...form.priceSchedule, items: [...form.priceSchedule.items, { description: '', quantity: 0, unit: '', unitRate: 0, totalAmount: 0 }] } })}
-              >
-                + Add Item
-              </button>
-            </div>
-
-            <div className="totals-card">
-              <FormRow>
-                <FormField label="Sub Total">
-                  <input 
-                    type="number" 
-                    readOnly 
-                    value={Number(form.priceSchedule.subTotal || 0)} 
-                  />
-                </FormField>
-                <FormField label="VAT Amount">
-                  <input 
-                    type="number" 
-                    readOnly 
-                    value={Number(form.priceSchedule.taxDetails.vatAmount || 0)} 
-                  />
-                </FormField>
-                <FormField label="Grand Total">
-                  <input 
-                    type="number" 
-                    readOnly 
-                    value={Number(form.priceSchedule.grandTotal || 0)} 
-                  />
-                </FormField>
-              </FormRow>
-            </div>
+            <FormField label="Price Schedule">
+              <ScopeOfWorkEditor
+                value={form.priceSchedule || ''}
+                onChange={(html) => setForm({ ...form, priceSchedule: html })}
+              />
+            </FormField>
           </FormSection>
 
           <FormSection title="Our Viewpoints / Special Terms">
@@ -1065,78 +1379,21 @@ function QuotationFormPage() {
           </FormSection>
 
           <FormSection title="Exclusions">
-            {form.exclusions.map((ex, i) => (
-              <div key={i} className="item-card">
-                <div className="item-header">
-                  <span>Item {i + 1}</span>
-                  <button 
-                    type="button" 
-                    className="cancel-btn" 
-                    onClick={() => setForm({ ...form, exclusions: form.exclusions.filter((_, idx) => idx !== i) })}
-                  >
-                    Remove
-                  </button>
-                </div>
-                <FormField>
-                  <input 
-                    type="text" 
-                    value={ex} 
-                    onChange={e => setForm({ ...form, exclusions: form.exclusions.map((x, idx) => idx === i ? e.target.value : x) })} 
-                  />
-                </FormField>
-              </div>
-            ))}
-            <div className="section-actions">
-              <button 
-                type="button" 
-                className="link-btn" 
-                onClick={() => setForm({ ...form, exclusions: [...form.exclusions, ''] })}
-              >
-                + Add Exclusion
-              </button>
-            </div>
+            <FormField label="Exclusions">
+              <ScopeOfWorkEditor
+                value={form.exclusions || ''}
+                onChange={(html) => setForm({ ...form, exclusions: html })}
+              />
+            </FormField>
           </FormSection>
 
           <FormSection title="Payment Terms">
-            {form.paymentTerms.map((p, i) => (
-              <div key={i} className="item-card">
-                <div className="item-header">
-                  <span>Term {i + 1}</span>
-                  <button 
-                    type="button" 
-                    className="cancel-btn" 
-                    onClick={() => setForm({ ...form, paymentTerms: form.paymentTerms.filter((_, idx) => idx !== i) })}
-                  >
-                    Remove
-                  </button>
-                </div>
-                <FormRow>
-                  <FormField label="Milestone" className="flex-3">
-                    <input 
-                      type="text" 
-                      value={p.milestoneDescription} 
-                      onChange={e => setForm({ ...form, paymentTerms: form.paymentTerms.map((x, idx) => idx === i ? { ...x, milestoneDescription: e.target.value } : x) })} 
-                    />
-                  </FormField>
-                  <FormField label="Amount %" className="flex-1">
-                    <input 
-                      type="number" 
-                      value={p.amountPercent} 
-                      onChange={e => setForm({ ...form, paymentTerms: form.paymentTerms.map((x, idx) => idx === i ? { ...x, amountPercent: e.target.value } : x) })} 
-                    />
-                  </FormField>
-                </FormRow>
-              </div>
-            ))}
-            <div className="section-actions">
-              <button 
-                type="button" 
-                className="link-btn" 
-                onClick={() => setForm({ ...form, paymentTerms: [...form.paymentTerms, { milestoneDescription: '', amountPercent: '' }] })}
-              >
-                + Add Payment Term
-              </button>
-            </div>
+            <FormField label="Payment Terms">
+              <ScopeOfWorkEditor
+                value={form.paymentTerms || ''}
+                onChange={(html) => setForm({ ...form, paymentTerms: html })}
+              />
+            </FormField>
           </FormSection>
 
           <FormSection title="Delivery, Completion, Warranty & Validity">
