@@ -6,26 +6,856 @@ import '../design-system/Modal.css'
 import logo from '../assets/logo/WBES_Logo.png'
 
 // Google Docs-style Rich Text Editor using contentEditable (compatible with React 19)
-// Note: This is a simplified version - full implementation copied from RevisionDetail.jsx
-// For the complete component, see RevisionDetail.jsx lines 10-862
 function ScopeOfWorkEditor({ value, onChange }) {
-  // This is a placeholder - the full implementation should be copied from RevisionDetail.jsx
-  // Due to size constraints, please refer to RevisionDetail.jsx for the complete component
+  const editorRef = useRef(null)
+  const savedSelectionRef = useRef(null)
+  const [isFocused, setIsFocused] = useState(false)
+  const [fontSize, setFontSize] = useState('14')
+  const [fontSizeInput, setFontSizeInput] = useState('14')
+  const [showFontSizeDropdown, setShowFontSizeDropdown] = useState(false)
+  const [fontFamily, setFontFamily] = useState('Arial')
+  const [textColor, setTextColor] = useState('#000000')
+  const [highlightColor, setHighlightColor] = useState('#ffff00')
+  const [showLinkModal, setShowLinkModal] = useState(false)
+  const [linkUrl, setLinkUrl] = useState('')
+
+  useEffect(() => {
+    if (editorRef.current) {
+      const currentHtml = editorRef.current.innerHTML
+      const newValue = value || ''
+      if (currentHtml !== newValue) {
+        editorRef.current.innerHTML = newValue
+      }
+    }
+  }, [value])
+
+  useEffect(() => {
+    if (!showFontSizeDropdown) return
+    const handleClickOutside = (e) => {
+      if (!e.target.closest('[data-font-size-container]')) {
+        setShowFontSizeDropdown(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [showFontSizeDropdown])
+
+  const handleInput = (e) => {
+    const html = e.target.innerHTML
+    onChange(html)
+    setTimeout(() => saveSelection(), 0)
+  }
+  
+  useEffect(() => {
+    if (!isFocused || !editorRef.current) return
+    const handleMouseUp = (e) => {
+      if (editorRef.current?.contains(e.target)) {
+        setTimeout(() => saveSelection(), 0)
+      }
+    }
+    const handleSelectionChange = () => {
+      const selection = window.getSelection()
+      if (selection.rangeCount > 0) {
+        const range = selection.getRangeAt(0)
+        if (editorRef.current?.contains(range.anchorNode)) {
+          saveSelection()
+        }
+      }
+    }
+    editorRef.current.addEventListener('mouseup', handleMouseUp)
+    document.addEventListener('selectionchange', handleSelectionChange)
+    return () => {
+      if (editorRef.current) {
+        editorRef.current.removeEventListener('mouseup', handleMouseUp)
+      }
+      document.removeEventListener('selectionchange', handleSelectionChange)
+    }
+  }, [isFocused])
+
+  const handlePaste = (e) => {
+    e.preventDefault()
+    const text = e.clipboardData.getData('text/plain')
+    document.execCommand('insertText', false, text)
+  }
+
+  const execCommand = (command, value = null) => {
+    document.execCommand(command, false, value)
+    editorRef.current?.focus()
+  }
+
+  const handleUndo = () => {
+    document.execCommand('undo', false, null)
+    editorRef.current?.focus()
+  }
+
+  const handleRedo = () => {
+    document.execCommand('redo', false, null)
+    editorRef.current?.focus()
+  }
+
+  const expandToWord = (range) => {
+    try {
+      if (range.expand) {
+        range.expand('word')
+      }
+    } catch (e) {
+      const textNode = range.startContainer
+      if (textNode && textNode.nodeType === 3) {
+        const text = textNode.textContent
+        const start = range.startOffset
+        let wordStart = start
+        let wordEnd = start
+        while (wordStart > 0 && /\S/.test(text[wordStart - 1])) {
+          wordStart--
+        }
+        while (wordEnd < text.length && /\S/.test(text[wordEnd])) {
+          wordEnd++
+        }
+        if (wordStart < wordEnd) {
+          range.setStart(textNode, wordStart)
+          range.setEnd(textNode, wordEnd)
+        }
+      }
+    }
+  }
+
+  const saveSelection = () => {
+    const selection = window.getSelection()
+    if (selection.rangeCount > 0) {
+      const range = selection.getRangeAt(0)
+      if (editorRef.current && 
+          (editorRef.current.contains(range.anchorNode) || editorRef.current.contains(range.focusNode))) {
+        if (!range.collapsed) {
+          savedSelectionRef.current = range.cloneRange()
+        } else {
+          savedSelectionRef.current = null
+        }
+      }
+    }
+  }
+
+  const applyFontSize = (size) => {
+    if (!savedSelectionRef.current) {
+      if (editorRef.current) {
+        editorRef.current.focus()
+      }
+      return
+    }
+    
+    const savedRange = savedSelectionRef.current
+    
+    if (!editorRef.current || 
+        !editorRef.current.contains(savedRange.startContainer) || 
+        !editorRef.current.contains(savedRange.endContainer)) {
+      savedSelectionRef.current = null
+      if (editorRef.current) {
+        editorRef.current.focus()
+      }
+      return
+    }
+    
+    const range = savedRange.cloneRange()
+    
+    if (range.collapsed) {
+      if (editorRef.current) {
+        editorRef.current.focus()
+      }
+      return
+    }
+    
+    const selection = window.getSelection()
+    selection.removeAllRanges()
+    try {
+      selection.addRange(range.cloneRange())
+    } catch (e) {
+      return
+    }
+    
+    if (!editorRef.current?.contains(range.commonAncestorContainer)) {
+      editorRef.current?.focus()
+      return
+    }
+    
+    const startContainer = range.startContainer
+    const endContainer = range.endContainer
+    const startOffset = range.startOffset
+    const endOffset = range.endOffset
+    
+    if (startContainer === endContainer && startContainer.nodeType === 3) {
+      const textNode = startContainer
+      const text = textNode.textContent
+      const beforeText = text.substring(0, startOffset)
+      const selectedText = text.substring(startOffset, endOffset)
+      const afterText = text.substring(endOffset)
+      
+      const beforeNode = document.createTextNode(beforeText)
+      const span = document.createElement('span')
+      span.style.fontSize = `${size}px`
+      span.textContent = selectedText
+      const afterNode = document.createTextNode(afterText)
+      
+      const parent = textNode.parentNode
+      if (beforeNode.textContent) {
+        parent.insertBefore(beforeNode, textNode)
+      }
+      parent.insertBefore(span, textNode)
+      if (afterNode.textContent) {
+        parent.insertBefore(afterNode, textNode)
+      }
+      parent.removeChild(textNode)
+    } else {
+      const workRange = range.cloneRange()
+      const wrapper = document.createElement('span')
+      wrapper.style.fontSize = `${size}px`
+      const contents = workRange.extractContents()
+      if (contents.hasChildNodes()) {
+        while (contents.firstChild) {
+          wrapper.appendChild(contents.firstChild)
+        }
+      } else if (contents.nodeType === 3) {
+        wrapper.appendChild(contents)
+      }
+      if (wrapper.textContent.trim() || wrapper.hasChildNodes()) {
+        range.insertNode(wrapper)
+      }
+    }
+    
+    savedSelectionRef.current = null
+    
+    if (editorRef.current) {
+      onChange(editorRef.current.innerHTML)
+    }
+    
+    editorRef.current?.focus()
+  }
+
+  const applyFontFamily = (family) => {
+    const selection = window.getSelection()
+    if (selection.rangeCount > 0) {
+      const range = selection.getRangeAt(0)
+      if (selection.isCollapsed) {
+        expandToWord(range)
+      }
+      if (!range.collapsed) {
+        const span = document.createElement('span')
+        span.style.fontFamily = family
+        try {
+          range.surroundContents(span)
+        } catch (e) {
+          const contents = range.extractContents()
+          span.appendChild(contents)
+          range.insertNode(span)
+        }
+      }
+    }
+    editorRef.current?.focus()
+  }
+
+  const handleFontSizeInputChange = (e) => {
+    const value = e.target.value
+    setFontSizeInput(value)
+  }
+
+  const handleFontSizeInputBlur = (e) => {
+    if (e.relatedTarget && e.relatedTarget.closest('[data-font-size-container]')) {
+      return
+    }
+    
+    setShowFontSizeDropdown(false)
+    
+    if (!savedSelectionRef.current) {
+      const numValue = parseFloat(fontSizeInput)
+      if (fontSizeInput && !isNaN(numValue) && numValue > 0 && numValue <= 200) {
+        const sizeStr = String(Math.round(numValue))
+        setFontSize(sizeStr)
+        setFontSizeInput(sizeStr)
+      } else {
+        setFontSizeInput(fontSize)
+      }
+      return
+    }
+    
+    const numValue = parseFloat(fontSizeInput)
+    if (fontSizeInput && !isNaN(numValue) && numValue > 0 && numValue <= 200) {
+      const sizeStr = String(Math.round(numValue))
+      setFontSize(sizeStr)
+      setFontSizeInput(sizeStr)
+      applyFontSize(numValue)
+    } else {
+      setFontSizeInput(fontSize)
+    }
+  }
+
+  const handleFontSizeInputKeyPress = (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      handleFontSizeInputBlur()
+    }
+  }
+
+  const handleFontSizeSelect = (size) => {
+    setFontSize(size)
+    setFontSizeInput(size)
+    setShowFontSizeDropdown(false)
+    
+    if (!savedSelectionRef.current) {
+      return
+    }
+    
+    setTimeout(() => {
+      applyFontSize(parseFloat(size))
+    }, 10)
+  }
+
+  const handleFontFamilyChange = (e) => {
+    const family = e.target.value
+    setFontFamily(family)
+    applyFontFamily(family)
+  }
+
+  const handleTextColorChange = (e) => {
+    const color = e.target.value
+    setTextColor(color)
+    document.execCommand('foreColor', false, color)
+    editorRef.current?.focus()
+  }
+
+  const handleHighlightColorChange = (e) => {
+    const color = e.target.value
+    setHighlightColor(color)
+    document.execCommand('backColor', false, color)
+    editorRef.current?.focus()
+  }
+
+  const handleFormatBlock = (e) => {
+    const format = e.target.value
+    if (format === 'p') {
+      document.execCommand('formatBlock', false, '<p>')
+    } else {
+      document.execCommand('formatBlock', false, `<${format}>`)
+    }
+    editorRef.current?.focus()
+  }
+
+  const handleInsertLink = () => {
+    setShowLinkModal(true)
+    setLinkUrl('')
+  }
+
+  const handleLinkModalSave = () => {
+    if (linkUrl && linkUrl.trim()) {
+      const url = linkUrl.trim()
+      const finalUrl = url.startsWith('http://') || url.startsWith('https://') ? url : `https://${url}`
+      
+      const selection = window.getSelection()
+      if (selection.rangeCount > 0 && editorRef.current) {
+        const range = selection.getRangeAt(0)
+        if (selection.isCollapsed) {
+          expandToWord(range)
+        }
+        if (!range.collapsed) {
+          const linkElement = range.commonAncestorContainer.nodeType === 1 
+            ? range.commonAncestorContainer.closest('a')
+            : range.commonAncestorContainer.parentElement?.closest('a')
+          
+          if (linkElement) {
+            linkElement.href = finalUrl
+          } else {
+            selection.removeAllRanges()
+            selection.addRange(range)
+            document.execCommand('createLink', false, finalUrl)
+          }
+        } else {
+          const link = document.createElement('a')
+          link.href = finalUrl
+          link.textContent = finalUrl
+          link.target = '_blank'
+          link.rel = 'noopener noreferrer'
+          range.insertNode(link)
+          range.setStartAfter(link)
+          range.collapse(true)
+          selection.removeAllRanges()
+          selection.addRange(range)
+        }
+      }
+    }
+    setShowLinkModal(false)
+    setLinkUrl('')
+    editorRef.current?.focus()
+  }
+
+  const handleLinkModalCancel = () => {
+    setShowLinkModal(false)
+    setLinkUrl('')
+    editorRef.current?.focus()
+  }
+
+  const handleListStyleChange = (listType, style) => {
+    const selection = window.getSelection()
+    if (selection.rangeCount > 0 && editorRef.current) {
+      const range = selection.getRangeAt(0)
+      let listElement = null
+      
+      if (range.commonAncestorContainer.nodeType === 1) {
+        listElement = range.commonAncestorContainer.closest('ul, ol')
+      } else {
+        listElement = range.commonAncestorContainer.parentElement?.closest('ul, ol')
+      }
+      
+      if (listElement) {
+        const currentType = listElement.tagName.toLowerCase()
+        if ((listType === 'ul' && currentType === 'ol') || (listType === 'ol' && currentType === 'ul')) {
+          const newList = document.createElement(listType === 'ul' ? 'ul' : 'ol')
+          newList.style.setProperty('list-style-type', style, 'important')
+          while (listElement.firstChild) {
+            newList.appendChild(listElement.firstChild)
+          }
+          listElement.parentNode?.replaceChild(newList, listElement)
+          listElement = newList
+        } else {
+          listElement.style.setProperty('list-style-type', style, 'important')
+          listElement.setAttribute('data-list-style', style)
+        }
+      } else {
+        if (listType === 'ul') {
+          document.execCommand('insertUnorderedList', false, null)
+          setTimeout(() => {
+            const newList = editorRef.current?.querySelector('ul:last-of-type')
+            if (newList) {
+              newList.style.setProperty('list-style-type', style, 'important')
+              newList.setAttribute('data-list-style', style)
+            }
+          }, 50)
+        } else {
+          document.execCommand('insertOrderedList', false, null)
+          setTimeout(() => {
+            const newList = editorRef.current?.querySelector('ol:last-of-type')
+            if (newList) {
+              newList.style.setProperty('list-style-type', style, 'important')
+              newList.setAttribute('data-list-style', style)
+            }
+          }, 50)
+        }
+      }
+    }
+    editorRef.current?.focus()
+  }
+
   return (
-    <div style={{ border: '1px solid var(--border)', borderRadius: '6px', background: 'var(--input)', width: '100%', minWidth: '100%', padding: '12px' }}>
-      <div
-        contentEditable
-        onInput={(e) => onChange(e.target.innerHTML)}
-        style={{
-          minHeight: '200px',
-          padding: '12px',
-          outline: 'none',
-          color: 'var(--text)',
+    <div style={{ border: '1px solid var(--border)', borderRadius: '6px', background: 'var(--input)', width: '100%', minWidth: '100%' }}>
+      <div 
+        style={{ 
+          display: 'flex', 
+          gap: '4px', 
+          padding: '8px', 
+          borderBottom: '1px solid var(--border)',
+          background: 'var(--bg)',
+          flexWrap: 'wrap',
+          alignItems: 'center',
           width: '100%',
+          minHeight: '36px',
           boxSizing: 'border-box'
         }}
-        dangerouslySetInnerHTML={{ __html: value || '' }}
+        onMouseEnter={() => saveSelection()}
+        onMouseDown={(e) => saveSelection()}
+      >
+        <button type="button" onClick={handleUndo} style={{ padding: '4px 8px', border: '1px solid var(--border)', borderRadius: '4px', background: 'var(--input)', cursor: 'pointer' }} title="Undo">
+          ↶
+        </button>
+        <button type="button" onClick={handleRedo} style={{ padding: '4px 8px', border: '1px solid var(--border)', borderRadius: '4px', background: 'var(--input)', cursor: 'pointer' }} title="Redo">
+          ↷
+        </button>
+        <div style={{ width: '1px', height: '20px', background: 'var(--border)', margin: '0 4px' }} />
+        
+        <select 
+          onChange={handleFormatBlock}
+          style={{ padding: '4px 6px', border: '1px solid var(--border)', borderRadius: '4px', background: 'var(--input)', cursor: 'pointer', fontSize: '12px', width: '120px', minWidth: '120px', maxWidth: '120px' }}
+          title="Format"
+        >
+          <option value="p">Normal text</option>
+          <option value="h1">Heading 1</option>
+          <option value="h2">Heading 2</option>
+          <option value="h3">Heading 3</option>
+          <option value="h4">Heading 4</option>
+        </select>
+        
+        <select 
+          value={fontFamily}
+          onChange={handleFontFamilyChange}
+          style={{ padding: '4px 6px', border: '1px solid var(--border)', borderRadius: '4px', background: 'var(--input)', cursor: 'pointer', fontSize: '12px', width: '140px', minWidth: '140px', maxWidth: '140px' }}
+          title="Font Family"
+        >
+          <option value="Arial">Arial</option>
+          <option value="Times New Roman">Times New Roman</option>
+          <option value="Courier New">Courier New</option>
+          <option value="Georgia">Georgia</option>
+          <option value="Verdana">Verdana</option>
+          <option value="Helvetica">Helvetica</option>
+          <option value="Comic Sans MS">Comic Sans MS</option>
+        </select>
+        
+        <div 
+          style={{ position: 'relative', display: 'inline-block' }} 
+          data-font-size-container
+          onMouseEnter={() => saveSelection()}
+        >
+          <input
+            type="text"
+            value={fontSizeInput}
+            onChange={handleFontSizeInputChange}
+            onBlur={handleFontSizeInputBlur}
+            onKeyPress={handleFontSizeInputKeyPress}
+            onMouseDown={(e) => {
+              e.preventDefault()
+              saveSelection()
+              setTimeout(() => {
+                e.target.focus()
+              }, 0)
+            }}
+            onFocus={() => {
+              saveSelection()
+              setShowFontSizeDropdown(true)
+            }}
+            style={{ 
+              padding: '4px 6px', 
+              border: '1px solid var(--border)', 
+              borderRadius: '4px', 
+              background: 'var(--input)', 
+              fontSize: '12px', 
+              width: '60px',
+              boxSizing: 'border-box',
+              textAlign: 'center'
+            }}
+            title="Font Size (type custom value or click dropdown)"
+          />
+          {showFontSizeDropdown && (
+            <div
+              style={{
+                position: 'absolute',
+                top: '100%',
+                left: 0,
+                marginTop: '2px',
+                background: 'var(--input)',
+                border: '1px solid var(--border)',
+                borderRadius: '4px',
+                boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
+                zIndex: 1000,
+                maxHeight: '200px',
+                overflowY: 'auto',
+                minWidth: '60px'
+              }}
+              onMouseDown={(e) => e.preventDefault()}
+            >
+              {[8, 9, 10, 11, 12, 14, 16, 18, 20, 24, 28, 32, 36, 48, 72].map(size => (
+                <div
+                  key={size}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    if (!savedSelectionRef.current) {
+                      saveSelection()
+                    }
+                    handleFontSizeSelect(String(size))
+                  }}
+                  onMouseDown={(e) => {
+                    e.preventDefault()
+                    e.stopPropagation()
+                    saveSelection()
+                  }}
+                  style={{
+                    padding: '4px 8px',
+                    cursor: 'pointer',
+                    fontSize: '12px',
+                    backgroundColor: fontSize === String(size) ? 'var(--primary)' : 'transparent',
+                    color: fontSize === String(size) ? 'white' : 'var(--text)'
+                  }}
+                  onMouseEnter={(e) => {
+                    if (fontSize !== String(size)) {
+                      e.target.style.backgroundColor = 'var(--bg)'
+                    }
+                  }}
+                  onMouseLeave={(e) => {
+                    if (fontSize !== String(size)) {
+                      e.target.style.backgroundColor = 'transparent'
+                    }
+                  }}
+                >
+                  {size}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+        
+        <div style={{ width: '1px', height: '20px', background: 'var(--border)', margin: '0 4px' }} />
+        
+        <button type="button" onClick={() => execCommand('bold')} style={{ padding: '4px 8px', border: '1px solid var(--border)', borderRadius: '4px', background: 'var(--input)', cursor: 'pointer', fontWeight: 'bold' }} title="Bold">
+          <strong>B</strong>
+        </button>
+        <button type="button" onClick={() => execCommand('italic')} style={{ padding: '4px 8px', border: '1px solid var(--border)', borderRadius: '4px', background: 'var(--input)', cursor: 'pointer', fontStyle: 'italic' }} title="Italic">
+          <em>I</em>
+        </button>
+        <button type="button" onClick={() => execCommand('underline')} style={{ padding: '4px 8px', border: '1px solid var(--border)', borderRadius: '4px', background: 'var(--input)', cursor: 'pointer', textDecoration: 'underline' }} title="Underline">
+          <u>U</u>
+        </button>
+        
+        <div style={{ position: 'relative', display: 'inline-block' }}>
+          <input
+            type="color"
+            value={textColor}
+            onChange={handleTextColorChange}
+            style={{ width: '32px', height: '28px', border: '1px solid var(--border)', borderRadius: '4px', cursor: 'pointer', padding: 0 }}
+            title="Text Color"
+          />
+        </div>
+        
+        <div style={{ position: 'relative', display: 'inline-block' }}>
+          <input
+            type="color"
+            value={highlightColor}
+            onChange={handleHighlightColorChange}
+            style={{ width: '32px', height: '28px', border: '1px solid var(--border)', borderRadius: '4px', cursor: 'pointer', padding: 0 }}
+            title="Highlight Color"
+          />
+        </div>
+      </div>
+      
+      <div style={{ 
+        display: 'flex', 
+        gap: '4px', 
+        padding: '8px', 
+        borderBottom: '1px solid var(--border)',
+        background: 'var(--bg)',
+        flexWrap: 'wrap',
+        alignItems: 'center',
+        width: '100%'
+      }}>
+        <button type="button" onClick={() => execCommand('justifyLeft')} style={{ padding: '4px 8px', border: '1px solid var(--border)', borderRadius: '4px', background: 'var(--input)', cursor: 'pointer' }} title="Align Left">
+          ⬅
+        </button>
+        <button type="button" onClick={() => execCommand('justifyCenter')} style={{ padding: '4px 8px', border: '1px solid var(--border)', borderRadius: '4px', background: 'var(--input)', cursor: 'pointer' }} title="Align Center">
+          ⬌
+        </button>
+        <button type="button" onClick={() => execCommand('justifyRight')} style={{ padding: '4px 8px', border: '1px solid var(--border)', borderRadius: '4px', background: 'var(--input)', cursor: 'pointer' }} title="Align Right">
+          ➡
+        </button>
+        <button type="button" onClick={() => execCommand('justifyFull')} style={{ padding: '4px 8px', border: '1px solid var(--border)', borderRadius: '4px', background: 'var(--input)', cursor: 'pointer' }} title="Justify">
+          ⬌⬌
+        </button>
+        
+        <div style={{ width: '1px', height: '20px', background: 'var(--border)', margin: '0 4px' }} />
+        
+        <div style={{ position: 'relative', display: 'inline-block' }}>
+          <button type="button" onClick={() => handleListStyleChange('ul', 'disc')} style={{ padding: '4px 8px', border: '1px solid var(--border)', borderRadius: '4px', background: 'var(--input)', cursor: 'pointer', pointerEvents: 'none' }} title="Bullet List">
+            •
+          </button>
+          <select 
+            onChange={(e) => {
+              e.stopPropagation()
+              handleListStyleChange('ul', e.target.value)
+            }}
+            style={{ 
+              position: 'absolute', 
+              left: 0, 
+              top: 0, 
+              width: '100%', 
+              height: '100%', 
+              opacity: 0, 
+              cursor: 'pointer',
+              fontSize: '12px',
+              zIndex: 10
+            }}
+            title="Bullet List Style"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <option value="disc">• Disc</option>
+            <option value="circle">○ Circle</option>
+            <option value="square">■ Square</option>
+            <option value="none">None</option>
+          </select>
+        </div>
+        
+        <div style={{ position: 'relative', display: 'inline-block' }}>
+          <button type="button" onClick={() => handleListStyleChange('ol', 'decimal')} style={{ padding: '4px 8px', border: '1px solid var(--border)', borderRadius: '4px', background: 'var(--input)', cursor: 'pointer', pointerEvents: 'none' }} title="Numbered List">
+            1.
+          </button>
+          <select 
+            onChange={(e) => {
+              e.stopPropagation()
+              handleListStyleChange('ol', e.target.value)
+            }}
+            style={{ 
+              position: 'absolute', 
+              left: 0, 
+              top: 0, 
+              width: '100%', 
+              height: '100%', 
+              opacity: 0, 
+              cursor: 'pointer',
+              fontSize: '12px',
+              zIndex: 10
+            }}
+            title="Numbered List Style"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <option value="decimal">1. Decimal</option>
+            <option value="decimal-leading-zero">01. Decimal Leading Zero</option>
+            <option value="lower-roman">i. Lower Roman</option>
+            <option value="upper-roman">I. Upper Roman</option>
+            <option value="lower-alpha">a. Lower Alpha</option>
+            <option value="upper-alpha">A. Upper Alpha</option>
+            <option value="lower-latin">a. Lower Latin</option>
+            <option value="upper-latin">A. Upper Latin</option>
+          </select>
+        </div>
+        
+        <button type="button" onClick={() => execCommand('outdent')} style={{ padding: '4px 8px', border: '1px solid var(--border)', borderRadius: '4px', background: 'var(--input)', cursor: 'pointer' }} title="Decrease Indent">
+          ⬅
+        </button>
+        <button type="button" onClick={() => execCommand('indent')} style={{ padding: '4px 8px', border: '1px solid var(--border)', borderRadius: '4px', background: 'var(--input)', cursor: 'pointer' }} title="Increase Indent">
+          ➡
+        </button>
+        
+        <div style={{ width: '1px', height: '20px', background: 'var(--border)', margin: '0 4px' }} />
+        
+        <button type="button" onClick={handleInsertLink} style={{ padding: '4px 8px', border: '1px solid var(--border)', borderRadius: '4px', background: 'var(--input)', cursor: 'pointer' }} title="Insert Link">
+          🔗
+        </button>
+        
+        <div style={{ width: '1px', height: '20px', background: 'var(--border)', margin: '0 4px' }} />
+        
+        <button type="button" onClick={() => execCommand('removeFormat')} style={{ padding: '4px 8px', border: '1px solid var(--border)', borderRadius: '4px', background: 'var(--input)', cursor: 'pointer' }} title="Clear Formatting">
+          Clear
+        </button>
+      </div>
+      
+      <div
+        ref={editorRef}
+        contentEditable
+        onInput={handleInput}
+        onPaste={handlePaste}
+        onFocus={() => {
+          setIsFocused(true)
+          saveSelection()
+        }}
+        onBlur={() => {
+          setIsFocused(false)
+        }}
+        style={{
+          minHeight: '200px',
+          padding: '12px 12px 12px 24px',
+          outline: isFocused ? '2px solid var(--primary)' : 'none',
+          outlineOffset: '-2px',
+          color: 'var(--text)',
+          fontFamily: fontFamily,
+          fontSize: `${fontSize}px`,
+          lineHeight: '1.5',
+          width: '100%',
+          boxSizing: 'border-box',
+          overflowX: 'auto'
+        }}
       />
+      <style>{`
+        [contenteditable="true"] ul,
+        [contenteditable="true"] ol {
+          padding-left: 32px !important;
+          margin-left: 0 !important;
+          margin-top: 8px !important;
+          margin-bottom: 8px !important;
+          list-style-position: outside !important;
+        }
+        [contenteditable="true"] li {
+          margin-bottom: 4px !important;
+          padding-left: 8px !important;
+        }
+        [contenteditable="true"] img {
+          max-width: 100%;
+          height: auto;
+          margin: 8px 0;
+        }
+        [contenteditable="true"] a {
+          color: var(--primary);
+          text-decoration: underline;
+        }
+        [contenteditable="true"] h1,
+        [contenteditable="true"] h2,
+        [contenteditable="true"] h3,
+        [contenteditable="true"] h4 {
+          margin-top: 12px;
+          margin-bottom: 8px;
+          font-weight: bold;
+        }
+        [contenteditable="true"] h1 { font-size: 2em; }
+        [contenteditable="true"] h2 { font-size: 1.5em; }
+        [contenteditable="true"] h3 { font-size: 1.17em; }
+        [contenteditable="true"] h4 { font-size: 1em; }
+      `}</style>
+      
+      <Modal
+        isOpen={showLinkModal}
+        onClose={handleLinkModalCancel}
+        title="Insert Link"
+        size="small"
+      >
+        <div style={{ padding: '20px' }}>
+          <div style={{ marginBottom: '16px' }}>
+            <label style={{ display: 'block', marginBottom: '8px', fontWeight: '500', fontSize: '14px' }}>
+              URL:
+            </label>
+            <input
+              type="text"
+              value={linkUrl}
+              onChange={(e) => setLinkUrl(e.target.value)}
+              placeholder="https://example.com"
+              style={{
+                width: '100%',
+                padding: '8px 12px',
+                border: '1px solid var(--border)',
+                borderRadius: '6px',
+                fontSize: '14px',
+                boxSizing: 'border-box'
+              }}
+              onKeyPress={(e) => {
+                if (e.key === 'Enter') {
+                  handleLinkModalSave()
+                }
+              }}
+              autoFocus
+            />
+          </div>
+          <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+            <button
+              type="button"
+              onClick={handleLinkModalCancel}
+              style={{
+                padding: '8px 16px',
+                border: '1px solid var(--border)',
+                borderRadius: '6px',
+                background: 'var(--input)',
+                cursor: 'pointer',
+                fontSize: '14px'
+              }}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={handleLinkModalSave}
+              style={{
+                padding: '8px 16px',
+                border: 'none',
+                borderRadius: '6px',
+                background: 'var(--primary)',
+                color: 'white',
+                cursor: 'pointer',
+                fontSize: '14px',
+                fontWeight: '500'
+              }}
+            >
+              Insert
+            </button>
+          </div>
+        </div>
+      </Modal>
     </div>
   )
 }
@@ -60,6 +890,8 @@ function RevisionManagement() {
   const [confirmDelete, setConfirmDelete] = useState({ open: false, revision: null })
   const [approvalsView, setApprovalsView] = useState(null)
   const [approvalModal, setApprovalModal] = useState({ open: false, revision: null, action: null, note: '' })
+  const [sendApprovalConfirmModal, setSendApprovalConfirmModal] = useState({ open: false, revision: null })
+  const [printPreviewModal, setPrintPreviewModal] = useState({ open: false, pdfUrl: null, revision: null })
   const [createProjectModal, setCreateProjectModal] = useState({ open: false, revision: null, form: { name: '', locationDetails: '', workingHours: '', manpowerCount: '', assignedProjectEngineerId: '' }, engineers: [], ack: false })
   const [viewMode, setViewMode] = useState(() => {
     const saved = localStorage.getItem('revisionViewMode')
@@ -158,6 +990,7 @@ function RevisionManagement() {
       const token = localStorage.getItem('token')
       await api.patch(`/api/revisions/${rev._id}/approve`, { status: 'pending' })
       await fetchRevisions()
+      setSendApprovalConfirmModal({ open: false, revision: null })
       setNotify({ open: true, title: 'Request Sent', message: 'Approval request has been sent successfully.' })
     } catch (e) {
       setNotify({ open: true, title: 'Send Failed', message: e.response?.data?.message || 'We could not send for approval. Please try again.' })
@@ -429,6 +1262,245 @@ function RevisionManagement() {
       window.pdfMake.createPdf(docDefinition).download(filename)
     } catch (e) {
       setNotify({ open: true, title: 'Export Failed', message: 'We could not generate the PDF for this revision. Please try again.' })
+    }
+  }
+
+  const generatePDFPreview = async (q) => {
+    try {
+      await ensurePdfMake()
+      const logoDataUrl = await toDataURL(q.companyInfo?.logo || logo)
+      const currency = q.priceSchedule?.currency || 'AED'
+
+      // Fetch full lead details and site visits for richer PDF (like quotations)
+      let leadFull = q.lead || null
+      let siteVisits = []
+      try {
+        const token = localStorage.getItem('token')
+        const leadId = typeof q.lead === 'object' ? q.lead?._id : q.lead
+        if (leadId) {
+          const resLead = await api.get(`/api/leads/${leadId}`)
+          leadFull = resLead.data
+          const resVisits = await api.get(`/api/leads/${leadId}/site-visits`)
+          siteVisits = Array.isArray(resVisits.data) ? resVisits.data : []
+        }
+      } catch {}
+
+      const coverFieldsRaw = [
+        ['Submitted To', q.submittedTo],
+        ['Attention', q.attention],
+        ['Offer Reference', q.offerReference],
+        ['Enquiry Number', q.enquiryNumber || leadFull?.enquiryNumber],
+        ['Offer Date', q.offerDate ? new Date(q.offerDate).toLocaleDateString() : ''],
+        ['Enquiry Date', q.enquiryDate ? new Date(q.enquiryDate).toLocaleDateString() : ''],
+        ['Project Title', q.projectTitle || leadFull?.projectTitle]
+      ]
+      const coverFields = coverFieldsRaw.filter(([, v]) => v && String(v).trim().length > 0)
+
+      const scopeRows = (q.scopeOfWork || [])
+        .filter(s => (s?.description || '').trim().length > 0)
+        .map((s, i) => [String(i + 1), s.description, String(s.quantity || ''), s.unit || '', s.locationRemarks || ''])
+
+      const priceItems = (q.priceSchedule?.items || [])
+        .filter(it => (it?.description || '').trim().length > 0 || Number(it.quantity) > 0 || Number(it.unitRate) > 0)
+      const priceRows = priceItems.map((it, i) => [
+        String(i + 1),
+        it.description || '',
+        String(it.quantity || 0),
+        it.unit || '',
+        `${currency} ${Number(it.unitRate || 0).toFixed(2)}`,
+        `${currency} ${Number((it.quantity || 0) * (it.unitRate || 0)).toFixed(2)}`
+      ])
+
+      const exclusions = (q.exclusions || []).map(x => String(x || '').trim()).filter(Boolean)
+      const paymentTerms = (q.paymentTerms || []).filter(p => (p?.milestoneDescription || '').trim().length > 0 || String(p?.amountPercent || '').trim().length > 0)
+
+      const dcwv = q.deliveryCompletionWarrantyValidity || {}
+      const deliveryRowsRaw = [
+        ['Delivery / Completion Timeline', dcwv.deliveryTimeline],
+        ['Warranty Period', dcwv.warrantyPeriod],
+        ['Offer Validity (Days)', typeof dcwv.offerValidity === 'number' ? String(dcwv.offerValidity) : (dcwv.offerValidity || '')],
+        ['Authorized Signatory', dcwv.authorizedSignatory]
+      ]
+      const deliveryRows = deliveryRowsRaw.filter(([, v]) => v && String(v).trim().length > 0)
+
+      const header = {
+        margin: [36, 20, 36, 8],
+        stack: [
+          {
+            columns: [
+              { image: logoDataUrl, width: 60 },
+              [
+                { text: q.companyInfo?.name || 'Company', style: 'brand' },
+                { text: [q.companyInfo?.address, q.companyInfo?.phone, q.companyInfo?.email].filter(Boolean).join(' | '), color: '#64748b', fontSize: 9 }
+              ]
+            ],
+            columnGap: 12
+          },
+          { canvas: [{ type: 'line', x1: 0, y1: 0, x2: 523, y2: 0, lineWidth: 0.5, lineColor: '#e5e7eb' }] }
+        ]
+      }
+
+      const content = []
+      content.push({ text: `Revision ${q.revisionNumber} — Commercial Quotation`, style: 'h1', margin: [0, 0, 0, 8] })
+
+      if (coverFields.length > 0) {
+        content.push({ text: 'Cover & Basic Details', style: 'h2', margin: [0, 6, 0, 6] })
+        content.push({
+          table: {
+            widths: ['30%', '70%'],
+            body: [
+              [{ text: 'Field', style: 'th' }, { text: 'Value', style: 'th' }],
+              ...coverFields.map(([k, v]) => [{ text: k, style: 'tdKey' }, { text: v, style: 'tdVal' }])
+            ]
+          },
+          layout: 'lightHorizontalLines'
+        })
+      }
+
+      // Project Details (from lead)
+      if (leadFull) {
+        const leadDetailsRaw = [
+          ['Customer', leadFull.customerName],
+          ['Project Title', leadFull.projectTitle],
+          ['Enquiry #', leadFull.enquiryNumber],
+          ['Enquiry Date', leadFull.enquiryDate ? new Date(leadFull.enquiryDate).toLocaleDateString() : ''],
+          ['Submission Due', leadFull.submissionDueDate ? new Date(leadFull.submissionDueDate).toLocaleDateString() : ''],
+          ['Scope Summary', leadFull.scopeSummary]
+        ]
+        const leadDetails = leadDetailsRaw.filter(([, v]) => v && String(v).trim().length > 0)
+        if (leadDetails.length > 0) {
+          content.push({ text: 'Project Details', style: 'h2', margin: [0, 12, 0, 6] })
+          content.push({
+            table: {
+              widths: ['30%', '70%'],
+              body: [
+                [{ text: 'Field', style: 'th' }, { text: 'Value', style: 'th' }],
+                ...leadDetails.map(([k, v]) => [{ text: k, style: 'tdKey' }, { text: v, style: 'tdVal' }])
+              ]
+            },
+            layout: 'lightHorizontalLines'
+          })
+        }
+      }
+
+      if (scopeRows.length > 0) {
+        content.push({ text: 'Scope of Work', style: 'h2', margin: [0, 12, 0, 6] })
+        content.push({
+          table: {
+            widths: ['6%', '54%', '10%', '10%', '20%'],
+            body: [
+              [{ text: '#', style: 'th' }, { text: 'Description', style: 'th' }, { text: 'Qty', style: 'th' }, { text: 'Unit', style: 'th' }, { text: 'Location/Remarks', style: 'th' }],
+              ...scopeRows
+            ]
+          },
+          layout: 'lightHorizontalLines'
+        })
+      }
+
+      // Site Visit Reports
+      if (Array.isArray(siteVisits) && siteVisits.length > 0) {
+        const visitRows = siteVisits.map((v, i) => [
+          String(i + 1),
+          v.visitAt ? new Date(v.visitAt).toLocaleString() : '',
+          v.siteLocation || '',
+          v.engineerName || '',
+          (v.workProgressSummary || '').slice(0, 140)
+        ])
+        content.push({ text: 'Site Visit Reports', style: 'h2', margin: [0, 12, 0, 6] })
+        content.push({
+          table: {
+            widths: ['6%', '22%', '22%', '20%', '30%'],
+            body: [
+              [
+                { text: '#', style: 'th' },
+                { text: 'Date & Time', style: 'th' },
+                { text: 'Location', style: 'th' },
+                { text: 'Engineer', style: 'th' },
+                { text: 'Progress Summary', style: 'th' }
+              ],
+              ...visitRows
+            ]
+          },
+          layout: 'lightHorizontalLines'
+        })
+      }
+
+      if (priceRows.length > 0) {
+        content.push({ text: 'Price Schedule', style: 'h2', margin: [0, 12, 0, 6] })
+        content.push({
+          table: {
+            widths: ['6%', '44%', '10%', '10%', '15%', '15%'],
+            body: [
+              [
+                { text: '#', style: 'th' },
+                { text: 'Description', style: 'th' },
+                { text: 'Qty', style: 'th' },
+                { text: 'Unit', style: 'th' },
+                { text: `Unit Rate (${currency})`, style: 'th' },
+                { text: `Amount (${currency})`, style: 'th' }
+              ],
+              ...priceRows
+            ]
+          },
+          layout: 'lightHorizontalLines'
+        })
+
+        content.push({
+          columns: [
+            { width: '*', text: '' },
+            {
+              width: '40%',
+              table: {
+                widths: ['55%', '45%'],
+                body: [
+                  [{ text: 'Sub Total', style: 'tdKey' }, { text: `${currency} ${Number(q.priceSchedule?.subTotal || 0).toFixed(2)}`, alignment: 'right' }],
+                  [{ text: `VAT (${q.priceSchedule?.taxDetails?.vatRate || 0}%)`, style: 'tdKey' }, { text: `${currency} ${Number(q.priceSchedule?.taxDetails?.vatAmount || 0).toFixed(2)}`, alignment: 'right' }],
+                  [{ text: 'Grand Total', style: 'th' }, { text: `${currency} ${Number(q.priceSchedule?.grandTotal || 0).toFixed(2)}`, style: 'th', alignment: 'right' }]
+                ]
+              },
+              layout: 'lightHorizontalLines'
+            }
+          ],
+          margin: [0, 8, 0, 0]
+        })
+      }
+
+      // Delivery/Completion/Warranty/Validity
+      if (deliveryRows.length > 0) {
+        content.push({ text: 'Delivery, Completion, Warranty & Validity', style: 'h2', margin: [0, 12, 0, 6] })
+        content.push({
+          table: {
+            widths: ['30%', '70%'],
+            body: [
+              ...deliveryRows.map(([k, v]) => [{ text: k, style: 'tdKey' }, { text: v, style: 'tdVal' }])
+            ]
+          },
+          layout: 'lightHorizontalLines'
+        })
+      }
+
+      const docDefinition = {
+        pageMargins: [36, 96, 36, 60],
+        header,
+        content,
+        styles: {
+          brand: { fontSize: 14, color: '#1f2937', bold: true, margin: [0, 0, 0, 2] },
+          h1: { fontSize: 18, bold: true, color: '#0f172a' },
+          h2: { fontSize: 12, bold: true, color: '#0f172a' },
+          h3: { fontSize: 11, bold: true, color: '#0f172a' },
+          th: { bold: true, fillColor: '#f1f5f9' },
+          tdKey: { color: '#64748b' },
+          tdVal: { color: '#0f172a' }
+        },
+        defaultStyle: { fontSize: 10, lineHeight: 1.2 }
+      }
+
+      const pdfDoc = window.pdfMake.createPdf(docDefinition)
+      pdfDoc.getDataUrl((dataUrl) => {
+        setPrintPreviewModal({ open: true, pdfUrl: dataUrl, revision: q })
+      })
+    } catch (e) {
+      setNotify({ open: true, title: 'Preview Failed', message: 'We could not generate the PDF preview. Please try again.' })
     }
   }
 
@@ -785,7 +1857,7 @@ function RevisionManagement() {
           View Project
         </button>
       )}
-      <button className="save-btn" onClick={() => exportPDF(r)}>Export</button>
+      <button className="save-btn" onClick={() => generatePDFPreview(r)}>Print Preview</button>
       {(currentUser?.roles?.includes('estimation_engineer') || currentUser?.roles?.includes('manager') || currentUser?.roles?.includes('admin') || r.createdBy?._id === currentUser?.id) && (
         <button className="assign-btn" onClick={() => setEditModal({ open: true, revision: r, mode: 'edit', form: {
           companyInfo: r.companyInfo || {},
@@ -797,11 +1869,31 @@ function RevisionManagement() {
           enquiryDate: r.enquiryDate ? String(r.enquiryDate).slice(0,10) : '',
           projectTitle: r.projectTitle || r.lead?.projectTitle || '',
           introductionText: r.introductionText || '',
-          scopeOfWork: r.scopeOfWork || [],
-          priceSchedule: r.priceSchedule || { items: [], subTotal: 0, grandTotal: 0, currency: r.priceSchedule?.currency || 'AED', taxDetails: { vatRate: 5, vatAmount: 0 } },
+          scopeOfWork: typeof r.scopeOfWork === 'string'
+            ? r.scopeOfWork
+            : (r.scopeOfWork?.length
+                ? r.scopeOfWork.map(item => item.description || '').join('<br>')
+                : ''),
+          priceSchedule: typeof r.priceSchedule === 'string'
+            ? r.priceSchedule
+            : (r.priceSchedule?.items?.length
+                ? r.priceSchedule.items.map(item => 
+                    `${item.description || ''}${item.quantity ? ` - Qty: ${item.quantity}` : ''}${item.unit ? ` ${item.unit}` : ''}${item.unitRate ? ` @ ${item.unitRate}` : ''}${item.totalAmount ? ` = ${item.totalAmount}` : ''}`
+                  ).join('<br>')
+                : ''),
           ourViewpoints: r.ourViewpoints || '',
-          exclusions: r.exclusions || [],
-          paymentTerms: r.paymentTerms || [],
+          exclusions: typeof r.exclusions === 'string'
+            ? r.exclusions
+            : (r.exclusions?.length
+                ? r.exclusions.join('<br>')
+                : ''),
+          paymentTerms: typeof r.paymentTerms === 'string'
+            ? r.paymentTerms
+            : (r.paymentTerms?.length
+                ? r.paymentTerms.map(term => 
+                    `${term.milestoneDescription || ''}${term.amountPercent ? ` - ${term.amountPercent}%` : ''}`
+                  ).join('<br>')
+                : ''),
           deliveryCompletionWarrantyValidity: r.deliveryCompletionWarrantyValidity || { deliveryTimeline: '', warrantyPeriod: '', offerValidity: 30, authorizedSignatory: currentUser?.name || '' }
         } })}>Edit</button>
       )}
@@ -814,7 +1906,7 @@ function RevisionManagement() {
       ) : (
         <>
           {(r.managementApproval?.status !== 'approved' && (currentUser?.roles?.includes('estimation_engineer') || r.createdBy?._id === currentUser?.id)) && (
-            <button className="save-btn" onClick={() => sendForApproval(r)}>Send for Approval</button>
+            <button className="save-btn" onClick={() => setSendApprovalConfirmModal({ open: true, revision: r })}>Send for Approval</button>
           )}
           {r.managementApproval?.status === 'approved' && (
             <>
@@ -1648,8 +2740,16 @@ function RevisionManagement() {
                       type="button"
                       onClick={() => {
                         try {
-                          localStorage.setItem('revisionId', editModal.revision._id)
-                          localStorage.setItem('revisionEditMode', 'true')
+                          if (editModal.mode === 'create') {
+                            // Create child revision mode
+                            localStorage.setItem('revisionCreateMode', 'true')
+                            localStorage.setItem('revisionSourceRevisionId', editModal.revision._id)
+                            localStorage.setItem('revisionFormData', JSON.stringify(editModal.form))
+                          } else {
+                            // Edit mode
+                            localStorage.setItem('revisionId', editModal.revision._id)
+                            localStorage.setItem('revisionEditMode', 'true')
+                          }
                           window.open('/revision-detail', '_blank')
                         } catch {}
                       }}
@@ -1680,8 +2780,17 @@ function RevisionManagement() {
                       type="button"
                       onClick={() => {
                         try {
-                          localStorage.setItem('revisionId', editModal.revision._id)
-                          localStorage.setItem('revisionEditMode', 'true')
+                          if (editModal.mode === 'create') {
+                            // Create child revision mode
+                            localStorage.setItem('revisionCreateMode', 'true')
+                            localStorage.setItem('revisionSourceRevisionId', editModal.revision._id)
+                            localStorage.setItem('revisionFormData', JSON.stringify(editModal.form))
+                          } else {
+                            // Edit mode
+                            localStorage.setItem('revisionId', editModal.revision._id)
+                            localStorage.setItem('revisionEditMode', 'true')
+                            localStorage.setItem('revisionEditFromListing', 'true')
+                          }
                           window.location.href = '/revision-detail'
                         } catch {}
                       }}
@@ -1766,34 +2875,11 @@ function RevisionManagement() {
                   <div className="section-header">
                     <h3>Scope of Work</h3>
                   </div>
-                  {editModal.form.scopeOfWork.map((s, i) => (
-                    <div key={i} className="item-card">
-                      <div className="item-header">
-                        <span>Item {i + 1}</span>
-                        <button type="button" className="cancel-btn" onClick={() => setEditModal({ ...editModal, form: { ...editModal.form, scopeOfWork: editModal.form.scopeOfWork.filter((_, idx) => idx !== i) } })}>Remove</button>
-                      </div>
-                      <div className="form-row">
-                        <div className="form-group" style={{ flex: 3 }}>
-                          <label>Description</label>
-                          <textarea value={s.description} onChange={e => setEditModal({ ...editModal, form: { ...editModal.form, scopeOfWork: editModal.form.scopeOfWork.map((x, idx) => idx === i ? { ...x, description: e.target.value } : x) } })} />
-                        </div>
-                        <div className="form-group" style={{ flex: 1 }}>
-                          <label>Qty</label>
-                          <input type="number" value={s.quantity} onChange={e => setEditModal({ ...editModal, form: { ...editModal.form, scopeOfWork: editModal.form.scopeOfWork.map((x, idx) => idx === i ? { ...x, quantity: e.target.value } : x) } })} />
-                        </div>
-                        <div className="form-group" style={{ flex: 1 }}>
-                          <label>Unit</label>
-                          <input type="text" value={s.unit} onChange={e => setEditModal({ ...editModal, form: { ...editModal.form, scopeOfWork: editModal.form.scopeOfWork.map((x, idx) => idx === i ? { ...x, unit: e.target.value } : x) } })} />
-                        </div>
-                        <div className="form-group" style={{ flex: 2 }}>
-                          <label>Location/Remarks</label>
-                          <input type="text" value={s.locationRemarks} onChange={e => setEditModal({ ...editModal, form: { ...editModal.form, scopeOfWork: editModal.form.scopeOfWork.map((x, idx) => idx === i ? { ...x, locationRemarks: e.target.value } : x) } })} />
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                  <div className="section-actions">
-                    <button type="button" className="link-btn" onClick={() => setEditModal({ ...editModal, form: { ...editModal.form, scopeOfWork: [...editModal.form.scopeOfWork, { description: '', quantity: '', unit: '', locationRemarks: '' }] } })}>+ Add Scope Item</button>
+                  <div className="form-group">
+                    <ScopeOfWorkEditor
+                      value={typeof editModal.form.scopeOfWork === 'string' ? editModal.form.scopeOfWork : (Array.isArray(editModal.form.scopeOfWork) ? editModal.form.scopeOfWork.map(item => item.description || '').join('<br>') : '')}
+                      onChange={(value) => setEditModal({ ...editModal, form: { ...editModal.form, scopeOfWork: value } })}
+                    />
                   </div>
                 </div>
 
@@ -1801,95 +2887,11 @@ function RevisionManagement() {
                   <div className="section-header">
                     <h3>Price Schedule</h3>
                   </div>
-                  <div className="form-row">
-                    <div className="form-group" style={{ flex: 1 }}>
-                      <label>Currency</label>
-                      <input type="text" value={editModal.form.priceSchedule.currency} onChange={e => setEditModal({ ...editModal, form: { ...editModal.form, priceSchedule: { ...editModal.form.priceSchedule, currency: e.target.value } } })} />
-                    </div>
-                    <div className="form-group" style={{ flex: 1 }}>
-                      <label>VAT %</label>
-                      <input type="number" value={editModal.form.priceSchedule.taxDetails.vatRate} onChange={e => {
-                        const items = editModal.form.priceSchedule.items
-                        const sub = items.reduce((sum, it) => sum + (Number(it.quantity || 0) * Number(it.unitRate || 0)), 0)
-                        const vat = sub * (Number(e.target.value || 0) / 100)
-                        const grand = sub + vat
-                        setEditModal({ ...editModal, form: { ...editModal.form, priceSchedule: { ...editModal.form.priceSchedule, subTotal: Number(sub.toFixed(2)), grandTotal: Number(grand.toFixed(2)), taxDetails: { ...editModal.form.priceSchedule.taxDetails, vatRate: e.target.value, vatAmount: Number(vat.toFixed(2)) } } } })
-                      }} />
-                    </div>
-                  </div>
-                  {editModal.form.priceSchedule.items.map((it, i) => (
-                    <div key={i} className="item-card">
-                      <div className="item-header">
-                        <span>Item {i + 1}</span>
-                        <button type="button" className="cancel-btn" onClick={() => {
-                          const items = editModal.form.priceSchedule.items.filter((_, idx) => idx !== i)
-                          const sub = items.reduce((sum, it) => sum + (Number(it.quantity || 0) * Number(it.unitRate || 0)), 0)
-                          const vat = sub * (Number(editModal.form.priceSchedule.taxDetails.vatRate || 0) / 100)
-                          const grand = sub + vat
-                          setEditModal({ ...editModal, form: { ...editModal.form, priceSchedule: { ...editModal.form.priceSchedule, items, subTotal: Number(sub.toFixed(2)), grandTotal: Number(grand.toFixed(2)), taxDetails: { ...editModal.form.priceSchedule.taxDetails, vatAmount: Number(vat.toFixed(2)) } } } })
-                        }}>Remove</button>
-                      </div>
-                      <div className="form-row">
-                        <div className="form-group" style={{ flex: 3 }}>
-                          <label>Description</label>
-                          <input type="text" value={it.description} onChange={e => {
-                            const items = editModal.form.priceSchedule.items.map((x, idx) => idx === i ? { ...x, description: e.target.value } : x)
-                            setEditModal({ ...editModal, form: { ...editModal.form, priceSchedule: { ...editModal.form.priceSchedule, items } } })
-                          }} />
-                        </div>
-                        <div className="form-group" style={{ flex: 1 }}>
-                          <label>Qty</label>
-                          <input type="number" value={it.quantity} onChange={e => {
-                            const items = editModal.form.priceSchedule.items.map((x, idx) => idx === i ? { ...x, quantity: e.target.value, totalAmount: Number((Number(e.target.value || 0) * Number(x.unitRate || 0)).toFixed(2)) } : x)
-                            const sub = items.reduce((sum, it) => sum + (Number(it.quantity || 0) * Number(it.unitRate || 0)), 0)
-                            const vat = sub * (Number(editModal.form.priceSchedule.taxDetails.vatRate || 0) / 100)
-                            const grand = sub + vat
-                            setEditModal({ ...editModal, form: { ...editModal.form, priceSchedule: { ...editModal.form.priceSchedule, items, subTotal: Number(sub.toFixed(2)), grandTotal: Number(grand.toFixed(2)), taxDetails: { ...editModal.form.priceSchedule.taxDetails, vatAmount: Number(vat.toFixed(2)) } } } })
-                          }} />
-                        </div>
-                        <div className="form-group" style={{ flex: 1 }}>
-                          <label>Unit</label>
-                          <input type="text" value={it.unit} onChange={e => {
-                            const items = editModal.form.priceSchedule.items.map((x, idx) => idx === i ? { ...x, unit: e.target.value } : x)
-                            setEditModal({ ...editModal, form: { ...editModal.form, priceSchedule: { ...editModal.form.priceSchedule, items } } })
-                          }} />
-                        </div>
-                        <div className="form-group" style={{ flex: 1 }}>
-                          <label>Unit Rate</label>
-                          <input type="number" value={it.unitRate} onChange={e => {
-                            const items = editModal.form.priceSchedule.items.map((x, idx) => idx === i ? { ...x, unitRate: e.target.value, totalAmount: Number((Number(x.quantity || 0) * Number(e.target.value || 0)).toFixed(2)) } : x)
-                            const sub = items.reduce((sum, it) => sum + (Number(it.quantity || 0) * Number(it.unitRate || 0)), 0)
-                            const vat = sub * (Number(editModal.form.priceSchedule.taxDetails.vatRate || 0) / 100)
-                            const grand = sub + vat
-                            setEditModal({ ...editModal, form: { ...editModal.form, priceSchedule: { ...editModal.form.priceSchedule, items, subTotal: Number(sub.toFixed(2)), grandTotal: Number(grand.toFixed(2)), taxDetails: { ...editModal.form.priceSchedule.taxDetails, vatAmount: Number(vat.toFixed(2)) } } } })
-                          }} />
-                        </div>
-                        <div className="form-group" style={{ flex: 1 }}>
-                          <label>Amount</label>
-                          <input type="number" value={Number(it.totalAmount || 0)} readOnly />
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                  <div className="section-actions">
-                    <button type="button" className="link-btn" onClick={() => setEditModal({ ...editModal, form: { ...editModal.form, priceSchedule: { ...editModal.form.priceSchedule, items: [...editModal.form.priceSchedule.items, { description: '', quantity: 0, unit: '', unitRate: 0, totalAmount: 0 }] } } })}>+ Add Item</button>
-                  </div>
-
-                  <div className="totals-card">
-                    <div className="form-row">
-                      <div className="form-group" style={{ flex: 1 }}>
-                        <label>Sub Total</label>
-                        <input type="number" readOnly value={Number(editModal.form.priceSchedule.subTotal || 0)} />
-                      </div>
-                      <div className="form-group" style={{ flex: 1 }}>
-                        <label>VAT Amount</label>
-                        <input type="number" readOnly value={Number(editModal.form.priceSchedule.taxDetails.vatAmount || 0)} />
-                      </div>
-                      <div className="form-group" style={{ flex: 1 }}>
-                        <label>Grand Total</label>
-                        <input type="number" readOnly value={Number(editModal.form.priceSchedule.grandTotal || 0)} />
-                      </div>
-                    </div>
+                  <div className="form-group">
+                    <ScopeOfWorkEditor
+                      value={typeof editModal.form.priceSchedule === 'string' ? editModal.form.priceSchedule : (editModal.form.priceSchedule?.items?.length ? editModal.form.priceSchedule.items.map(item => `${item.description || ''}${item.quantity ? ` - Qty: ${item.quantity}` : ''}${item.unit ? ` ${item.unit}` : ''}${item.unitRate ? ` @ ${item.unitRate}` : ''}${item.totalAmount ? ` = ${item.totalAmount}` : ''}`).join('<br>') : '')}
+                      onChange={(html) => setEditModal({ ...editModal, form: { ...editModal.form, priceSchedule: html } })}
+                    />
                   </div>
                 </div>
 
@@ -1907,21 +2909,11 @@ function RevisionManagement() {
                   <div className="section-header">
                     <h3>Exclusions</h3>
                   </div>
-                  {editModal.form.exclusions.map((ex, i) => (
-                    <div key={i} className="item-card">
-                      <div className="item-header">
-                        <span>Item {i + 1}</span>
-                        <button type="button" className="cancel-btn" onClick={() => setEditModal({ ...editModal, form: { ...editModal.form, exclusions: editModal.form.exclusions.filter((_, idx) => idx !== i) } })}>Remove</button>
-                      </div>
-                      <div className="form-row">
-                        <div className="form-group" style={{ flex: 1 }}>
-                          <input type="text" value={ex} onChange={e => setEditModal({ ...editModal, form: { ...editModal.form, exclusions: editModal.form.exclusions.map((x, idx) => idx === i ? e.target.value : x) } })} />
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                  <div className="section-actions">
-                    <button type="button" className="link-btn" onClick={() => setEditModal({ ...editModal, form: { ...editModal.form, exclusions: [...editModal.form.exclusions, ''] } })}>+ Add Exclusion</button>
+                  <div className="form-group">
+                    <ScopeOfWorkEditor
+                      value={typeof editModal.form.exclusions === 'string' ? editModal.form.exclusions : (Array.isArray(editModal.form.exclusions) ? editModal.form.exclusions.join('<br>') : '')}
+                      onChange={(html) => setEditModal({ ...editModal, form: { ...editModal.form, exclusions: html } })}
+                    />
                   </div>
                 </div>
 
@@ -1929,26 +2921,11 @@ function RevisionManagement() {
                   <div className="section-header">
                     <h3>Payment Terms</h3>
                   </div>
-                  {editModal.form.paymentTerms.map((p, i) => (
-                    <div key={i} className="item-card">
-                      <div className="item-header">
-                        <span>Term {i + 1}</span>
-                        <button type="button" className="cancel-btn" onClick={() => setEditModal({ ...editModal, form: { ...editModal.form, paymentTerms: editModal.form.paymentTerms.filter((_, idx) => idx !== i) } })}>Remove</button>
-                      </div>
-                      <div className="form-row">
-                        <div className="form-group" style={{ flex: 3 }}>
-                          <label>Milestone</label>
-                          <input type="text" value={p.milestoneDescription} onChange={e => setEditModal({ ...editModal, form: { ...editModal.form, paymentTerms: editModal.form.paymentTerms.map((x, idx) => idx === i ? { ...x, milestoneDescription: e.target.value } : x) } })} />
-                        </div>
-                        <div className="form-group" style={{ flex: 1 }}>
-                          <label>Amount %</label>
-                          <input type="number" value={p.amountPercent} onChange={e => setEditModal({ ...editModal, form: { ...editModal.form, paymentTerms: editModal.form.paymentTerms.map((x, idx) => idx === i ? { ...x, amountPercent: e.target.value } : x) } })} />
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                  <div className="section-actions">
-                    <button type="button" className="link-btn" onClick={() => setEditModal({ ...editModal, form: { ...editModal.form, paymentTerms: [...editModal.form.paymentTerms, { milestoneDescription: '', amountPercent: '' }] } })}>+ Add Payment Term</button>
+                  <div className="form-group">
+                    <ScopeOfWorkEditor
+                      value={typeof editModal.form.paymentTerms === 'string' ? editModal.form.paymentTerms : (Array.isArray(editModal.form.paymentTerms) ? editModal.form.paymentTerms.map(term => `${term.milestoneDescription || ''}${term.amountPercent ? ` - ${term.amountPercent}%` : ''}`).join('<br>') : '')}
+                      onChange={(html) => setEditModal({ ...editModal, form: { ...editModal.form, paymentTerms: html } })}
+                    />
                   </div>
                 </div>
 
@@ -1981,11 +2958,56 @@ function RevisionManagement() {
                   <button type="button" className="save-btn" onClick={async () => {
                     try {
                       const token = localStorage.getItem('token')
+                      const payload = { ...editModal.form }
+                      
+                      // Convert scopeOfWork string to array format for backend compatibility
+                      if (typeof payload.scopeOfWork === 'string') {
+                        payload.scopeOfWork = payload.scopeOfWork ? [{ description: payload.scopeOfWork, quantity: '', unit: '', locationRemarks: '' }] : []
+                      }
+                      
+                      // Convert priceSchedule string to object format for backend compatibility
+                      if (typeof payload.priceSchedule === 'string') {
+                        payload.priceSchedule = payload.priceSchedule ? {
+                          items: [{ description: payload.priceSchedule, quantity: 0, unit: '', unitRate: 0, totalAmount: 0 }],
+                          subTotal: 0,
+                          grandTotal: 0,
+                          currency: 'AED',
+                          taxDetails: { vatRate: 5, vatAmount: 0 }
+                        } : {
+                          items: [],
+                          subTotal: 0,
+                          grandTotal: 0,
+                          currency: 'AED',
+                          taxDetails: { vatRate: 5, vatAmount: 0 }
+                        }
+                      }
+                      
+                      // Convert exclusions string to array format for backend compatibility
+                      if (typeof payload.exclusions === 'string') {
+                        payload.exclusions = payload.exclusions 
+                          ? payload.exclusions.split('<br>').filter(ex => ex.trim())
+                          : []
+                      }
+                      
+                      // Convert paymentTerms string to array format for backend compatibility
+                      if (typeof payload.paymentTerms === 'string') {
+                        payload.paymentTerms = payload.paymentTerms 
+                          ? payload.paymentTerms.split('<br>').map(term => {
+                              // Try to parse "Milestone - X%" format
+                              const match = term.match(/^(.+?)(?:\s*-\s*(\d+(?:\.\d+)?)%)?$/)
+                              return {
+                                milestoneDescription: match ? match[1].trim() : term.trim(),
+                                amountPercent: match && match[2] ? parseFloat(match[2]) : 0
+                              }
+                            }).filter(term => term.milestoneDescription)
+                          : []
+                      }
+                      
                       if (editModal.mode === 'create') {
-                        await api.post(`/api/revisions`, { sourceRevisionId: editModal.revision._id, data: editModal.form })
+                        await api.post(`/api/revisions`, { sourceRevisionId: editModal.revision._id, data: payload })
                         setNotify({ open: true, title: 'Revision Created', message: 'New revision created successfully.' })
                       } else {
-                        await api.put(`/api/revisions/${editModal.revision._id}`, editModal.form)
+                        await api.put(`/api/revisions/${editModal.revision._id}`, payload)
                         setNotify({ open: true, title: 'Saved', message: 'Revision updated successfully.' })
                       }
                       await fetchRevisions()
@@ -2284,6 +3306,31 @@ function RevisionManagement() {
         </div>
       )}
 
+      {sendApprovalConfirmModal.open && sendApprovalConfirmModal.revision && (
+        <div className="modal-overlay" onClick={() => setSendApprovalConfirmModal({ open: false, revision: null })}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>Confirm Send for Approval</h2>
+              <button onClick={() => setSendApprovalConfirmModal({ open: false, revision: null })} className="close-btn">×</button>
+            </div>
+            <div className="lead-form">
+              <p>Are you sure you want to send this revision for approval?</p>
+              <div className="form-actions">
+                <button type="button" className="cancel-btn" onClick={() => setSendApprovalConfirmModal({ open: false, revision: null })}>Cancel</button>
+                <button 
+                  type="button" 
+                  className="save-btn" 
+                  onClick={() => sendForApproval(sendApprovalConfirmModal.revision)}
+                  disabled={isSubmitting && loadingAction === `send-approval-${sendApprovalConfirmModal.revision._id}`}
+                >
+                  {isSubmitting && loadingAction === `send-approval-${sendApprovalConfirmModal.revision._id}` ? 'Sending...' : 'Confirm & Send'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {projectModal.open && projectModal.project && (
         <div className="modal-overlay" onClick={() => setProjectModal({ open: false, project: null })}>
           <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: '800px', width: '90%' }}>
@@ -2506,6 +3553,75 @@ function RevisionManagement() {
                   </table>
                 </div>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Print Preview Modal */}
+      {printPreviewModal.open && printPreviewModal.pdfUrl && (
+        <div className="modal-overlay" onClick={() => setPrintPreviewModal({ open: false, pdfUrl: null, revision: null })} style={{ zIndex: 10000 }}>
+          <div className="modal" onClick={e => e.stopPropagation()} style={{ zIndex: 10001, maxWidth: '95%', width: '100%', height: '95vh', display: 'flex', flexDirection: 'column' }}>
+            <div className="modal-header" style={{ flexShrink: 0, borderBottom: '1px solid var(--border)', padding: '16px 24px' }}>
+              <h2>PDF Preview - Revision {printPreviewModal.revision?.revisionNumber || ''}</h2>
+              <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                <button 
+                  className="save-btn" 
+                  onClick={async () => {
+                    if (printPreviewModal.revision) {
+                      try {
+                        await exportPDF(printPreviewModal.revision)
+                      } catch (e) {
+                        setNotify({ open: true, title: 'Export Failed', message: 'We could not generate the PDF. Please try again.' })
+                      }
+                    }
+                  }}
+                >
+                  Download PDF
+                </button>
+                <button 
+                  className="save-btn" 
+                  onClick={() => {
+                    if (printPreviewModal.pdfUrl) {
+                      const printWindow = window.open('', '_blank')
+                      printWindow.document.write(`
+                        <!DOCTYPE html>
+                        <html>
+                          <head>
+                            <title>Revision ${printPreviewModal.revision?.revisionNumber || ''} - Commercial Quotation</title>
+                            <style>
+                              body { margin: 0; padding: 0; }
+                              iframe { width: 100%; height: 100vh; border: none; }
+                            </style>
+                          </head>
+                          <body>
+                            <iframe src="${printPreviewModal.pdfUrl}"></iframe>
+                          </body>
+                        </html>
+                      `)
+                      printWindow.document.close()
+                      setTimeout(() => {
+                        printWindow.frames[0].print()
+                      }, 500)
+                    }
+                  }}
+                >
+                  Print
+                </button>
+                <button onClick={() => setPrintPreviewModal({ open: false, pdfUrl: null, revision: null })} className="close-btn">×</button>
+              </div>
+            </div>
+            <div style={{ flex: 1, overflow: 'hidden', background: '#525252', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <iframe 
+                src={printPreviewModal.pdfUrl}
+                style={{ 
+                  width: '100%', 
+                  height: '100%', 
+                  border: 'none',
+                  background: 'white'
+                }}
+                title="PDF Preview"
+              />
             </div>
           </div>
         </div>

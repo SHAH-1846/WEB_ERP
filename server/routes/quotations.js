@@ -2,6 +2,7 @@ const express = require('express');
 const jwt = require('jsonwebtoken');
 const Quotation = require('../models/Quotation');
 const Lead = require('../models/Lead');
+const Revision = require('../models/Revision');
 const AuditLog = require('../models/AuditLog');
 const router = express.Router();
 
@@ -245,6 +246,12 @@ router.delete('/:id', auth, async (req, res) => {
     // If approved, only manager or admin can delete
     if (isApproved && !roles.includes('manager') && !roles.includes('admin')) {
       return res.status(403).json({ message: 'Only managers and admins can delete approved quotations' });
+    }
+
+    // Check if any revisions exist for this quotation
+    const revisionCount = await Revision.countDocuments({ parentQuotation: q._id });
+    if (revisionCount > 0) {
+      return res.status(400).json({ message: 'Cannot delete quotation: revisions exist for this quotation. Delete all revisions first.' });
     }
 
     // Create audit log before deletion

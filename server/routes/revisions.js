@@ -379,19 +379,25 @@ router.post('/', auth, async (req, res) => {
   }
 });
 
-// Undo first revision (managers/admin only)
+// Delete revision (estimation engineers can delete non-approved, managers/admin can delete approved)
 router.delete('/:id', auth, async (req, res) => {
   try {
     const roles = req.user.roles || [];
-    if (!roles.includes('estimation_engineer')) {
-      return res.status(403).json({ message: 'Only estimation engineers can delete revisions' });
+    const isEstimationEngineer = roles.includes('estimation_engineer');
+    const isManagerOrAdmin = roles.includes('manager') || roles.includes('admin');
+    
+    if (!isEstimationEngineer && !isManagerOrAdmin) {
+      return res.status(403).json({ message: 'Only estimation engineers, managers, and admins can delete revisions' });
     }
     const rev = await Revision.findById(req.params.id)
       .populate('parentQuotation', 'offerReference')
       .populate('lead', 'customerName projectTitle')
       .populate('createdBy', 'name email');
     if (!rev) return res.status(404).json({ message: 'Revision not found' });
-    if (rev?.managementApproval?.status === 'approved') {
+    
+    // Estimation engineers cannot delete approved revisions
+    // Managers and admins can delete approved revisions
+    if (rev?.managementApproval?.status === 'approved' && !isManagerOrAdmin) {
       return res.status(400).json({ message: 'Cannot delete: revision is approved' });
     }
     const children = await Revision.countDocuments({ parentRevision: rev._id });

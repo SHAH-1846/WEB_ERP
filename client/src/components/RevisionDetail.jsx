@@ -866,17 +866,21 @@ function RevisionDetail() {
   const [currentUser, setCurrentUser] = useState(() => {
     try { return JSON.parse(localStorage.getItem('user')) } catch { return null }
   })
-  const [editModal, setEditModal] = useState({ open: false, form: null })
+  const [editModal, setEditModal] = useState({ open: false, form: null, mode: 'edit' })
   const [showHistory, setShowHistory] = useState(false)
   const [profileUser, setProfileUser] = useState(null)
   const [notify, setNotify] = useState({ open: false, title: '', message: '' })
   const [approvalModal, setApprovalModal] = useState({ open: false, action: null, note: '' })
+  const [sendApprovalConfirmModal, setSendApprovalConfirmModal] = useState(false)
+  const [deleteModal, setDeleteModal] = useState({ open: false })
+  const [printPreviewModal, setPrintPreviewModal] = useState({ open: false, pdfUrl: null, revision: null })
   const [showApprovals, setShowApprovals] = useState(false)
   const [isCreateMode, setIsCreateMode] = useState(false)
   const [isEditMode, setIsEditMode] = useState(false)
   const [sourceQuotationId, setSourceQuotationId] = useState(null)
   const [sourceRevisionId, setSourceRevisionId] = useState(null)
   const [isSaving, setIsSaving] = useState(false)
+  const [childRevisions, setChildRevisions] = useState([])
   
   const defaultCompany = {
     logo,
@@ -994,6 +998,7 @@ function RevisionDetail() {
           // Show full-page edit form if in edit mode
           if (editMode === 'true') {
             localStorage.removeItem('revisionEditMode')
+            // Keep revisionEditFromListing flag if it exists (for cancel navigation)
             setIsEditMode(true)
             // Populate form with revision data
             setForm({
@@ -1038,6 +1043,15 @@ function RevisionDetail() {
                 authorizedSignatory: currentUser?.name || ''
               }
             })
+          }
+          
+          // Fetch child revisions to check if one already exists
+          try {
+            const childRes = await apiFetch(`/api/revisions?parentRevision=${rev._id}`)
+            const childRevs = await childRes.json()
+            setChildRevisions(Array.isArray(childRevs) ? childRevs : [])
+          } catch {
+            setChildRevisions([])
           }
         }
       } catch {}
@@ -1339,6 +1353,274 @@ function RevisionDetail() {
     }
   }
 
+  const generatePDFPreview = async () => {
+    try {
+      if (!revision) return
+      await ensurePdfMake()
+      const logoDataUrl = await toDataURL(revision.companyInfo?.logo || logo)
+      const currency = revision.priceSchedule?.currency || 'AED'
+
+      // Lead details and site visits
+      let leadFull = revision.lead || null
+      let siteVisits = []
+      try {
+        const token = localStorage.getItem('token')
+        const leadId = typeof revision.lead === 'object' ? revision.lead?._id : revision.lead
+        if (leadId) {
+          const resLead = await api.get(`/api/leads/${leadId}`)
+          leadFull = resLead.data
+          const resVisits = await api.get(`/api/leads/${leadId}/site-visits`)
+          siteVisits = Array.isArray(resVisits.data) ? resVisits.data : []
+        }
+      } catch {}
+
+      const coverFieldsRaw = [
+        ['Submitted To', revision.submittedTo],
+        ['Attention', revision.attention],
+        ['Offer Reference', revision.offerReference],
+        ['Enquiry Number', revision.enquiryNumber || leadFull?.enquiryNumber],
+        ['Offer Date', revision.offerDate ? new Date(revision.offerDate).toLocaleDateString() : ''],
+        ['Enquiry Date', revision.enquiryDate ? new Date(revision.enquiryDate).toLocaleDateString() : ''],
+        ['Project Title', revision.projectTitle || leadFull?.projectTitle]
+      ]
+      const coverFields = coverFieldsRaw.filter(([, v]) => v && String(v).trim().length > 0)
+
+      const scopeRows = (revision.scopeOfWork || [])
+        .filter(s => (s?.description || '').trim().length > 0)
+        .map((s, i) => [
+          String(i + 1),
+          s.description,
+          String(s.quantity || ''),
+          s.unit || '',
+          s.locationRemarks || ''
+        ])
+
+      const priceItems = (revision.priceSchedule?.items || [])
+        .filter(it => (it?.description || '').trim().length > 0 || Number(it.quantity) > 0 || Number(it.unitRate) > 0)
+      const priceRows = priceItems.map((it, i) => [
+        String(i + 1),
+        it.description || '',
+        String(it.quantity || 0),
+        it.unit || '',
+        `${currency} ${Number(it.unitRate || 0).toFixed(2)}`,
+        `${currency} ${Number((it.quantity || 0) * (it.unitRate || 0)).toFixed(2)}`
+      ])
+
+      const exclusions = (revision.exclusions || []).map(x => String(x || '').trim()).filter(Boolean)
+      const paymentTerms = (revision.paymentTerms || []).filter(p => (p?.milestoneDescription || '').trim().length > 0 || String(p?.amountPercent || '').trim().length > 0)
+
+      const dcwv = revision.deliveryCompletionWarrantyValidity || {}
+      const deliveryRowsRaw = [
+        ['Delivery / Completion Timeline', dcwv.deliveryTimeline],
+        ['Warranty Period', dcwv.warrantyPeriod],
+        ['Offer Validity (Days)', typeof dcwv.offerValidity === 'number' ? String(dcwv.offerValidity) : (dcwv.offerValidity || '')],
+        ['Authorized Signatory', dcwv.authorizedSignatory]
+      ]
+      const deliveryRows = deliveryRowsRaw.filter(([, v]) => v && String(v).trim().length > 0)
+
+      const header = {
+        margin: [36, 20, 36, 8],
+        stack: [
+          {
+            columns: [
+              { image: logoDataUrl, width: 60 },
+              [
+                { text: revision.companyInfo?.name || 'Company', style: 'brand' },
+                { text: [revision.companyInfo?.address, revision.companyInfo?.phone, revision.companyInfo?.email].filter(Boolean).join(' | '), color: '#64748b', fontSize: 9 }
+              ]
+            ],
+            columnGap: 12
+          },
+          { canvas: [{ type: 'line', x1: 0, y1: 0, x2: 523, y2: 0, lineWidth: 0.5, lineColor: '#e5e7eb' }] }
+        ]
+      }
+
+      const content = []
+      content.push({ text: `Revision ${revision.revisionNumber} — Commercial Quotation`, style: 'h1', margin: [0, 0, 0, 8] })
+
+      if (coverFields.length > 0) {
+        content.push({ text: 'Cover & Basic Details', style: 'h2', margin: [0, 6, 0, 6] })
+        content.push({
+          table: {
+            widths: ['30%', '70%'],
+            body: [
+              [{ text: 'Field', style: 'th' }, { text: 'Value', style: 'th' }],
+              ...coverFields.map(([k, v]) => [{ text: k, style: 'tdKey' }, { text: v, style: 'tdVal' }])
+            ]
+          },
+          layout: 'lightHorizontalLines'
+        })
+      }
+
+      if (leadFull) {
+        const leadDetailsRaw = [
+          ['Customer', leadFull.customerName],
+          ['Project Title', leadFull.projectTitle],
+          ['Enquiry #', leadFull.enquiryNumber],
+          ['Enquiry Date', leadFull.enquiryDate ? new Date(leadFull.enquiryDate).toLocaleDateString() : ''],
+          ['Submission Due', leadFull.submissionDueDate ? new Date(leadFull.submissionDueDate).toLocaleDateString() : ''],
+          ['Scope Summary', leadFull.scopeSummary]
+        ]
+        const leadDetails = leadDetailsRaw.filter(([, v]) => v && String(v).trim().length > 0)
+        if (leadDetails.length > 0) {
+          content.push({ text: 'Project Details', style: 'h2', margin: [0, 12, 0, 6] })
+          content.push({
+            table: {
+              widths: ['30%', '70%'],
+              body: [
+                [{ text: 'Field', style: 'th' }, { text: 'Value', style: 'th' }],
+                ...leadDetails.map(([k, v]) => [{ text: k, style: 'tdKey' }, { text: v, style: 'tdVal' }])
+              ]
+            },
+            layout: 'lightHorizontalLines'
+          })
+        }
+      }
+
+      if (scopeRows.length > 0) {
+        content.push({ text: 'Scope of Work', style: 'h2', margin: [0, 12, 0, 6] })
+        content.push({
+          table: {
+            widths: ['6%', '54%', '10%', '10%', '20%'],
+            body: [
+              [{ text: '#', style: 'th' }, { text: 'Description', style: 'th' }, { text: 'Qty', style: 'th' }, { text: 'Unit', style: 'th' }, { text: 'Location/Remarks', style: 'th' }],
+              ...scopeRows
+            ]
+          },
+          layout: 'lightHorizontalLines'
+        })
+      }
+
+      if (Array.isArray(siteVisits) && siteVisits.length > 0) {
+        const visitRows = siteVisits.map((v, i) => [
+          String(i + 1),
+          v.visitAt ? new Date(v.visitAt).toLocaleString() : '',
+          v.siteLocation || '',
+          v.engineerName || '',
+          (v.workProgressSummary || '').slice(0, 140)
+        ])
+        content.push({ text: 'Site Visit Reports', style: 'h2', margin: [0, 12, 0, 6] })
+        content.push({
+          table: {
+            widths: ['6%', '22%', '22%', '20%', '30%'],
+            body: [
+              [
+                { text: '#', style: 'th' },
+                { text: 'Date & Time', style: 'th' },
+                { text: 'Location', style: 'th' },
+                { text: 'Engineer', style: 'th' },
+                { text: 'Progress Summary', style: 'th' }
+              ],
+              ...visitRows
+            ]
+          },
+          layout: 'lightHorizontalLines'
+        })
+      }
+
+      if (priceRows.length > 0) {
+        content.push({ text: 'Price Schedule', style: 'h2', margin: [0, 12, 0, 6] })
+        content.push({
+          table: {
+            widths: ['6%', '44%', '10%', '10%', '15%', '15%'],
+            body: [
+              [
+                { text: '#', style: 'th' },
+                { text: 'Description', style: 'th' },
+                { text: 'Qty', style: 'th' },
+                { text: 'Unit', style: 'th' },
+                { text: `Unit Rate (${currency})`, style: 'th' },
+                { text: `Amount (${currency})`, style: 'th' }
+              ],
+              ...priceRows
+            ]
+          },
+          layout: 'lightHorizontalLines'
+        })
+
+        content.push({
+          columns: [
+            { width: '*', text: '' },
+            {
+              width: '40%',
+              table: {
+                widths: ['55%', '45%'],
+                body: [
+                  [{ text: 'Sub Total', style: 'tdKey' }, { text: `${currency} ${Number(revision.priceSchedule?.subTotal || 0).toFixed(2)}`, alignment: 'right' }],
+                  [{ text: `VAT (${revision.priceSchedule?.taxDetails?.vatRate || 0}%)`, style: 'tdKey' }, { text: `${currency} ${Number(revision.priceSchedule?.taxDetails?.vatAmount || 0).toFixed(2)}`, alignment: 'right' }],
+                  [{ text: 'Grand Total', style: 'th' }, { text: `${currency} ${Number(revision.priceSchedule?.grandTotal || 0).toFixed(2)}`, style: 'th', alignment: 'right' }]
+                ]
+              },
+              layout: 'lightHorizontalLines'
+            }
+          ],
+          margin: [0, 8, 0, 0]
+        })
+      }
+
+      if ((revision.ourViewpoints || '').trim().length > 0 || exclusions.length > 0) {
+        content.push({ text: 'Our Viewpoints / Special Terms', style: 'h2', margin: [0, 12, 0, 6] })
+        if ((revision.ourViewpoints || '').trim().length > 0) {
+          content.push({ text: revision.ourViewpoints, margin: [0, 0, 0, 6] })
+        }
+        if (exclusions.length > 0) {
+          content.push({ text: 'Exclusions', style: 'h3', margin: [0, 6, 0, 4] })
+          content.push({ ul: exclusions })
+        }
+      }
+
+      if (paymentTerms.length > 0) {
+        content.push({ text: 'Payment Terms', style: 'h2', margin: [0, 12, 0, 6] })
+        content.push({
+          table: {
+            widths: ['10%', '70%', '20%'],
+            body: [
+              [{ text: '#', style: 'th' }, { text: 'Milestone', style: 'th' }, { text: 'Amount %', style: 'th' }],
+              ...paymentTerms.map((p, i) => [String(i + 1), p.milestoneDescription || '', String(p.amountPercent || '')])
+            ]
+          },
+          layout: 'lightHorizontalLines'
+        })
+      }
+
+      if (deliveryRows.length > 0) {
+        content.push({ text: 'Delivery, Completion, Warranty & Validity', style: 'h2', margin: [0, 12, 0, 6] })
+        content.push({
+          table: {
+            widths: ['30%', '70%'],
+            body: [
+              ...deliveryRows.map(([k, v]) => [{ text: k, style: 'tdKey' }, { text: v, style: 'tdVal' }])
+            ]
+          },
+          layout: 'lightHorizontalLines'
+        })
+      }
+
+      const docDefinition = {
+        pageMargins: [36, 96, 36, 60],
+        header,
+        content,
+        styles: {
+          brand: { fontSize: 14, color: '#1f2937', bold: true, margin: [0, 0, 0, 2] },
+          h1: { fontSize: 18, bold: true, color: '#0f172a' },
+          h2: { fontSize: 12, bold: true, color: '#0f172a' },
+          h3: { fontSize: 11, bold: true, color: '#0f172a' },
+          th: { bold: true, fillColor: '#f1f5f9' },
+          tdKey: { color: '#64748b' },
+          tdVal: { color: '#0f172a' }
+        },
+        defaultStyle: { fontSize: 10, lineHeight: 1.2 }
+      }
+
+      const pdfDoc = window.pdfMake.createPdf(docDefinition)
+      pdfDoc.getDataUrl((dataUrl) => {
+        setPrintPreviewModal({ open: true, pdfUrl: dataUrl, revision: revision })
+      })
+    } catch (e) {
+      setNotify({ open: true, title: 'Preview Failed', message: 'We could not generate the PDF preview. Please try again.' })
+    }
+  }
+
   const approveRevision = async (status, note) => {
     try {
       if (!revision) return
@@ -1367,6 +1649,7 @@ function RevisionDetail() {
       const res = await apiFetch(`/api/revisions/${revision._id}`)
       const updated = await res.json()
       setRevision(updated)
+      setSendApprovalConfirmModal(false)
       setNotify({ open: true, title: 'Request Sent', message: 'Approval request has been sent successfully.' })
     } catch (e) {
       setNotify({ open: true, title: 'Send Failed', message: 'We could not send for approval. Please try again.' })
@@ -1544,53 +1827,56 @@ function RevisionDetail() {
     if (e) e.preventDefault()
     setIsSaving(true)
     try {
-      const payload = { ...form }
-      
-      // Convert scopeOfWork string to array format for backend compatibility
-      if (typeof payload.scopeOfWork === 'string') {
-        payload.scopeOfWork = payload.scopeOfWork ? [{ description: payload.scopeOfWork, quantity: '', unit: '', locationRemarks: '' }] : []
-      }
-      
-      // Convert priceSchedule string to object format for backend compatibility
-      if (typeof payload.priceSchedule === 'string') {
-        payload.priceSchedule = payload.priceSchedule ? {
-          items: [{ description: payload.priceSchedule, quantity: 0, unit: '', unitRate: 0, totalAmount: 0 }],
-          subTotal: 0,
-          grandTotal: 0,
-          currency: 'AED',
-          taxDetails: { vatRate: 5, vatAmount: 0 }
-        } : {
-          items: [],
-          subTotal: 0,
-          grandTotal: 0,
-          currency: 'AED',
-          taxDetails: { vatRate: 5, vatAmount: 0 }
-        }
-      }
-      
-      // Convert exclusions string to array format for backend compatibility
-      if (typeof payload.exclusions === 'string') {
-        payload.exclusions = payload.exclusions 
-          ? payload.exclusions.split('<br>').filter(ex => ex.trim())
-          : []
-      }
-      
-      // Convert paymentTerms string to array format for backend compatibility
-      if (typeof payload.paymentTerms === 'string') {
-        payload.paymentTerms = payload.paymentTerms 
-          ? payload.paymentTerms.split('<br>').map(term => {
-              // Try to parse "Milestone - X%" format
-              const match = term.match(/^(.+?)(?:\s*-\s*(\d+(?:\.\d+)?)%)?$/)
-              return {
-                milestoneDescription: match ? match[1].trim() : term.trim(),
-                amountPercent: match && match[2] ? parseFloat(match[2]) : 0
-              }
-            }).filter(term => term.milestoneDescription)
-          : []
-      }
+      const formData = { ...form }
       
       if (isEditMode && revision?._id) {
         // Handle edit mode - update existing revision
+        // Convert to backend format for edit
+        const payload = { ...formData }
+        
+        // Convert scopeOfWork string to array format for backend compatibility
+        if (typeof payload.scopeOfWork === 'string') {
+          payload.scopeOfWork = payload.scopeOfWork ? [{ description: payload.scopeOfWork, quantity: '', unit: '', locationRemarks: '' }] : []
+        }
+        
+        // Convert priceSchedule string to object format for backend compatibility
+        if (typeof payload.priceSchedule === 'string') {
+          payload.priceSchedule = payload.priceSchedule ? {
+            items: [{ description: payload.priceSchedule, quantity: 0, unit: '', unitRate: 0, totalAmount: 0 }],
+            subTotal: 0,
+            grandTotal: 0,
+            currency: revision.priceSchedule?.currency || 'AED',
+            taxDetails: revision.priceSchedule?.taxDetails || { vatRate: 5, vatAmount: 0 }
+          } : {
+            items: [],
+            subTotal: 0,
+            grandTotal: 0,
+            currency: revision.priceSchedule?.currency || 'AED',
+            taxDetails: revision.priceSchedule?.taxDetails || { vatRate: 5, vatAmount: 0 }
+          }
+        }
+        
+        // Convert exclusions string to array format for backend compatibility
+        if (typeof payload.exclusions === 'string') {
+          payload.exclusions = payload.exclusions 
+            ? payload.exclusions.split('<br>').filter(ex => ex.trim())
+            : []
+        }
+        
+        // Convert paymentTerms string to array format for backend compatibility
+        if (typeof payload.paymentTerms === 'string') {
+          payload.paymentTerms = payload.paymentTerms 
+            ? payload.paymentTerms.split('<br>').map(term => {
+                // Try to parse "Milestone - X%" format
+                const match = term.match(/^(.+?)(?:\s*-\s*(\d+(?:\.\d+)?)%)?$/)
+                return {
+                  milestoneDescription: match ? match[1].trim() : term.trim(),
+                  amountPercent: match && match[2] ? parseFloat(match[2]) : 0
+                }
+              }).filter(term => term.milestoneDescription)
+            : []
+        }
+        
         await apiFetch(`/api/revisions/${revision._id}`, {
           method: 'PUT',
           headers: {
@@ -1621,12 +1907,55 @@ function RevisionDetail() {
           } catch {}
           
           if (original) {
+            // Convert original to same format as form (HTML strings) for comparison
+            const originalFormFormat = {
+              companyInfo: original.companyInfo || {},
+              submittedTo: original.submittedTo || '',
+              attention: original.attention || '',
+              offerReference: original.offerReference || '',
+              enquiryNumber: original.enquiryNumber || '',
+              offerDate: original.offerDate ? original.offerDate.substring(0,10) : '',
+              enquiryDate: original.enquiryDate ? original.enquiryDate.substring(0,10) : '',
+              projectTitle: original.projectTitle || original.lead?.projectTitle || '',
+              introductionText: original.introductionText || '',
+              scopeOfWork: original.scopeOfWork?.length ? original.scopeOfWork.map(item => item.description || '').join('<br>') : '',
+              priceSchedule: original.priceSchedule?.items?.length ? original.priceSchedule.items.map(item => `${item.description || ''}${item.quantity ? ` - Qty: ${item.quantity}` : ''}${item.unit ? ` ${item.unit}` : ''}${item.unitRate ? ` @ ${item.unitRate}` : ''}${item.totalAmount ? ` = ${item.totalAmount}` : ''}`).join('<br>') : '',
+              ourViewpoints: original.ourViewpoints || '',
+              exclusions: original.exclusions?.length ? original.exclusions.join('<br>') : '',
+              paymentTerms: original.paymentTerms?.length ? original.paymentTerms.map(term => `${term.milestoneDescription || ''}${term.amountPercent ? ` - ${term.amountPercent}%` : ''}`).join('<br>') : '',
+              deliveryCompletionWarrantyValidity: original.deliveryCompletionWarrantyValidity || { deliveryTimeline: '', warrantyPeriod: '', offerValidity: 30, authorizedSignatory: currentUser?.name || '' }
+            }
+            
+            // Helper function to normalize HTML content for comparison
+            const normalizeHtml = (html) => {
+              if (!html) return ''
+              // Create a temporary div to parse HTML
+              const temp = document.createElement('div')
+              temp.innerHTML = html
+              // Get text content and normalize whitespace
+              let text = temp.textContent || temp.innerText || ''
+              // Replace multiple whitespace with single space
+              text = text.replace(/\s+/g, ' ').trim()
+              return text
+            }
+            
+            // Compare form data (both in HTML string format)
             const fields = ['companyInfo','submittedTo','attention','offerReference','enquiryNumber','offerDate','enquiryDate','projectTitle','introductionText','scopeOfWork','priceSchedule','ourViewpoints','exclusions','paymentTerms','deliveryCompletionWarrantyValidity']
             let changed = false
             for (const f of fields) {
-              if (JSON.stringify(original?.[f] ?? null) !== JSON.stringify(payload?.[f] ?? null)) { 
-                changed = true
-                break 
+              if (f === 'companyInfo' || f === 'deliveryCompletionWarrantyValidity') {
+                if (JSON.stringify(originalFormFormat[f] ?? null) !== JSON.stringify(formData[f] ?? null)) { 
+                  changed = true
+                  break 
+                }
+              } else {
+                // For string fields, normalize HTML and compare text content
+                const originalVal = normalizeHtml(String(originalFormFormat[f] ?? ''))
+                const formVal = normalizeHtml(String(formData[f] ?? ''))
+                if (originalVal !== formVal) {
+                  changed = true
+                  break
+                }
               }
             }
             if (!changed) {
@@ -1635,6 +1964,64 @@ function RevisionDetail() {
               return
             }
           }
+        }
+        
+        // Now convert to backend format
+        const payload = { ...formData }
+        
+        // Convert scopeOfWork string to array format for backend compatibility
+        if (typeof payload.scopeOfWork === 'string') {
+          payload.scopeOfWork = payload.scopeOfWork ? [{ description: payload.scopeOfWork, quantity: '', unit: '', locationRemarks: '' }] : []
+        }
+        
+        // Convert priceSchedule string to object format for backend compatibility
+        if (typeof payload.priceSchedule === 'string') {
+          // Get original quotation/revision to preserve currency and tax details
+          let original = null
+          try {
+            if (sourceQuotationId) {
+              const res = await apiFetch(`/api/quotations/${sourceQuotationId}`)
+              original = await res.json()
+            } else if (sourceRevisionId) {
+              const res = await apiFetch(`/api/revisions/${sourceRevisionId}`)
+              original = await res.json()
+            }
+          } catch {}
+          
+          payload.priceSchedule = payload.priceSchedule ? {
+            items: [{ description: payload.priceSchedule, quantity: 0, unit: '', unitRate: 0, totalAmount: 0 }],
+            subTotal: 0,
+            grandTotal: 0,
+            currency: original?.priceSchedule?.currency || 'AED',
+            taxDetails: original?.priceSchedule?.taxDetails || { vatRate: 5, vatAmount: 0 }
+          } : {
+            items: [],
+            subTotal: 0,
+            grandTotal: 0,
+            currency: original?.priceSchedule?.currency || 'AED',
+            taxDetails: original?.priceSchedule?.taxDetails || { vatRate: 5, vatAmount: 0 }
+          }
+        }
+        
+        // Convert exclusions string to array format for backend compatibility
+        if (typeof payload.exclusions === 'string') {
+          payload.exclusions = payload.exclusions 
+            ? payload.exclusions.split('<br>').filter(ex => ex.trim())
+            : []
+        }
+        
+        // Convert paymentTerms string to array format for backend compatibility
+        if (typeof payload.paymentTerms === 'string') {
+          payload.paymentTerms = payload.paymentTerms 
+            ? payload.paymentTerms.split('<br>').map(term => {
+                // Try to parse "Milestone - X%" format
+                const match = term.match(/^(.+?)(?:\s*-\s*(\d+(?:\.\d+)?)%)?$/)
+                return {
+                  milestoneDescription: match ? match[1].trim() : term.trim(),
+                  amountPercent: match && match[2] ? parseFloat(match[2]) : 0
+                }
+              }).filter(term => term.milestoneDescription)
+            : []
         }
         
         const requestBody = sourceQuotationId 
@@ -1664,7 +2051,15 @@ function RevisionDetail() {
 
   const handleCancel = () => {
     if (isEditMode) {
-      // If editing, just exit edit mode and show the detail view
+      // Check if we came from the listing page
+      const fromListing = localStorage.getItem('revisionEditFromListing')
+      if (fromListing === 'true') {
+        // Navigate back to listing page
+        localStorage.removeItem('revisionEditFromListing')
+        window.location.href = '/revisions'
+        return
+      }
+      // If editing from detail page, just exit edit mode and show the detail view
       setIsEditMode(false)
       // Reload revision to ensure we have the latest data
       const loadRevision = async () => {
@@ -2120,7 +2515,7 @@ function RevisionDetail() {
               }
             } catch { setNotify({ open: true, title: 'Open Project Failed', message: 'We could not open the linked project.' }) }
           }}>View Project</button>
-          <button className="save-btn" onClick={exportPDF}>Export</button>
+          <button className="save-btn" onClick={generatePDFPreview}>Print Preview</button>
           {(currentUser?.roles?.includes('estimation_engineer') || revision?.createdBy?._id === currentUser?.id) && (
             <button className="assign-btn" onClick={() => setEditModal({ open: true, form: {
               companyInfo: revision.companyInfo || {},
@@ -2132,11 +2527,31 @@ function RevisionDetail() {
               enquiryDate: revision.enquiryDate ? String(revision.enquiryDate).slice(0,10) : '',
               projectTitle: revision.projectTitle || revision.lead?.projectTitle || '',
               introductionText: revision.introductionText || '',
-              scopeOfWork: revision.scopeOfWork || [],
-              priceSchedule: revision.priceSchedule || { items: [], subTotal: 0, grandTotal: 0, currency: revision.priceSchedule?.currency || 'AED', taxDetails: { vatRate: 5, vatAmount: 0 } },
+              scopeOfWork: typeof revision.scopeOfWork === 'string'
+                ? revision.scopeOfWork
+                : (revision.scopeOfWork?.length
+                    ? revision.scopeOfWork.map(item => item.description || '').join('<br>')
+                    : ''),
+              priceSchedule: typeof revision.priceSchedule === 'string'
+                ? revision.priceSchedule
+                : (revision.priceSchedule?.items?.length
+                    ? revision.priceSchedule.items.map(item => 
+                        `${item.description || ''}${item.quantity ? ` - Qty: ${item.quantity}` : ''}${item.unit ? ` ${item.unit}` : ''}${item.unitRate ? ` @ ${item.unitRate}` : ''}${item.totalAmount ? ` = ${item.totalAmount}` : ''}`
+                      ).join('<br>')
+                    : ''),
               ourViewpoints: revision.ourViewpoints || '',
-              exclusions: revision.exclusions || [],
-              paymentTerms: revision.paymentTerms || [],
+              exclusions: typeof revision.exclusions === 'string'
+                ? revision.exclusions
+                : (revision.exclusions?.length
+                    ? revision.exclusions.join('<br>')
+                    : ''),
+              paymentTerms: typeof revision.paymentTerms === 'string'
+                ? revision.paymentTerms
+                : (revision.paymentTerms?.length
+                    ? revision.paymentTerms.map(term => 
+                        `${term.milestoneDescription || ''}${term.amountPercent ? ` - ${term.amountPercent}%` : ''}`
+                      ).join('<br>')
+                    : ''),
               deliveryCompletionWarrantyValidity: revision.deliveryCompletionWarrantyValidity || { deliveryTimeline: '', warrantyPeriod: '', offerValidity: 30, authorizedSignatory: currentUser?.name || '' }
             } })}>Edit</button>
           )}
@@ -2164,13 +2579,77 @@ function RevisionDetail() {
             <span className="status-badge blue">Approval Pending</span>
           ) : (
             (approvalStatus !== 'approved' && (currentUser?.roles?.includes('estimation_engineer') || revision?.createdBy?._id === currentUser?.id)) && (
-              <button className="save-btn" onClick={sendForApproval}>Send for Approval</button>
+              <button className="save-btn" onClick={() => setSendApprovalConfirmModal(true)}>Send for Approval</button>
             )
           )}
           {(currentUser?.roles?.includes('manager') || currentUser?.roles?.includes('admin')) && approvalStatus === 'pending' && (
             <>
               <button className="approve-btn" onClick={() => setApprovalModal({ open: true, action: 'approved', note: '' })}>Approve</button>
               <button className="reject-btn" onClick={() => setApprovalModal({ open: true, action: 'rejected', note: '' })}>Reject</button>
+            </>
+          )}
+          {approvalStatus === 'approved' && (
+            <>
+              <button className="save-btn" onClick={async () => {
+                try {
+                  await apiFetch(`/api/projects/by-revision/${revision._id}`)
+                  setNotify({ open: true, title: 'Not Allowed', message: 'A project already exists for this revision.' })
+                  return
+                } catch {}
+                const hasChild = childRevisions.some(x => (x.parentRevision?._id || x.parentRevision) === revision._id)
+                if (hasChild) {
+                  setNotify({ open: true, title: 'Not Allowed', message: 'A child revision already exists for this revision.' })
+                  return
+                }
+                setEditModal({ open: true, form: {
+                  companyInfo: revision.companyInfo || defaultCompany,
+                  submittedTo: revision.submittedTo || '',
+                  attention: revision.attention || '',
+                  offerReference: revision.offerReference || '',
+                  enquiryNumber: revision.enquiryNumber || '',
+                  offerDate: revision.offerDate ? String(revision.offerDate).slice(0,10) : '',
+                  enquiryDate: revision.enquiryDate ? String(revision.enquiryDate).slice(0,10) : '',
+                  projectTitle: revision.projectTitle || revision.lead?.projectTitle || '',
+                  introductionText: revision.introductionText || '',
+                  scopeOfWork: typeof revision.scopeOfWork === 'string'
+                    ? revision.scopeOfWork
+                    : (revision.scopeOfWork?.length
+                        ? revision.scopeOfWork.map(item => item.description || '').join('<br>')
+                        : ''),
+                  priceSchedule: typeof revision.priceSchedule === 'string'
+                    ? revision.priceSchedule
+                    : (revision.priceSchedule?.items?.length
+                        ? revision.priceSchedule.items.map(item => 
+                            `${item.description || ''}${item.quantity ? ` - Qty: ${item.quantity}` : ''}${item.unit ? ` ${item.unit}` : ''}${item.unitRate ? ` @ ${item.unitRate}` : ''}${item.totalAmount ? ` = ${item.totalAmount}` : ''}`
+                          ).join('<br>')
+                        : ''),
+                  ourViewpoints: revision.ourViewpoints || '',
+                  exclusions: typeof revision.exclusions === 'string'
+                    ? revision.exclusions
+                    : (revision.exclusions?.length
+                        ? revision.exclusions.join('<br>')
+                        : ''),
+                  paymentTerms: typeof revision.paymentTerms === 'string'
+                    ? revision.paymentTerms
+                    : (revision.paymentTerms?.length
+                        ? revision.paymentTerms.map(term => 
+                            `${term.milestoneDescription || ''}${term.amountPercent ? ` - ${term.amountPercent}%` : ''}`
+                          ).join('<br>')
+                        : ''),
+                  deliveryCompletionWarrantyValidity: revision.deliveryCompletionWarrantyValidity || { deliveryTimeline: '', warrantyPeriod: '', offerValidity: 30, authorizedSignatory: currentUser?.name || '' }
+                }, mode: 'create' })
+              }}>Create Another Revision</button>
+              {(currentUser?.roles?.includes('manager') || currentUser?.roles?.includes('admin')) && (
+                <button className="reject-btn" onClick={async () => {
+                  // Check if child revisions exist
+                  const hasChild = childRevisions.some(x => (x.parentRevision?._id || x.parentRevision) === revision._id)
+                  if (hasChild) {
+                    setNotify({ open: true, title: 'Cannot Delete', message: 'This revision cannot be deleted because it has child revisions.' })
+                    return
+                  }
+                  setDeleteModal({ open: true })
+                }}>Delete Revision</button>
+              )}
             </>
           )}
         </div>
@@ -2564,10 +3043,10 @@ function RevisionDetail() {
       )}
 
       {editModal.open && (
-        <div className="modal-overlay" onClick={() => setEditModal({ open: false, form: null })}>
+        <div className="modal-overlay" onClick={() => setEditModal({ open: false, form: null, mode: 'edit' })}>
           <div className="modal" onClick={e => e.stopPropagation()}>
             <div className="modal-header">
-              <h2>Edit Revision</h2>
+              <h2>{editModal.mode === 'create' ? 'Create Revision' : 'Edit Revision'}</h2>
               <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
                 {revision?._id && (
                   <>
@@ -2575,8 +3054,16 @@ function RevisionDetail() {
                       type="button"
                       onClick={() => {
                         try {
-                          localStorage.setItem('revisionId', revision._id)
-                          localStorage.setItem('revisionEditMode', 'true')
+                          if (editModal.mode === 'create') {
+                            // Create child revision mode
+                            localStorage.setItem('revisionCreateMode', 'true')
+                            localStorage.setItem('revisionSourceRevisionId', revision._id)
+                            localStorage.setItem('revisionFormData', JSON.stringify(editModal.form))
+                          } else {
+                            // Edit mode
+                            localStorage.setItem('revisionId', revision._id)
+                            localStorage.setItem('revisionEditMode', 'true')
+                          }
                           window.open('/revision-detail', '_blank')
                         } catch {}
                       }}
@@ -2607,8 +3094,16 @@ function RevisionDetail() {
                       type="button"
                       onClick={() => {
                         try {
-                          localStorage.setItem('revisionId', revision._id)
-                          localStorage.setItem('revisionEditMode', 'true')
+                          if (editModal.mode === 'create') {
+                            // Create child revision mode
+                            localStorage.setItem('revisionCreateMode', 'true')
+                            localStorage.setItem('revisionSourceRevisionId', revision._id)
+                            localStorage.setItem('revisionFormData', JSON.stringify(editModal.form))
+                          } else {
+                            // Edit mode
+                            localStorage.setItem('revisionId', revision._id)
+                            localStorage.setItem('revisionEditMode', 'true')
+                          }
                           window.location.href = '/revision-detail'
                         } catch {}
                       }}
@@ -2636,7 +3131,7 @@ function RevisionDetail() {
                     </button>
                   </>
                 )}
-                <button onClick={() => setEditModal({ open: false, form: null })} className="close-btn">×</button>
+                <button onClick={() => setEditModal({ open: false, form: null, mode: 'edit' })} className="close-btn">×</button>
               </div>
             </div>
             {editModal.form && (
@@ -2693,34 +3188,11 @@ function RevisionDetail() {
                   <div className="section-header">
                     <h3>Scope of Work</h3>
                   </div>
-                  {editModal.form.scopeOfWork.map((s, i) => (
-                    <div key={i} className="item-card">
-                      <div className="item-header">
-                        <span>Item {i + 1}</span>
-                        <button type="button" className="cancel-btn" onClick={() => setEditModal({ ...editModal, form: { ...editModal.form, scopeOfWork: editModal.form.scopeOfWork.filter((_, idx) => idx !== i) } })}>Remove</button>
-                      </div>
-                      <div className="form-row">
-                        <div className="form-group" style={{ flex: 3 }}>
-                          <label>Description</label>
-                          <textarea value={s.description} onChange={e => setEditModal({ ...editModal, form: { ...editModal.form, scopeOfWork: editModal.form.scopeOfWork.map((x, idx) => idx === i ? { ...x, description: e.target.value } : x) } })} />
-                        </div>
-                        <div className="form-group" style={{ flex: 1 }}>
-                          <label>Qty</label>
-                          <input type="number" value={s.quantity} onChange={e => setEditModal({ ...editModal, form: { ...editModal.form, scopeOfWork: editModal.form.scopeOfWork.map((x, idx) => idx === i ? { ...x, quantity: e.target.value } : x) } })} />
-                        </div>
-                        <div className="form-group" style={{ flex: 1 }}>
-                          <label>Unit</label>
-                          <input type="text" value={s.unit} onChange={e => setEditModal({ ...editModal, form: { ...editModal.form, scopeOfWork: editModal.form.scopeOfWork.map((x, idx) => idx === i ? { ...x, unit: e.target.value } : x) } })} />
-                        </div>
-                        <div className="form-group" style={{ flex: 2 }}>
-                          <label>Location/Remarks</label>
-                          <input type="text" value={s.locationRemarks} onChange={e => setEditModal({ ...editModal, form: { ...editModal.form, scopeOfWork: editModal.form.scopeOfWork.map((x, idx) => idx === i ? { ...x, locationRemarks: e.target.value } : x) } })} />
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                  <div className="section-actions">
-                    <button type="button" className="link-btn" onClick={() => setEditModal({ ...editModal, form: { ...editModal.form, scopeOfWork: [...editModal.form.scopeOfWork, { description: '', quantity: '', unit: '', locationRemarks: '' }] } })}>+ Add Scope Item</button>
+                  <div className="form-group">
+                    <ScopeOfWorkEditor
+                      value={typeof editModal.form.scopeOfWork === 'string' ? editModal.form.scopeOfWork : (Array.isArray(editModal.form.scopeOfWork) ? editModal.form.scopeOfWork.map(item => item.description || '').join('<br>') : '')}
+                      onChange={(value) => setEditModal({ ...editModal, form: { ...editModal.form, scopeOfWork: value } })}
+                    />
                   </div>
                 </div>
 
@@ -2728,95 +3200,11 @@ function RevisionDetail() {
                   <div className="section-header">
                     <h3>Price Schedule</h3>
                   </div>
-                  <div className="form-row">
-                    <div className="form-group" style={{ flex: 1 }}>
-                      <label>Currency</label>
-                      <input type="text" value={editModal.form.priceSchedule.currency} onChange={e => setEditModal({ ...editModal, form: { ...editModal.form, priceSchedule: { ...editModal.form.priceSchedule, currency: e.target.value } } })} />
-                    </div>
-                    <div className="form-group" style={{ flex: 1 }}>
-                      <label>VAT %</label>
-                      <input type="number" value={editModal.form.priceSchedule.taxDetails.vatRate} onChange={e => {
-                        const items = editModal.form.priceSchedule.items
-                        const sub = items.reduce((sum, it) => sum + (Number(it.quantity || 0) * Number(it.unitRate || 0)), 0)
-                        const vat = sub * (Number(e.target.value || 0) / 100)
-                        const grand = sub + vat
-                        setEditModal({ ...editModal, form: { ...editModal.form, priceSchedule: { ...editModal.form.priceSchedule, subTotal: Number(sub.toFixed(2)), grandTotal: Number(grand.toFixed(2)), taxDetails: { ...editModal.form.priceSchedule.taxDetails, vatRate: e.target.value, vatAmount: Number(vat.toFixed(2)) } } } })
-                      }} />
-                    </div>
-                  </div>
-                  {editModal.form.priceSchedule.items.map((it, i) => (
-                    <div key={i} className="item-card">
-                      <div className="item-header">
-                        <span>Item {i + 1}</span>
-                        <button type="button" className="cancel-btn" onClick={() => {
-                          const items = editModal.form.priceSchedule.items.filter((_, idx) => idx !== i)
-                          const sub = items.reduce((sum, it) => sum + (Number(it.quantity || 0) * Number(it.unitRate || 0)), 0)
-                          const vat = sub * (Number(editModal.form.priceSchedule.taxDetails.vatRate || 0) / 100)
-                          const grand = sub + vat
-                          setEditModal({ ...editModal, form: { ...editModal.form, priceSchedule: { ...editModal.form.priceSchedule, items, subTotal: Number(sub.toFixed(2)), grandTotal: Number(grand.toFixed(2)), taxDetails: { ...editModal.form.priceSchedule.taxDetails, vatAmount: Number(vat.toFixed(2)) } } } })
-                        }}>Remove</button>
-                      </div>
-                      <div className="form-row">
-                        <div className="form-group" style={{ flex: 3 }}>
-                          <label>Description</label>
-                          <input type="text" value={it.description} onChange={e => {
-                            const items = editModal.form.priceSchedule.items.map((x, idx) => idx === i ? { ...x, description: e.target.value } : x)
-                            setEditModal({ ...editModal, form: { ...editModal.form, priceSchedule: { ...editModal.form.priceSchedule, items } } })
-                          }} />
-                        </div>
-                        <div className="form-group" style={{ flex: 1 }}>
-                          <label>Qty</label>
-                          <input type="number" value={it.quantity} onChange={e => {
-                            const items = editModal.form.priceSchedule.items.map((x, idx) => idx === i ? { ...x, quantity: e.target.value, totalAmount: Number((Number(e.target.value || 0) * Number(x.unitRate || 0)).toFixed(2)) } : x)
-                            const sub = items.reduce((sum, it) => sum + (Number(it.quantity || 0) * Number(it.unitRate || 0)), 0)
-                            const vat = sub * (Number(editModal.form.priceSchedule.taxDetails.vatRate || 0) / 100)
-                            const grand = sub + vat
-                            setEditModal({ ...editModal, form: { ...editModal.form, priceSchedule: { ...editModal.form.priceSchedule, items, subTotal: Number(sub.toFixed(2)), grandTotal: Number(grand.toFixed(2)), taxDetails: { ...editModal.form.priceSchedule.taxDetails, vatAmount: Number(vat.toFixed(2)) } } } })
-                          }} />
-                        </div>
-                        <div className="form-group" style={{ flex: 1 }}>
-                          <label>Unit</label>
-                          <input type="text" value={it.unit} onChange={e => {
-                            const items = editModal.form.priceSchedule.items.map((x, idx) => idx === i ? { ...x, unit: e.target.value } : x)
-                            setEditModal({ ...editModal, form: { ...editModal.form, priceSchedule: { ...editModal.form.priceSchedule, items } } })
-                          }} />
-                        </div>
-                        <div className="form-group" style={{ flex: 1 }}>
-                          <label>Unit Rate</label>
-                          <input type="number" value={it.unitRate} onChange={e => {
-                            const items = editModal.form.priceSchedule.items.map((x, idx) => idx === i ? { ...x, unitRate: e.target.value, totalAmount: Number((Number(x.quantity || 0) * Number(e.target.value || 0)).toFixed(2)) } : x)
-                            const sub = items.reduce((sum, it) => sum + (Number(it.quantity || 0) * Number(it.unitRate || 0)), 0)
-                            const vat = sub * (Number(editModal.form.priceSchedule.taxDetails.vatRate || 0) / 100)
-                            const grand = sub + vat
-                            setEditModal({ ...editModal, form: { ...editModal.form, priceSchedule: { ...editModal.form.priceSchedule, items, subTotal: Number(sub.toFixed(2)), grandTotal: Number(grand.toFixed(2)), taxDetails: { ...editModal.form.priceSchedule.taxDetails, vatAmount: Number(vat.toFixed(2)) } } } })
-                          }} />
-                        </div>
-                        <div className="form-group" style={{ flex: 1 }}>
-                          <label>Amount</label>
-                          <input type="number" value={Number(it.totalAmount || 0)} readOnly />
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                  <div className="section-actions">
-                    <button type="button" className="link-btn" onClick={() => setEditModal({ ...editModal, form: { ...editModal.form, priceSchedule: { ...editModal.form.priceSchedule, items: [...editModal.form.priceSchedule.items, { description: '', quantity: 0, unit: '', unitRate: 0, totalAmount: 0 }] } } })}>+ Add Item</button>
-                  </div>
-
-                  <div className="totals-card">
-                    <div className="form-row">
-                      <div className="form-group" style={{ flex: 1 }}>
-                        <label>Sub Total</label>
-                        <input type="number" readOnly value={Number(editModal.form.priceSchedule.subTotal || 0)} />
-                      </div>
-                      <div className="form-group" style={{ flex: 1 }}>
-                        <label>VAT Amount</label>
-                        <input type="number" readOnly value={Number(editModal.form.priceSchedule.taxDetails.vatAmount || 0)} />
-                      </div>
-                      <div className="form-group" style={{ flex: 1 }}>
-                        <label>Grand Total</label>
-                        <input type="number" readOnly value={Number(editModal.form.priceSchedule.grandTotal || 0)} />
-                      </div>
-                    </div>
+                  <div className="form-group">
+                    <ScopeOfWorkEditor
+                      value={typeof editModal.form.priceSchedule === 'string' ? editModal.form.priceSchedule : (editModal.form.priceSchedule?.items?.length ? editModal.form.priceSchedule.items.map(item => `${item.description || ''}${item.quantity ? ` - Qty: ${item.quantity}` : ''}${item.unit ? ` ${item.unit}` : ''}${item.unitRate ? ` @ ${item.unitRate}` : ''}${item.totalAmount ? ` = ${item.totalAmount}` : ''}`).join('<br>') : '')}
+                      onChange={(html) => setEditModal({ ...editModal, form: { ...editModal.form, priceSchedule: html } })}
+                    />
                   </div>
                 </div>
 
@@ -2834,21 +3222,11 @@ function RevisionDetail() {
                   <div className="section-header">
                     <h3>Exclusions</h3>
                   </div>
-                  {editModal.form.exclusions.map((ex, i) => (
-                    <div key={i} className="item-card">
-                      <div className="item-header">
-                        <span>Item {i + 1}</span>
-                        <button type="button" className="cancel-btn" onClick={() => setEditModal({ ...editModal, form: { ...editModal.form, exclusions: editModal.form.exclusions.filter((_, idx) => idx !== i) } })}>Remove</button>
-                      </div>
-                      <div className="form-row">
-                        <div className="form-group" style={{ flex: 1 }}>
-                          <input type="text" value={ex} onChange={e => setEditModal({ ...editModal, form: { ...editModal.form, exclusions: editModal.form.exclusions.map((x, idx) => idx === i ? e.target.value : x) } })} />
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                  <div className="section-actions">
-                    <button type="button" className="link-btn" onClick={() => setEditModal({ ...editModal, form: { ...editModal.form, exclusions: [...editModal.form.exclusions, ''] } })}>+ Add Exclusion</button>
+                  <div className="form-group">
+                    <ScopeOfWorkEditor
+                      value={typeof editModal.form.exclusions === 'string' ? editModal.form.exclusions : (Array.isArray(editModal.form.exclusions) ? editModal.form.exclusions.join('<br>') : '')}
+                      onChange={(html) => setEditModal({ ...editModal, form: { ...editModal.form, exclusions: html } })}
+                    />
                   </div>
                 </div>
 
@@ -2856,26 +3234,11 @@ function RevisionDetail() {
                   <div className="section-header">
                     <h3>Payment Terms</h3>
                   </div>
-                  {editModal.form.paymentTerms.map((p, i) => (
-                    <div key={i} className="item-card">
-                      <div className="item-header">
-                        <span>Term {i + 1}</span>
-                        <button type="button" className="cancel-btn" onClick={() => setEditModal({ ...editModal, form: { ...editModal.form, paymentTerms: editModal.form.paymentTerms.filter((_, idx) => idx !== i) } })}>Remove</button>
-                      </div>
-                      <div className="form-row">
-                        <div className="form-group" style={{ flex: 3 }}>
-                          <label>Milestone</label>
-                          <input type="text" value={p.milestoneDescription} onChange={e => setEditModal({ ...editModal, form: { ...editModal.form, paymentTerms: editModal.form.paymentTerms.map((x, idx) => idx === i ? { ...x, milestoneDescription: e.target.value } : x) } })} />
-                        </div>
-                        <div className="form-group" style={{ flex: 1 }}>
-                          <label>Amount %</label>
-                          <input type="number" value={p.amountPercent} onChange={e => setEditModal({ ...editModal, form: { ...editModal.form, paymentTerms: editModal.form.paymentTerms.map((x, idx) => idx === i ? { ...x, amountPercent: e.target.value } : x) } })} />
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                  <div className="section-actions">
-                    <button type="button" className="link-btn" onClick={() => setEditModal({ ...editModal, form: { ...editModal.form, paymentTerms: [...editModal.form.paymentTerms, { milestoneDescription: '', amountPercent: '' }] } })}>+ Add Payment Term</button>
+                  <div className="form-group">
+                    <ScopeOfWorkEditor
+                      value={typeof editModal.form.paymentTerms === 'string' ? editModal.form.paymentTerms : (Array.isArray(editModal.form.paymentTerms) ? editModal.form.paymentTerms.map(term => `${term.milestoneDescription || ''}${term.amountPercent ? ` - ${term.amountPercent}%` : ''}`).join('<br>') : '')}
+                      onChange={(html) => setEditModal({ ...editModal, form: { ...editModal.form, paymentTerms: html } })}
+                    />
                   </div>
                 </div>
 
@@ -2904,22 +3267,109 @@ function RevisionDetail() {
                 </div>
 
                 <div className="form-actions">
-                  <button type="button" className="cancel-btn" onClick={() => setEditModal({ open: false, form: null })}>Cancel</button>
+                  <button type="button" className="cancel-btn" onClick={() => setEditModal({ open: false, form: null, mode: 'edit' })}>Cancel</button>
                   <button type="button" className="save-btn" onClick={async () => {
                     try {
                       const token = localStorage.getItem('token')
-                      await apiFetch(`/api/revisions/${revision._id}`, {
-                        method: 'PUT',
-                        body: JSON.stringify(editModal.form)
-                      })
-                      const res = await apiFetch(`/api/revisions/${revision._id}`)
-                      const updated = await res.json()
-                      setRevision(updated)
-                      setEditModal({ open: false, form: null })
+                      const payload = { ...editModal.form }
+                      
+                      // Convert scopeOfWork string to array format for backend compatibility
+                      if (typeof payload.scopeOfWork === 'string') {
+                        payload.scopeOfWork = payload.scopeOfWork ? [{ description: payload.scopeOfWork, quantity: '', unit: '', locationRemarks: '' }] : []
+                      }
+                      
+                      // Convert priceSchedule string to object format for backend compatibility
+                      if (typeof payload.priceSchedule === 'string') {
+                        payload.priceSchedule = payload.priceSchedule ? {
+                          items: [{ description: payload.priceSchedule, quantity: 0, unit: '', unitRate: 0, totalAmount: 0 }],
+                          subTotal: 0,
+                          grandTotal: 0,
+                          currency: 'AED',
+                          taxDetails: { vatRate: 5, vatAmount: 0 }
+                        } : {
+                          items: [],
+                          subTotal: 0,
+                          grandTotal: 0,
+                          currency: 'AED',
+                          taxDetails: { vatRate: 5, vatAmount: 0 }
+                        }
+                      }
+                      
+                      // Convert exclusions string to array format for backend compatibility
+                      if (typeof payload.exclusions === 'string') {
+                        payload.exclusions = payload.exclusions 
+                          ? payload.exclusions.split('<br>').filter(ex => ex.trim())
+                          : []
+                      }
+                      
+                      // Convert paymentTerms string to array format for backend compatibility
+                      if (typeof payload.paymentTerms === 'string') {
+                        payload.paymentTerms = payload.paymentTerms 
+                          ? payload.paymentTerms.split('<br>').map(term => {
+                              // Try to parse "Milestone - X%" format
+                              const match = term.match(/^(.+?)(?:\s*-\s*(\d+(?:\.\d+)?)%)?$/)
+                              return {
+                                milestoneDescription: match ? match[1].trim() : term.trim(),
+                                amountPercent: match && match[2] ? parseFloat(match[2]) : 0
+                              }
+                            }).filter(term => term.milestoneDescription)
+                          : []
+                      }
+                      
+                      if (editModal.mode === 'create' && revision?._id) {
+                        // Create child revision - check for changes first
+                        const fields = ['companyInfo','submittedTo','attention','offerReference','enquiryNumber','offerDate','enquiryDate','projectTitle','introductionText','scopeOfWork','priceSchedule','ourViewpoints','exclusions','paymentTerms','deliveryCompletionWarrantyValidity']
+                        let changed = false
+                        for (const f of fields) {
+                          if (JSON.stringify(revision?.[f] ?? null) !== JSON.stringify(payload?.[f] ?? null)) { 
+                            changed = true
+                            break 
+                          }
+                        }
+                        if (!changed) {
+                          setNotify({ open: true, title: 'No Changes', message: 'No changes detected. Please modify data before creating a revision.' })
+                          return
+                        }
+                        
+                        // Create child revision with correct API format
+                        const requestBody = { sourceRevisionId: revision._id, data: payload }
+                        const createRes = await apiFetch('/api/revisions', {
+                          method: 'POST',
+                          headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': `Bearer ${localStorage.getItem('token')}`
+                          },
+                          body: JSON.stringify(requestBody)
+                        })
+                        const newRev = await createRes.json()
+                        setEditModal({ open: false, form: null, mode: 'edit' })
+                        setNotify({ open: true, title: 'Success', message: 'Child revision created successfully.' })
+                        // Reload current revision to refresh child revisions list
+                        const res = await apiFetch(`/api/revisions/${revision._id}`)
+                        const updated = await res.json()
+                        setRevision(updated)
+                        // Fetch child revisions again
+                        try {
+                          const childRes = await apiFetch(`/api/revisions?parentRevision=${revision._id}`)
+                          const childRevs = await childRes.json()
+                          setChildRevisions(Array.isArray(childRevs) ? childRevs : [])
+                        } catch {}
+                      } else {
+                        // Edit existing revision
+                        await apiFetch(`/api/revisions/${revision._id}`, {
+                          method: 'PUT',
+                          body: JSON.stringify(payload)
+                        })
+                        const res = await apiFetch(`/api/revisions/${revision._id}`)
+                        const updated = await res.json()
+                        setRevision(updated)
+                        setEditModal({ open: false, form: null, mode: 'edit' })
+                        setNotify({ open: true, title: 'Success', message: 'Revision updated successfully.' })
+                      }
                     } catch {
                       setNotify({ open: true, title: 'Save Failed', message: 'We could not save your changes. Please try again.' })
                     }
-                  }}>Save Changes</button>
+                  }}>{editModal.mode === 'create' ? 'Create Revision' : 'Save Changes'}</button>
                 </div>
               </div>
             )}
@@ -2983,6 +3433,138 @@ function RevisionDetail() {
               <p>{notify.message}</p>
               <div className="form-actions">
                 <button type="button" className="save-btn" onClick={() => setNotify({ open: false, title: '', message: '' })}>OK</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Print Preview Modal */}
+      {printPreviewModal.open && printPreviewModal.pdfUrl && (
+        <div className="modal-overlay" onClick={() => setPrintPreviewModal({ open: false, pdfUrl: null, revision: null })} style={{ zIndex: 10000 }}>
+          <div className="modal" onClick={e => e.stopPropagation()} style={{ zIndex: 10001, maxWidth: '95%', width: '100%', height: '95vh', display: 'flex', flexDirection: 'column' }}>
+            <div className="modal-header" style={{ flexShrink: 0, borderBottom: '1px solid var(--border)', padding: '16px 24px' }}>
+              <h2>PDF Preview - Revision {printPreviewModal.revision?.revisionNumber || ''}</h2>
+              <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                <button 
+                  className="save-btn" 
+                  onClick={async () => {
+                    if (printPreviewModal.revision) {
+                      try {
+                        await exportPDF()
+                      } catch (e) {
+                        setNotify({ open: true, title: 'Export Failed', message: 'We could not generate the PDF. Please try again.' })
+                      }
+                    }
+                  }}
+                >
+                  Download PDF
+                </button>
+                <button 
+                  className="save-btn" 
+                  onClick={() => {
+                    if (printPreviewModal.pdfUrl) {
+                      const printWindow = window.open('', '_blank')
+                      printWindow.document.write(`
+                        <!DOCTYPE html>
+                        <html>
+                          <head>
+                            <title>Revision ${printPreviewModal.revision?.revisionNumber || ''} - Commercial Quotation</title>
+                            <style>
+                              body { margin: 0; padding: 0; }
+                              iframe { width: 100%; height: 100vh; border: none; }
+                            </style>
+                          </head>
+                          <body>
+                            <iframe src="${printPreviewModal.pdfUrl}"></iframe>
+                          </body>
+                        </html>
+                      `)
+                      printWindow.document.close()
+                      setTimeout(() => {
+                        printWindow.frames[0].print()
+                      }, 500)
+                    }
+                  }}
+                >
+                  Print
+                </button>
+                <button onClick={() => setPrintPreviewModal({ open: false, pdfUrl: null, revision: null })} className="close-btn">×</button>
+              </div>
+            </div>
+            <div style={{ flex: 1, overflow: 'hidden', background: '#525252', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <iframe 
+                src={printPreviewModal.pdfUrl}
+                style={{ 
+                  width: '100%', 
+                  height: '100%', 
+                  border: 'none',
+                  background: 'white'
+                }}
+                title="PDF Preview"
+              />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {sendApprovalConfirmModal && (
+        <div className="modal-overlay" onClick={() => setSendApprovalConfirmModal(false)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>Confirm Send for Approval</h2>
+              <button onClick={() => setSendApprovalConfirmModal(false)} className="close-btn">×</button>
+            </div>
+            <div className="lead-form">
+              <p>Are you sure you want to send this revision for approval?</p>
+              <div className="form-actions">
+                <button type="button" className="cancel-btn" onClick={() => setSendApprovalConfirmModal(false)}>Cancel</button>
+                <button type="button" className="save-btn" onClick={sendForApproval}>
+                  Confirm & Send
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {deleteModal.open && (
+        <div className="modal-overlay" onClick={() => setDeleteModal({ open: false })}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>Delete Revision</h2>
+              <button onClick={() => setDeleteModal({ open: false })} className="close-btn">×</button>
+            </div>
+            <div className="lead-form">
+              <p>Are you sure you want to delete Revision {revision?.revisionNumber}? This action cannot be undone.</p>
+              <div className="form-actions">
+                <button type="button" className="cancel-btn" onClick={() => setDeleteModal({ open: false })}>Cancel</button>
+                <button type="button" className="reject-btn" onClick={async () => {
+                  try {
+                    if (!revision?._id) return
+                    // Double-check for child revisions before deleting
+                    const hasChild = childRevisions.some(x => (x.parentRevision?._id || x.parentRevision) === revision._id)
+                    if (hasChild) {
+                      setDeleteModal({ open: false })
+                      setNotify({ open: true, title: 'Cannot Delete', message: 'This revision cannot be deleted because it has child revisions.' })
+                      return
+                    }
+                    await apiFetch(`/api/revisions/${revision._id}`, {
+                      method: 'DELETE',
+                      headers: {
+                        'Authorization': `Bearer ${localStorage.getItem('token')}`
+                      }
+                    })
+                    setDeleteModal({ open: false })
+                    setNotify({ open: true, title: 'Revision Deleted', message: 'The revision was deleted successfully.' })
+                    setTimeout(() => {
+                      window.location.href = '/revisions'
+                    }, 1500)
+                  } catch (e) {
+                    setDeleteModal({ open: false })
+                    setNotify({ open: true, title: 'Delete Failed', message: e.message || 'We could not delete the revision. Please try again.' })
+                  }
+                }}>Confirm Delete</button>
               </div>
             </div>
           </div>
