@@ -1,4 +1,7 @@
 const express = require('express');
+const multer = require('multer');
+const path = require('path');
+const fs = require('fs');
 const Project = require('../models/Project');
 const User = require('../models/User');
 const jwt = require('jsonwebtoken');
@@ -6,6 +9,46 @@ const Revision = require('../models/Revision');
 const Lead = require('../models/Lead');
 const AuditLog = require('../models/AuditLog');
 const router = express.Router();
+
+// Configure multer for file uploads (projects)
+const uploadsDir = path.join(__dirname, '..', 'uploads', 'projects');
+if (!fs.existsSync(uploadsDir)) {
+  fs.mkdirSync(uploadsDir, { recursive: true });
+}
+
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, uploadsDir);
+  },
+  filename: (req, file, cb) => {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    cb(null, uniqueSuffix + path.extname(file.originalname));
+  }
+});
+
+const fileFilter = (req, file, cb) => {
+  // Allow images, documents, and videos
+  const allowedMimes = [
+    'image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp',
+    'application/pdf', 'application/msword', 
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'application/vnd.ms-excel',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    'video/mp4', 'video/mpeg', 'video/quicktime', 'video/x-msvideo', 'video/x-ms-wmv',
+    'video/webm', 'video/ogg', 'video/3gpp', 'video/x-matroska'
+  ];
+  if (allowedMimes.includes(file.mimetype)) {
+    cb(null, true);
+  } else {
+    cb(new Error('Invalid file type. Only images, documents, and videos are allowed.'), false);
+  }
+};
+
+const upload = multer({
+  storage: storage,
+  fileFilter: fileFilter,
+  limits: { fileSize: 10 * 1024 * 1024 } // 10MB limit
+});
 
 const auth = (req, res, next) => {
   const token = req.header('Authorization')?.replace('Bearer ', '');
@@ -57,9 +100,32 @@ router.put('/:id', auth, async (req, res) => {
     for (const field of updatable) {
       if (typeof req.body[field] === 'undefined') continue;
       const from = project[field];
-      const to = req.body[field];
-      if (JSON.stringify(from) !== JSON.stringify(to)) {
-        changes.push({ field, from, to });
+      let to = req.body[field];
+      
+      // Normalize assignedProjectEngineer to array format
+      if (field === 'assignedProjectEngineer') {
+        if (to) {
+          to = Array.isArray(to) ? to.filter(id => id) : [to].filter(id => id);
+        } else {
+          to = [];
+        }
+        // Normalize 'from' for comparison
+        const fromArray = Array.isArray(from) ? from : (from ? [from] : []);
+        if (JSON.stringify(fromArray.sort()) === JSON.stringify(to.sort())) {
+          continue; // No change
+        }
+      } else {
+        if (JSON.stringify(from) !== JSON.stringify(to)) {
+          changes.push({ field, from, to });
+          project[field] = to;
+          continue;
+        }
+      }
+      
+      // Handle assignedProjectEngineer change
+      if (field === 'assignedProjectEngineer') {
+        const fromArray = Array.isArray(from) ? from : (from ? [from] : []);
+        changes.push({ field, from: fromArray, to });
         project[field] = to;
       }
     }
@@ -78,7 +144,24 @@ router.put('/:id', auth, async (req, res) => {
 });
 
 // Create a project from an approved Revision
-router.post('/from-revision/:revisionId', auth, async (req, res) => {
+router.post('/from-revision/:revisionId', auth, (req, res, next) => {
+  upload.array('attachments', 10)(req, res, (err) => {
+    if (err) {
+      // Handle multer errors
+      if (err.code === 'LIMIT_FILE_SIZE') {
+        return res.status(400).json({ message: 'File size exceeds 10MB limit' });
+      }
+      if (err.code === 'LIMIT_FILE_COUNT') {
+        return res.status(400).json({ message: 'Too many files. Maximum 10 files allowed' });
+      }
+      if (err.message && err.message.includes('Invalid file type')) {
+        return res.status(400).json({ message: err.message });
+      }
+      return res.status(400).json({ message: err.message || 'File upload error' });
+    }
+    next();
+  });
+}, async (req, res) => {
   try {
     const { revisionId } = req.params;
     const revision = await Revision.findById(revisionId)
@@ -111,7 +194,31 @@ router.post('/from-revision/:revisionId', auth, async (req, res) => {
     const leadId = revision.lead ? (revision.lead._id || revision.lead) : null;
     const lead = leadId ? await Lead.findById(leadId) : null;
 
-    const { name, locationDetails, workingHours, manpowerCount, assignedProjectEngineerId } = req.body || {};
+    const { name, locationDetails, workingHours, manpowerCount } = req.body || {};
+    // Handle assignedProjectEngineerIds - FormData may send as array or repeated keys
+    let engineerIds = [];
+    if (req.body.assignedProjectEngineerIds) {
+      // FormData with repeated keys creates an array, or it might be a single value
+      const ids = Array.isArray(req.body.assignedProjectEngineerIds) 
+        ? req.body.assignedProjectEngineerIds 
+        : [req.body.assignedProjectEngineerIds];
+      engineerIds = ids.filter(id => id && id !== '');
+    }
+    
+    // Process uploaded files
+    const attachments = [];
+    if (req.files && req.files.length > 0) {
+      req.files.forEach(file => {
+        attachments.push({
+          filename: file.filename,
+          originalName: file.originalname,
+          path: `/uploads/projects/${file.filename}`,
+          mimetype: file.mimetype,
+          size: file.size
+        });
+      });
+    }
+    
     const project = new Project({
       name: name || revision.projectTitle || lead?.projectTitle || 'Project',
       budget: lead?.budget,
@@ -120,9 +227,10 @@ router.post('/from-revision/:revisionId', auth, async (req, res) => {
       manpowerCount: (typeof manpowerCount === 'number' ? manpowerCount : lead?.manpowerCount),
       leadId: leadId,
       createdBy: req.user.userId,
-      assignedProjectEngineer: assignedProjectEngineerId || undefined,
+      assignedProjectEngineer: engineerIds.length > 0 ? engineerIds : undefined,
       sourceRevision: revision._id,
-      sourceQuotation: revision.parentQuotation
+      sourceQuotation: revision.parentQuotation,
+      attachments: attachments.length > 0 ? attachments : undefined
     });
 
     await project.save();

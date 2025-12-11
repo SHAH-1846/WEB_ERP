@@ -225,7 +225,7 @@ function Dashboard() {
             </NavLink>
           )}
           
-          {/* Show Quotations, Revisions, Project Variations for estimation engineers (not in accordion) */}
+          {/* Show Quotations, Revisions, Projects, Project Variations for estimation engineers (not in accordion) */}
           {user?.roles?.some(r => ['estimation_engineer'].includes(r)) && !(user?.roles?.includes('admin') || user?.roles?.includes('manager')) && (
             <>
               <NavLink to="/quotations" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
@@ -240,6 +240,12 @@ function Dashboard() {
                 </svg>
                 <span className="label">Revisions</span>
               </NavLink>
+              <NavLink to="/projects" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
+                <svg viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-5 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z"/>
+                </svg>
+                <span className="label">Projects</span>
+              </NavLink>
               <NavLink to="/project-variations" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
                 <svg viewBox="0 0 24 24" fill="currentColor">
                   <path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-2 10h-4v4h-4v-4H5v-4h4V5h4v4h4v4z"/>
@@ -249,8 +255,8 @@ function Dashboard() {
             </>
           )}
           
-          {/* Show Projects for all users (not in accordion for non-admin/manager) */}
-          {!(user?.roles?.includes('admin') || user?.roles?.includes('manager')) && (
+          {/* Show Projects for other users (not in accordion for non-admin/manager, excluding estimation engineers) */}
+          {!(user?.roles?.includes('admin') || user?.roles?.includes('manager') || user?.roles?.includes('estimation_engineer')) && (
             <NavLink to="/projects" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
               <svg viewBox="0 0 24 24" fill="currentColor">
                 <path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-5 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z"/>
