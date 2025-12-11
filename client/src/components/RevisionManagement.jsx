@@ -885,6 +885,7 @@ function RevisionManagement() {
   const [headerHeight, setHeaderHeight] = useState(80) // Header height for sticky positioning
   const headerRef = useRef(null)
   const [editModal, setEditModal] = useState({ open: false, revision: null, form: null, mode: 'edit' })
+  const [approvedEditBlockModal, setApprovedEditBlockModal] = useState({ open: false })
   const [profileUser, setProfileUser] = useState(null)
   const [notify, setNotify] = useState({ open: false, title: '', message: '' })
   const [confirmDelete, setConfirmDelete] = useState({ open: false, revision: null })
@@ -1859,43 +1860,54 @@ function RevisionManagement() {
       )}
       <button className="save-btn" onClick={() => generatePDFPreview(r)}>Print Preview</button>
       {(currentUser?.roles?.includes('estimation_engineer') || currentUser?.roles?.includes('manager') || currentUser?.roles?.includes('admin') || r.createdBy?._id === currentUser?.id) && (
-        <button className="assign-btn" onClick={() => setEditModal({ open: true, revision: r, mode: 'edit', form: {
-          companyInfo: r.companyInfo || {},
-          submittedTo: r.submittedTo || '',
-          attention: r.attention || '',
-          offerReference: r.offerReference || '',
-          enquiryNumber: r.enquiryNumber || '',
-          offerDate: r.offerDate ? String(r.offerDate).slice(0,10) : '',
-          enquiryDate: r.enquiryDate ? String(r.enquiryDate).slice(0,10) : '',
-          projectTitle: r.projectTitle || r.lead?.projectTitle || '',
-          introductionText: r.introductionText || '',
-          scopeOfWork: typeof r.scopeOfWork === 'string'
-            ? r.scopeOfWork
-            : (r.scopeOfWork?.length
-                ? r.scopeOfWork.map(item => item.description || '').join('<br>')
-                : ''),
-          priceSchedule: typeof r.priceSchedule === 'string'
-            ? r.priceSchedule
-            : (r.priceSchedule?.items?.length
-                ? r.priceSchedule.items.map(item => 
-                    `${item.description || ''}${item.quantity ? ` - Qty: ${item.quantity}` : ''}${item.unit ? ` ${item.unit}` : ''}${item.unitRate ? ` @ ${item.unitRate}` : ''}${item.totalAmount ? ` = ${item.totalAmount}` : ''}`
-                  ).join('<br>')
-                : ''),
-          ourViewpoints: r.ourViewpoints || '',
-          exclusions: typeof r.exclusions === 'string'
-            ? r.exclusions
-            : (r.exclusions?.length
-                ? r.exclusions.join('<br>')
-                : ''),
-          paymentTerms: typeof r.paymentTerms === 'string'
-            ? r.paymentTerms
-            : (r.paymentTerms?.length
-                ? r.paymentTerms.map(term => 
-                    `${term.milestoneDescription || ''}${term.amountPercent ? ` - ${term.amountPercent}%` : ''}`
-                  ).join('<br>')
-                : ''),
-          deliveryCompletionWarrantyValidity: r.deliveryCompletionWarrantyValidity || { deliveryTimeline: '', warrantyPeriod: '', offerValidity: 30, authorizedSignatory: currentUser?.name || '' }
-        } })}>Edit</button>
+        <button className="assign-btn" onClick={() => {
+          if (r.managementApproval?.status === 'approved') {
+            setApprovedEditBlockModal({ open: true })
+            return
+          }
+          setEditModal({ 
+            open: true, 
+            revision: r, 
+            mode: 'edit', 
+            form: {
+              companyInfo: r.companyInfo || {},
+              submittedTo: r.submittedTo || '',
+              attention: r.attention || '',
+              offerReference: r.offerReference || '',
+              enquiryNumber: r.enquiryNumber || '',
+              offerDate: r.offerDate ? String(r.offerDate).slice(0,10) : '',
+              enquiryDate: r.enquiryDate ? String(r.enquiryDate).slice(0,10) : '',
+              projectTitle: r.projectTitle || r.lead?.projectTitle || '',
+              introductionText: r.introductionText || '',
+              scopeOfWork: typeof r.scopeOfWork === 'string'
+                ? r.scopeOfWork
+                : (r.scopeOfWork?.length
+                    ? r.scopeOfWork.map(item => item.description || '').join('<br>')
+                    : ''),
+              priceSchedule: typeof r.priceSchedule === 'string'
+                ? r.priceSchedule
+                : (r.priceSchedule?.items?.length
+                    ? r.priceSchedule.items.map(item => 
+                        `${item.description || ''}${item.quantity ? ` - Qty: ${item.quantity}` : ''}${item.unit ? ` ${item.unit}` : ''}${item.unitRate ? ` @ ${item.unitRate}` : ''}${item.totalAmount ? ` = ${item.totalAmount}` : ''}`
+                      ).join('<br>')
+                    : ''),
+              ourViewpoints: r.ourViewpoints || '',
+              exclusions: typeof r.exclusions === 'string'
+                ? r.exclusions
+                : (r.exclusions?.length
+                    ? r.exclusions.join('<br>')
+                    : ''),
+              paymentTerms: typeof r.paymentTerms === 'string'
+                ? r.paymentTerms
+                : (r.paymentTerms?.length
+                    ? r.paymentTerms.map(term => 
+                        `${term.milestoneDescription || ''}${term.amountPercent ? ` - ${term.amountPercent}%` : ''}`
+                      ).join('<br>')
+                    : ''),
+              deliveryCompletionWarrantyValidity: r.deliveryCompletionWarrantyValidity || { deliveryTimeline: '', warrantyPeriod: '', offerValidity: 30, authorizedSignatory: currentUser?.name || '' }
+            }
+          })
+        }}>Edit</button>
       )}
       <button className="assign-btn" onClick={() => {
         localStorage.setItem('revisionId', r._id)
@@ -3622,6 +3634,28 @@ function RevisionManagement() {
                 }}
                 title="PDF Preview"
               />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {approvedEditBlockModal.open && (
+        <div className="modal-overlay" onClick={() => setApprovedEditBlockModal({ open: false })}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>Cannot Edit Approved Revision</h2>
+              <button onClick={() => setApprovedEditBlockModal({ open: false })} className="close-btn">×</button>
+            </div>
+            <div className="lead-form">
+              <p style={{ marginBottom: '16px', color: 'var(--text)' }}>
+                This revision has been approved and cannot be edited. Approved revisions are locked to maintain data integrity and audit trails.
+              </p>
+              <p style={{ marginBottom: '16px', color: 'var(--text-secondary)' }}>
+                If you need to make changes, please create a new revision instead.
+              </p>
+              <div className="form-actions">
+                <button type="button" className="save-btn" onClick={() => setApprovedEditBlockModal({ open: false })}>OK</button>
+              </div>
             </div>
           </div>
         </div>

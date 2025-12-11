@@ -34,6 +34,8 @@ function SiteVisitDetail() {
   const [deleteModal, setDeleteModal] = useState({ open: false })
   const [isDeleting, setIsDeleting] = useState(false)
   const [printPreviewModal, setPrintPreviewModal] = useState({ open: false, pdfUrl: null })
+  const [quotations, setQuotations] = useState([])
+  const [siteVisitEditBlockModal, setSiteVisitEditBlockModal] = useState({ open: false })
   const [isDark, setIsDark] = useState(() => {
     const saved = localStorage.getItem('theme')
     return saved === 'dark'
@@ -219,6 +221,17 @@ ${visit.actionItems ? 'Recommended follow‑up: ' + visit.actionItems : 'Continu
         if (storedLead) {
           const leadData = JSON.parse(storedLead)
           setLead(leadData)
+          
+          // Fetch quotations for this lead
+          try {
+            const qRes = await apiFetch('/api/quotations')
+            const allQ = await qRes.json()
+            const list = Array.isArray(allQ) ? allQ.filter(q => {
+              const qLeadId = typeof q.lead === 'object' ? q.lead?._id : q.lead
+              return qLeadId === leadData._id
+            }) : []
+            setQuotations(list)
+          } catch {}
         }
         
         // Fetch fresh data if IDs are available
@@ -238,6 +251,17 @@ ${visit.actionItems ? 'Recommended follow‑up: ' + visit.actionItems : 'Continu
             const leadData = await leadRes.json()
             setLead(leadData)
             localStorage.setItem('leadDetail', JSON.stringify(leadData))
+            
+            // Fetch quotations for this lead
+            try {
+              const qRes = await apiFetch('/api/quotations')
+              const allQ = await qRes.json()
+              const list = Array.isArray(allQ) ? allQ.filter(q => {
+                const qLeadId = typeof q.lead === 'object' ? q.lead?._id : q.lead
+                return qLeadId === leadId
+              }) : []
+              setQuotations(list)
+            } catch {}
           } catch {}
         }
       } catch {}
@@ -303,6 +327,11 @@ ${visit.actionItems ? 'Recommended follow‑up: ' + visit.actionItems : 'Continu
             <button
               className="save-btn"
               onClick={() => {
+                // Check if quotations exist for this lead
+                if (quotations && quotations.length > 0) {
+                  setSiteVisitEditBlockModal({ open: true })
+                  return
+                }
                 setEditVisit(siteVisit)
                 setVisitEditData({
                   visitAt: siteVisit.visitAt ? new Date(siteVisit.visitAt).toISOString().slice(0,16) : '',
@@ -1210,6 +1239,28 @@ ${siteVisit.actionItems ? 'Recommended follow‑up: ' + siteVisit.actionItems : 
                 <button type="submit" className="save-btn">Save Changes</button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {siteVisitEditBlockModal.open && (
+        <div className="modal-overlay" onClick={() => setSiteVisitEditBlockModal({ open: false })}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>Cannot Edit Site Visit</h2>
+              <button onClick={() => setSiteVisitEditBlockModal({ open: false })} className="close-btn">×</button>
+            </div>
+            <div className="lead-form">
+              <p style={{ marginBottom: '16px', color: 'var(--text)' }}>
+                This site visit cannot be edited because the associated lead has quotations. Site visits for leads with quotations are locked to maintain data integrity and ensure consistency with existing quotations.
+              </p>
+              <p style={{ marginBottom: '16px', color: 'var(--text-secondary)' }}>
+                If you need to make changes, please create a new site visit or contact an administrator.
+              </p>
+              <div className="form-actions">
+                <button type="button" className="save-btn" onClick={() => setSiteVisitEditBlockModal({ open: false })}>OK</button>
+              </div>
+            </div>
           </div>
         </div>
       )}

@@ -867,6 +867,7 @@ function RevisionDetail() {
     try { return JSON.parse(localStorage.getItem('user')) } catch { return null }
   })
   const [editModal, setEditModal] = useState({ open: false, form: null, mode: 'edit' })
+  const [approvedEditBlockModal, setApprovedEditBlockModal] = useState({ open: false })
   const [showHistory, setShowHistory] = useState(false)
   const [profileUser, setProfileUser] = useState(null)
   const [notify, setNotify] = useState({ open: false, title: '', message: '' })
@@ -998,8 +999,14 @@ function RevisionDetail() {
           // Show full-page edit form if in edit mode
           if (editMode === 'true') {
             localStorage.removeItem('revisionEditMode')
-            // Keep revisionEditFromListing flag if it exists (for cancel navigation)
-            setIsEditMode(true)
+            // Block editing if revision is approved
+            if (rev.managementApproval?.status === 'approved') {
+              setNotify({ open: true, title: 'Cannot Edit Approved Revision', message: 'This revision has been approved and cannot be edited. Please create a new revision if you need to make changes.' })
+              setIsEditMode(false)
+            } else {
+              // Keep revisionEditFromListing flag if it exists (for cancel navigation)
+              setIsEditMode(true)
+            }
             // Populate form with revision data
             setForm({
               companyInfo: rev.companyInfo || defaultCompany,
@@ -2517,7 +2524,12 @@ function RevisionDetail() {
           }}>View Project</button>
           <button className="save-btn" onClick={generatePDFPreview}>Print Preview</button>
           {(currentUser?.roles?.includes('estimation_engineer') || revision?.createdBy?._id === currentUser?.id) && (
-            <button className="assign-btn" onClick={() => setEditModal({ open: true, form: {
+            <button className="assign-btn" onClick={() => {
+              if (approvalStatus === 'approved') {
+                setApprovedEditBlockModal({ open: true })
+                return
+              }
+              setEditModal({ open: true, form: {
               companyInfo: revision.companyInfo || {},
               submittedTo: revision.submittedTo || '',
               attention: revision.attention || '',
@@ -2553,7 +2565,8 @@ function RevisionDetail() {
                       ).join('<br>')
                     : ''),
               deliveryCompletionWarrantyValidity: revision.deliveryCompletionWarrantyValidity || { deliveryTimeline: '', warrantyPeriod: '', offerValidity: 30, authorizedSignatory: currentUser?.name || '' }
-            } })}>Edit</button>
+            } })
+          }}>Edit</button>
           )}
           <button className="link-btn" onClick={() => {
             if (revision.parentQuotation?._id) {
@@ -3136,13 +3149,25 @@ function RevisionDetail() {
             </div>
             {editModal.form && (
               <div className="lead-form" style={{ maxHeight: '70vh', overflow: 'auto' }}>
+                {editModal.mode === 'edit' && approvalStatus === 'approved' && (
+                  <div style={{ 
+                    padding: '12px', 
+                    background: '#fee2e2', 
+                    border: '1px solid #fecaca', 
+                    borderRadius: '6px', 
+                    marginBottom: '16px',
+                    color: '#991b1b'
+                  }}>
+                    This revision has been approved and cannot be edited. Please create a new revision if you need to make changes.
+                  </div>
+                )}
                 <div className="form-section">
                   <div className="section-header">
                     <h3>Cover & Basic Details</h3>
                   </div>
                   <div className="form-group">
                     <label>Submitted To (Client Company)</label>
-                    <input type="text" value={editModal.form.submittedTo} onChange={e => setEditModal({ ...editModal, form: { ...editModal.form, submittedTo: e.target.value } })} />
+                    <input type="text" value={editModal.form.submittedTo} onChange={e => setEditModal({ ...editModal, form: { ...editModal.form, submittedTo: e.target.value } })} disabled={editModal.mode === 'edit' && approvalStatus === 'approved'} />
                   </div>
                   <div className="form-group">
                     <label>Attention (Contact Person)</label>
@@ -3268,7 +3293,12 @@ function RevisionDetail() {
 
                 <div className="form-actions">
                   <button type="button" className="cancel-btn" onClick={() => setEditModal({ open: false, form: null, mode: 'edit' })}>Cancel</button>
-                  <button type="button" className="save-btn" onClick={async () => {
+                  <button type="button" className="save-btn" disabled={editModal.mode === 'edit' && approvalStatus === 'approved'} onClick={async () => {
+                    // Block saving if revision is approved
+                    if (editModal.mode === 'edit' && approvalStatus === 'approved') {
+                      setNotify({ open: true, title: 'Cannot Edit Approved Revision', message: 'This revision has been approved and cannot be edited. Please create a new revision if you need to make changes.' })
+                      return
+                    }
                     try {
                       const token = localStorage.getItem('token')
                       const payload = { ...editModal.form }
@@ -3355,7 +3385,11 @@ function RevisionDetail() {
                           setChildRevisions(Array.isArray(childRevs) ? childRevs : [])
                         } catch {}
                       } else {
-                        // Edit existing revision
+                        // Edit existing revision - block if approved
+                        if (revision.managementApproval?.status === 'approved') {
+                          setNotify({ open: true, title: 'Cannot Edit Approved Revision', message: 'This revision has been approved and cannot be edited. Please create a new revision if you need to make changes.' })
+                          return
+                        }
                         await apiFetch(`/api/revisions/${revision._id}`, {
                           method: 'PUT',
                           body: JSON.stringify(payload)
@@ -3565,6 +3599,28 @@ function RevisionDetail() {
                     setNotify({ open: true, title: 'Delete Failed', message: e.message || 'We could not delete the revision. Please try again.' })
                   }
                 }}>Confirm Delete</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {approvedEditBlockModal.open && (
+        <div className="modal-overlay" onClick={() => setApprovedEditBlockModal({ open: false })}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>Cannot Edit Approved Revision</h2>
+              <button onClick={() => setApprovedEditBlockModal({ open: false })} className="close-btn">×</button>
+            </div>
+            <div className="lead-form">
+              <p style={{ marginBottom: '16px', color: 'var(--text)' }}>
+                This revision has been approved and cannot be edited. Approved revisions are locked to maintain data integrity and audit trails.
+              </p>
+              <p style={{ marginBottom: '16px', color: 'var(--text-secondary)' }}>
+                If you need to make changes, please create a new revision instead.
+              </p>
+              <div className="form-actions">
+                <button type="button" className="save-btn" onClick={() => setApprovedEditBlockModal({ open: false })}>OK</button>
               </div>
             </div>
           </div>

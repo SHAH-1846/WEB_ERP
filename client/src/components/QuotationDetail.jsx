@@ -883,6 +883,8 @@ function QuotationDetail() {
   const [printPreviewModal, setPrintPreviewModal] = useState({ open: false, pdfUrl: null, quotation: null })
   const [showModal, setShowModal] = useState(false)
   const [editing, setEditing] = useState(null)
+  const [leads, setLeads] = useState([])
+  const [approvedEditBlockModal, setApprovedEditBlockModal] = useState({ open: false })
 
   const ensurePdfMake = async () => {
     if (window.pdfMake) return
@@ -1725,6 +1727,14 @@ function QuotationDetail() {
     return String(value)
   }
 
+  const fetchLeads = async () => {
+    try {
+      const res = await apiFetch('/api/leads')
+      const leadsData = await res.json()
+      setLeads(Array.isArray(leadsData) ? leadsData : [])
+    } catch {}
+  }
+
   useEffect(() => {
     async function load() {
       try {
@@ -1733,6 +1743,7 @@ function QuotationDetail() {
         let initial = null
         const stored = localStorage.getItem('quotationDetail')
         if (stored) initial = JSON.parse(stored)
+        await fetchLeads()
         if (qid) {
           const res = await apiFetch(`/api/quotations/${qid}`)
           const q = await res.json()
@@ -1835,6 +1846,10 @@ function QuotationDetail() {
           ) : null}
           <button className="assign-btn" onClick={() => {
             if (quotation?._id) {
+              if (approvalStatus === 'approved') {
+                setApprovedEditBlockModal({ open: true })
+                return
+              }
               setEditing(quotation)
               setShowModal(true)
             }
@@ -2785,8 +2800,30 @@ function QuotationDetail() {
         source="quotations"
         onSave={handleSave}
         editing={editing}
-        leads={[]}
+        leads={leads}
       />
+
+      {approvedEditBlockModal.open && (
+        <div className="modal-overlay" onClick={() => setApprovedEditBlockModal({ open: false })}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>Cannot Edit Approved Quotation</h2>
+              <button onClick={() => setApprovedEditBlockModal({ open: false })} className="close-btn">×</button>
+            </div>
+            <div className="lead-form">
+              <p style={{ marginBottom: '16px', color: 'var(--text)' }}>
+                This quotation has been approved and cannot be edited. Approved quotations are locked to maintain data integrity and audit trails.
+              </p>
+              <p style={{ marginBottom: '16px', color: 'var(--text-secondary)' }}>
+                If you need to make changes, please create a revision instead.
+              </p>
+              <div className="form-actions">
+                <button type="button" className="save-btn" onClick={() => setApprovedEditBlockModal({ open: false })}>OK</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

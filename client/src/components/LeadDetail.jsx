@@ -29,6 +29,8 @@ function LeadDetail() {
   const [quotationHistoryOpen, setQuotationHistoryOpen] = useState({})
   const [profileUser, setProfileUser] = useState(null)
   const [editLeadOpen, setEditLeadOpen] = useState(false)
+  const [quotationEditBlockModal, setQuotationEditBlockModal] = useState({ open: false })
+  const [siteVisitEditBlockModal, setSiteVisitEditBlockModal] = useState({ open: false })
   const [isDark, setIsDark] = useState(() => {
     const saved = localStorage.getItem('theme')
     return saved === 'dark'
@@ -369,6 +371,11 @@ ${visit.actionItems ? 'Recommended follow‑up: ' + visit.actionItems : 'Continu
                   scopeSummary: lead.scopeSummary || '',
                   submissionDueDate: lead.submissionDueDate ? lead.submissionDueDate.substring(0,10) : ''
                 })
+                // Check if quotations exist for this lead
+                if (quotations && quotations.length > 0) {
+                  setQuotationEditBlockModal({ open: true })
+                  return
+                }
                 // Reset file selections when opening edit modal
                 setSelectedFiles([])
                 setPreviewFiles([])
@@ -747,6 +754,11 @@ ${visit.actionItems ? 'Recommended follow‑up: ' + visit.actionItems : 'Continu
                           }}>View</button>
                           {(currentUser?.roles?.includes('project_engineer') || currentUser?.roles?.includes('estimation_engineer')) && (
                             <button className="save-btn" onClick={() => {
+                              // Check if quotations exist for this lead
+                              if (quotations && quotations.length > 0) {
+                                setSiteVisitEditBlockModal({ open: true })
+                                return
+                              }
                               setEditVisit(v)
                               setVisitEditData({
                                 visitAt: v.visitAt ? new Date(v.visitAt).toISOString().slice(0,16) : '',
@@ -2309,6 +2321,50 @@ ${v.actionItems ? 'Recommended follow‑up: ' + v.actionItems : 'Continue with c
               <p>{notify.message}</p>
               <div className="form-actions">
                 <button type="button" className="save-btn" onClick={() => setNotify({ open: false, title: '', message: '' })}>OK</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {quotationEditBlockModal.open && (
+        <div className="modal-overlay" onClick={() => setQuotationEditBlockModal({ open: false })}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>Cannot Edit Lead</h2>
+              <button onClick={() => setQuotationEditBlockModal({ open: false })} className="close-btn">×</button>
+            </div>
+            <div className="lead-form">
+              <p style={{ marginBottom: '16px', color: 'var(--text)' }}>
+                This lead cannot be edited because it has associated quotations. Leads with quotations are locked to maintain data integrity and ensure consistency with existing quotations.
+              </p>
+              <p style={{ marginBottom: '16px', color: 'var(--text-secondary)' }}>
+                If you need to make changes, please create a new lead or contact an administrator.
+              </p>
+              <div className="form-actions">
+                <button type="button" className="save-btn" onClick={() => setQuotationEditBlockModal({ open: false })}>OK</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {siteVisitEditBlockModal.open && (
+        <div className="modal-overlay" onClick={() => setSiteVisitEditBlockModal({ open: false })}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>Cannot Edit Site Visit</h2>
+              <button onClick={() => setSiteVisitEditBlockModal({ open: false })} className="close-btn">×</button>
+            </div>
+            <div className="lead-form">
+              <p style={{ marginBottom: '16px', color: 'var(--text)' }}>
+                This site visit cannot be edited because the associated lead has quotations. Site visits for leads with quotations are locked to maintain data integrity and ensure consistency with existing quotations.
+              </p>
+              <p style={{ marginBottom: '16px', color: 'var(--text-secondary)' }}>
+                If you need to make changes, please create a new site visit or contact an administrator.
+              </p>
+              <div className="form-actions">
+                <button type="button" className="save-btn" onClick={() => setSiteVisitEditBlockModal({ open: false })}>OK</button>
               </div>
             </div>
           </div>

@@ -44,6 +44,7 @@ function LeadManagement() {
   const [visitFiles, setVisitFiles] = useState([])
   const [visitPreviewFiles, setVisitPreviewFiles] = useState([])
   const [notify, setNotify] = useState({ open: false, title: '', message: '', onOk: null })
+  const [quotationEditBlockModal, setQuotationEditBlockModal] = useState({ open: false })
   const [showQuotationModal, setShowQuotationModal] = useState(false)
   const [selectedLeadForQuotation, setSelectedLeadForQuotation] = useState(null)
   const [showQuotationsListModal, setShowQuotationsListModal] = useState(false)
@@ -288,7 +289,22 @@ function LeadManagement() {
     }
   }
 
-  const handleEditLead = (lead) => {
+  const handleEditLead = async (lead) => {
+    // Check if quotations exist for this lead
+    try {
+      const qRes = await api.get('/api/quotations')
+      const allQ = Array.isArray(qRes.data) ? qRes.data : []
+      const quotationsForThisLead = allQ.filter(q => {
+        const qLeadId = typeof q.lead === 'object' ? q.lead?._id : q.lead
+        return qLeadId === lead._id
+      })
+      if (quotationsForThisLead.length > 0) {
+        setQuotationEditBlockModal({ open: true })
+        return
+      }
+    } catch (e) {
+      // If check fails, allow editing (fail open)
+    }
     setEditingLead(lead)
     setFormData({
       customerName: lead.customerName || '',
@@ -2726,6 +2742,28 @@ function LeadManagement() {
         preSelectedLeadId={selectedLeadForQuotation}
         leads={leads}
       />
+
+      {quotationEditBlockModal.open && (
+        <div className="modal-overlay" onClick={() => setQuotationEditBlockModal({ open: false })}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>Cannot Edit Lead</h2>
+              <button onClick={() => setQuotationEditBlockModal({ open: false })} className="close-btn">×</button>
+            </div>
+            <div className="lead-form">
+              <p style={{ marginBottom: '16px', color: 'var(--text)' }}>
+                This lead cannot be edited because it has associated quotations. Leads with quotations are locked to maintain data integrity and ensure consistency with existing quotations.
+              </p>
+              <p style={{ marginBottom: '16px', color: 'var(--text-secondary)' }}>
+                If you need to make changes, please create a new lead or contact an administrator.
+              </p>
+              <div className="form-actions">
+                <button type="button" className="save-btn" onClick={() => setQuotationEditBlockModal({ open: false })}>OK</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
