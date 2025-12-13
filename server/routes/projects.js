@@ -143,6 +143,117 @@ router.put('/:id', auth, async (req, res) => {
   }
 });
 
+// Update a project with file attachment support (PATCH)
+router.patch('/:id', auth, (req, res, next) => {
+  upload.array('attachments', 10)(req, res, (err) => {
+    if (err) {
+      if (err.code === 'LIMIT_FILE_SIZE') {
+        return res.status(400).json({ message: 'File size exceeds 10MB limit' });
+      }
+      if (err.code === 'LIMIT_FILE_COUNT') {
+        return res.status(400).json({ message: 'Too many files. Maximum 10 files allowed' });
+      }
+      if (err.message && err.message.includes('Invalid file type')) {
+        return res.status(400).json({ message: err.message });
+      }
+      return res.status(400).json({ message: err.message || 'File upload error' });
+    }
+    next();
+  });
+}, async (req, res) => {
+  try {
+    const project = await Project.findById(req.params.id);
+    if (!project) return res.status(404).json({ message: 'Project not found' });
+
+    const editable = ['name', 'locationDetails', 'workingHours', 'manpowerCount', 'status', 'assignedProjectEngineer'];
+    const changes = [];
+    
+    for (const field of editable) {
+      if (!(field in req.body)) continue;
+      const from = project[field];
+      let to = req.body[field];
+      
+      // Handle assignedProjectEngineer as array
+      if (field === 'assignedProjectEngineer') {
+        if (!Array.isArray(to)) {
+          to = to ? [to] : [];
+        }
+        const fromArray = Array.isArray(from) ? from : (from ? [from] : []);
+        if (JSON.stringify(fromArray.sort()) !== JSON.stringify(to.sort())) {
+          changes.push({ field, from: fromArray, to });
+          project[field] = to;
+        }
+      } else {
+        if (JSON.stringify(from) !== JSON.stringify(to)) {
+          changes.push({ field, from, to });
+          project[field] = to;
+        }
+      }
+    }
+
+    // Handle file attachments
+    if (req.files && req.files.length > 0) {
+      if (!project.attachments) project.attachments = [];
+      req.files.forEach(file => {
+        project.attachments.push({
+          filename: file.filename,
+          originalName: file.originalname,
+          path: `/uploads/projects/${file.filename}`,
+          mimetype: file.mimetype,
+          size: file.size,
+          uploadedAt: new Date()
+        });
+      });
+    }
+
+    // Handle attachment removals
+    if (req.body.removeAttachments) {
+      const indicesToRemove = Array.isArray(req.body.removeAttachments) 
+        ? req.body.removeAttachments 
+        : [req.body.removeAttachments];
+      
+      // Delete files from filesystem
+      for (const index of indicesToRemove) {
+        const idx = parseInt(index);
+        if (idx >= 0 && idx < project.attachments.length) {
+          const attachment = project.attachments[idx];
+          try {
+            const filePath = path.join(__dirname, '..', 'uploads', 'projects', attachment.filename);
+            if (fs.existsSync(filePath)) {
+              fs.unlinkSync(filePath);
+              console.log(`Removed attachment: ${attachment.filename}`);
+            }
+          } catch (fileError) {
+            console.error(`Error removing file ${attachment.filename}:`, fileError);
+          }
+        }
+      }
+      
+      // Remove from database
+      project.attachments = project.attachments.filter((_, idx) => 
+        !indicesToRemove.includes(idx.toString())
+      );
+    }
+
+    // Save edit history
+    if (changes.length > 0) {
+      project.edits = Array.isArray(project.edits) ? project.edits : [];
+      project.edits.push({ editedBy: req.user.userId, changes });
+    }
+
+    await project.save();
+    await project.populate('assignedSiteEngineer', 'name email');
+    await project.populate('assignedProjectEngineer', 'name email');
+    await project.populate('createdBy', 'name email');
+    
+    res.json(project);
+  } catch (error) {
+    console.error('Error updating project:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+
 // Create a project from an approved Revision
 router.post('/from-revision/:revisionId', auth, (req, res, next) => {
   upload.array('attachments', 10)(req, res, (err) => {
@@ -345,7 +456,24 @@ router.delete('/:id', auth, async (req, res) => {
       console.error('Error creating audit log:', auditError);
     }
     
+    // Delete associated attachment files from filesystem
+    if (project.attachments && Array.isArray(project.attachments) && project.attachments.length > 0) {
+      for (const attachment of project.attachments) {
+        try {
+          const filePath = path.join(__dirname, '..', 'uploads', 'projects', attachment.filename);
+          if (fs.existsSync(filePath)) {
+            fs.unlinkSync(filePath);
+            console.log(`Deleted file: ${attachment.filename}`);
+          }
+        } catch (fileError) {
+          // Log error but don't fail the deletion
+          console.error(`Error deleting file ${attachment.filename}:`, fileError);
+        }
+      }
+    }
+    
     await Project.findByIdAndDelete(req.params.id);
+
     return res.json({ success: true });
   } catch (error) {
     console.error('Error deleting project:', error);

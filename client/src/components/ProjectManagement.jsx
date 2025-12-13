@@ -50,6 +50,9 @@ function ProjectManagement() {
   const [allVariations, setAllVariations] = useState([])
   const [variationWarningModal, setVariationWarningModal] = useState({ open: false, project: null, existingVariations: [] })
   const [editProjectWarningModal, setEditProjectWarningModal] = useState({ open: false, project: null, existingVariations: [] })
+  const [selectedFiles, setSelectedFiles] = useState([])
+  const [previewFiles, setPreviewFiles] = useState([])
+  const [attachmentsToRemove, setAttachmentsToRemove] = useState([])
   const [expandedVariationRows, setExpandedVariationRows] = useState({}) // Track which rows have expanded variations
   const [projectVariationsMap, setProjectVariationsMap] = useState({}) // Store variations per project ID
   const [variationsForProject, setVariationsForProject] = useState([])
@@ -73,7 +76,44 @@ function ProjectManagement() {
   const headerRef = useRef(null)
   const [isLoading, setIsLoading] = useState(true)
   const [isSubmitting, setIsSubmitting] = useState(false)
+
   const [loadingAction, setLoadingAction] = useState(null)
+  
+  const formatFileSize = (bytes) => {
+    if (bytes === 0) return '0 Bytes'
+    const k = 1024
+    const sizes = ['Bytes', 'KB', 'MB', 'GB']
+    const i = Math.floor(Math.log(bytes) / Math.log(k))
+    return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i]
+  }
+
+  const handleFileChange = (e) => {
+    const files = Array.from(e.target.files)
+    setSelectedFiles(prev => [...prev, ...files])
+    
+    files.forEach(file => {
+      if (file.type.startsWith('image/')) {
+        const reader = new FileReader()
+        reader.onloadend = () => {
+          setPreviewFiles(prev => [...prev, { file, preview: reader.result, type: 'image' }])
+        }
+        reader.readAsDataURL(file)
+      } else if (file.type.startsWith('video/')) {
+        const reader = new FileReader()
+        reader.onloadend = () => {
+          setPreviewFiles(prev => [...prev, { file, preview: reader.result, type: 'video' }])
+        }
+        reader.readAsDataURL(file)
+      } else {
+        setPreviewFiles(prev => [...prev, { file, preview: null, type: 'document' }])
+      }
+    })
+  }
+
+  const removeFile = (index) => {
+    setSelectedFiles(prev => prev.filter((_, i) => i !== index))
+    setPreviewFiles(prev => prev.filter((_, i) => i !== index))
+  }
   
   const defaultCompany = useMemo(() => ({
     logo: null,
@@ -99,14 +139,6 @@ function ProjectManagement() {
       script.onerror = reject
       document.body.appendChild(script)
     })
-  }
-
-  const formatFileSize = (bytes) => {
-    if (bytes === 0) return '0 Bytes'
-    const k = 1024
-    const sizes = ['Bytes', 'KB', 'MB', 'GB']
-    const i = Math.floor(Math.log(bytes) / Math.log(k))
-    return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i]
   }
 
   const exportProjectPDF = async (project) => {
@@ -1096,13 +1128,19 @@ function ProjectManagement() {
             setProjectEngineers(Array.isArray(resEng.data) ? resEng.data : [])
           } catch {}
         })()
+        // Reset file states
+        setSelectedFiles([])
+        setPreviewFiles([])
+        setAttachmentsToRemove([])
         setEditProjectModal({ open: true, form: {
           name: project.name || '',
           locationDetails: project.locationDetails || '',
           workingHours: project.workingHours || '',
           manpowerCount: project.manpowerCount || '',
           status: project.status || 'active',
-          assignedProjectEngineer: project.assignedProjectEngineer?._id || ''
+          assignedProjectEngineer: Array.isArray(project.assignedProjectEngineer) 
+            ? project.assignedProjectEngineer.map(e => typeof e === 'object' ? e._id : e)
+            : []
         } })
       }}>Edit</button>
       {canCreateSiteVisit() && (
@@ -2173,22 +2211,269 @@ function ProjectManagement() {
                 </select>
               </div>
               <div className="form-group">
-                <label>Project Engineer</label>
-                <select value={editProjectModal.form.assignedProjectEngineer} onChange={e => setEditProjectModal({ ...editProjectModal, form: { ...editProjectModal.form, assignedProjectEngineer: e.target.value } })}>
-                  <option value="">-- Select --</option>
-                  {projectEngineers.map(u => (
-                    <option key={u._id} value={u._id}>{u.name} ({u.email})</option>
-                  ))}
-                </select>
-              </div>
-              {editProjectModal.form.assignedProjectEngineer && (
-                <div className="form-group">
-                  <button type="button" className="link-btn" onClick={() => {
-                    const u = projectEngineers.find(x => String(x._id) === String(editProjectModal.form.assignedProjectEngineer))
-                    if (u) setProfileUser(u)
-                  }}>View Profile</button>
+                <label>Project Engineer(s)</label>
+                <div style={{ 
+                  border: '1px solid var(--border)', 
+                  borderRadius: '8px', 
+                  padding: '8px',
+                  maxHeight: '200px',
+                  overflowY: 'auto',
+                  backgroundColor: 'var(--bg)'
+                }}>
+                  {projectEngineers.length === 0 ? (
+                    <p style={{ color: 'var(--text-muted)', fontSize: '14px', margin: '8px' }}>No project engineers available</p>
+                  ) : (
+                    projectEngineers.map(u => {
+                      const isSelected = Array.isArray(editProjectModal.form.assignedProjectEngineer) 
+                        ? editProjectModal.form.assignedProjectEngineer.includes(u._id)
+                        : editProjectModal.form.assignedProjectEngineer === u._id
+                      
+                      return (
+                        <div key={u._id} style={{ 
+                          display: 'flex', 
+                          alignItems: 'center', 
+                          padding: '8px', 
+                          borderBottom: '1px solid var(--border-light)',
+                          cursor: 'pointer',
+                          transition: 'background-color 0.2s'
+                        }}
+                        onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'var(--bg-hover)'}
+                        onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
+                        >
+                          <input
+                            type="checkbox"
+                            id={`eng-${u._id}`}
+                            checked={isSelected}
+                            onChange={(e) => {
+                              const currentEngineers = Array.isArray(editProjectModal.form.assignedProjectEngineer) 
+                                ? editProjectModal.form.assignedProjectEngineer 
+                                : []
+                              
+                              let newEngineers
+                              if (e.target.checked) {
+                                newEngineers = [...currentEngineers, u._id]
+                              } else {
+                                newEngineers = currentEngineers.filter(id => id !== u._id)
+                              }
+                              
+                              setEditProjectModal({ 
+                                ...editProjectModal, 
+                                form: { ...editProjectModal.form, assignedProjectEngineer: newEngineers } 
+                              })
+                            }}
+                            style={{ marginRight: '10px', cursor: 'pointer', width: '16px', height: '16px' }}
+                          />
+                          <label htmlFor={`eng-${u._id}`} style={{ cursor: 'pointer', flex: 1, margin: 0 }}>
+                            {u.name} ({u.email})
+                          </label>
+                        </div>
+                      )
+                    })
+                  )}
                 </div>
-              )}
+                {Array.isArray(editProjectModal.form.assignedProjectEngineer) && editProjectModal.form.assignedProjectEngineer.length > 0 && (
+                  <small style={{ display: 'block', marginTop: '8px', color: 'var(--text-muted)', fontStyle: 'italic' }}>
+                    {editProjectModal.form.assignedProjectEngineer.length} engineer{editProjectModal.form.assignedProjectEngineer.length === 1 ? '' : 's'} selected
+                  </small>
+                )}
+              </div>
+              <div className="form-group">
+                <label>Attachments (Documents, Images & Videos)</label>
+                <input
+                  type="file"
+                  multiple
+                  accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,video/*"
+                  onChange={handleFileChange}
+                  className="file-input"
+                />
+                <small style={{ display: 'block', marginTop: '5px', color: '#666' }}>
+                  Accepted: Images (JPEG, PNG, GIF, WebP), Documents (PDF, DOC, DOCX, XLS, XLSX), Videos (MP4, MOV, AVI, WMV, WebM, etc.). Max 10MB per file.
+                </small>
+                
+                {/* Display existing attachments when editing */}
+                {selectedProject && selectedProject.attachments && selectedProject.attachments.length > 0 && (
+                  <div style={{ marginTop: '15px' }}>
+                    <div style={{ marginBottom: '10px', fontWeight: 'bold', fontSize: '14px' }}>Existing Attachments:</div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
+                      {selectedProject.attachments.map((attachment, index) => {
+                        const isImage = attachment.mimetype && attachment.mimetype.startsWith('image/')
+                        const isVideo = attachment.mimetype && attachment.mimetype.startsWith('video/')
+                        const apiBase = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'
+                        const fileUrl = attachment.path.startsWith('http') ? attachment.path : `${apiBase}${attachment.path}`
+                        const isMarkedForRemoval = attachmentsToRemove.includes(index.toString())
+                        
+                        return (
+                          <div 
+                            key={index} 
+                            style={{ 
+                              position: 'relative', 
+                              border: isMarkedForRemoval ? '2px solid #dc3545' : '1px solid #ddd', 
+                              borderRadius: '4px', 
+                              padding: '8px',
+                              maxWidth: '150px',
+                              opacity: isMarkedForRemoval ? 0.5 : 1,
+                              backgroundColor: isMarkedForRemoval ? '#ffe6e6' : '#fff'
+                            }}
+                          >
+                            {isImage && attachment.path ? (
+                              <img 
+                                src={fileUrl} 
+                                alt={attachment.originalName}
+                                style={{ width: '100%', height: '100px', objectFit: 'cover', borderRadius: '4px' }}
+                                onError={(e) => { e.target.style.display = 'none' }}
+                              />
+                            ) : isVideo && attachment.path ? (
+                              <video 
+                                src={fileUrl}
+                                style={{ width: '100%', height: '100px', objectFit: 'cover', borderRadius: '4px' }}
+                                controls={false}
+                                muted
+                                onError={(e) => { e.target.style.display = 'none' }}
+                              />
+                            ) : (
+                              <div style={{ 
+                                width: '100%', 
+                                height: '100px', 
+                                display: 'flex', 
+                                alignItems: 'center', 
+                                justifyContent: 'center',
+                                backgroundColor: '#f5f5f5',
+                                borderRadius: '4px'
+                              }}>
+                                <span style={{ fontSize: '12px', textAlign: 'center' }}>{attachment.originalName}</span>
+                              </div>
+                            )}
+                            <div style={{ marginTop: '5px', fontSize: '11px', color: '#666' }}>
+                              {attachment.originalName.length > 15 ? attachment.originalName.substring(0, 15) + '...' : attachment.originalName}
+                            </div>
+                            <div style={{ fontSize: '10px', color: '#999' }}>
+                              {formatFileSize(attachment.size)}
+                            </div>
+                            {!isMarkedForRemoval && (
+                              <button
+                                type="button"
+                                onClick={() => setAttachmentsToRemove(prev => [...prev, index.toString()])}
+                                style={{
+                                  position: 'absolute',
+                                  top: '5px',
+                                  right: '5px',
+                                  background: 'rgba(220, 53, 69, 0.9)',
+                                  color: 'white',
+                                  border: 'none',
+                                  borderRadius: '50%',
+                                  width: '20px',
+                                  height: '20px',
+                                  cursor: 'pointer',
+                                  fontSize: '12px',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'center'
+                                }}
+                              >
+                                ×
+                              </button>
+                            )}
+                            {isMarkedForRemoval && (
+                              <div style={{ 
+                                position: 'absolute',
+                                top: 0,
+                                left: 0,
+                                right: 0,
+                                bottom: 0,
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                backgroundColor: 'rgba(220, 53, 69, 0.1)',
+                                borderRadius: '4px',
+                                fontSize: '11px',
+                                fontWeight: 'bold',
+                                color: '#dc3545'
+                              }}>
+                                Will Remove
+                              </div>
+                            )}
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </div>
+                )}
+                
+                {/* Display new files being uploaded */}
+                {previewFiles.length > 0 && (
+                  <div style={{ marginTop: '15px' }}>
+                    {selectedProject && selectedProject.attachments && selectedProject.attachments.length > 0 && (
+                      <div style={{ marginBottom: '10px', fontWeight: 'bold', fontSize: '14px' }}>New Attachments:</div>
+                    )}
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
+                      {previewFiles.map((item, index) => (
+                        <div key={index} style={{ 
+                          position: 'relative', 
+                          border: '1px solid #ddd', 
+                          borderRadius: '4px', 
+                          padding: '8px',
+                          maxWidth: '150px'
+                        }}>
+                          {item.type === 'image' && item.preview ? (
+                            <img 
+                              src={item.preview} 
+                              alt={item.file.name}
+                              style={{ width: '100%', height: '100px', objectFit: 'cover', borderRadius: '4px' }}
+                            />
+                          ) : item.type === 'video' && item.preview ? (
+                            <video 
+                              src={item.preview}
+                              style={{ width: '100%', height: '100px', objectFit: 'cover', borderRadius: '4px' }}
+                              controls={false}
+                              muted
+                            />
+                          ) : (
+                            <div style={{ 
+                              width: '100%', 
+                              height: '100px', 
+                              display: 'flex', 
+                              alignItems: 'center', 
+                              justifyContent: 'center',
+                              backgroundColor: '#f5f5f5',
+                              borderRadius: '4px'
+                            }}>
+                              <span style={{ fontSize: '12px', textAlign: 'center' }}>{item.file.name}</span>
+                            </div>
+                          )}
+                          <div style={{ marginTop: '5px', fontSize: '11px', color: '#666' }}>
+                            {item.file.name.length > 15 ? item.file.name.substring(0, 15) + '...' : item.file.name}
+                          </div>
+                          <div style={{ fontSize: '10px', color: '#999' }}>
+                            {formatFileSize(item.file.size)}
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => removeFile(index)}
+                            style={{
+                              position: 'absolute',
+                              top: '5px',
+                              right: '5px',
+                              background: 'rgba(255, 0, 0, 0.7)',
+                              color: 'white',
+                              border: 'none',
+                              borderRadius: '50%',
+                              width: '20px',
+                              height: '20px',
+                              cursor: 'pointer',
+                              fontSize: '12px',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center'
+                            }}
+                          >
+                            ×
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
               <div className="form-actions">
                 <button type="button" className="cancel-btn" onClick={() => setEditProjectModal({ open: false, form: { name: '', locationDetails: '', workingHours: '', manpowerCount: '', status: 'active' } })}>Cancel</button>
                 <button 
@@ -2212,9 +2497,35 @@ function ProjectManagement() {
                         return
                       }
                       
-                      const token = localStorage.getItem('token')
-                      await api.put(`/api/projects/${selectedProject._id}`, editProjectModal.form)
+                      // Use FormData for file uploads
+                      const formData = new FormData()
+                      Object.keys(editProjectModal.form).forEach(key => {
+                        if (key === 'assignedProjectEngineer') return // Skip, handle separately
+                        formData.append(key, editProjectModal.form[key])
+                      })
+                      
+                      // Append engineer IDs separately (FormData doesn't handle arrays well)
+                      if (Array.isArray(editProjectModal.form.assignedProjectEngineer)) {
+                        editProjectModal.form.assignedProjectEngineer.forEach(id => {
+                          formData.append('assignedProjectEngineer', id)
+                        })
+                      }
+                      
+                      // Append new files
+                      selectedFiles.forEach(file => {
+                        formData.append('attachments', file)
+                      })
+                      
+                      // Append attachments to remove
+                      attachmentsToRemove.forEach(index => {
+                        formData.append('removeAttachments', index)
+                      })
+                      
+                      await api.patch(`/api/projects/${selectedProject._id}`, formData)
                       setEditProjectModal({ open: false, form: { name: '', locationDetails: '', workingHours: '', manpowerCount: '', status: 'active' } })
+                      setSelectedFiles([])
+                      setPreviewFiles([])
+                      setAttachmentsToRemove([])
                       await fetchProjects()
                       setNotify({ open: true, title: 'Saved', message: 'Project updated successfully.' })
                     } catch (error) {
