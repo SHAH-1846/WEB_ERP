@@ -1924,15 +1924,15 @@ function RevisionManagement() {
             revision: r, 
             mode: 'edit', 
             form: {
-              companyInfo: r.companyInfo || {},
-              submittedTo: r.submittedTo || '',
-              attention: r.attention || '',
-              offerReference: r.offerReference || '',
-              enquiryNumber: r.enquiryNumber || '',
-              offerDate: r.offerDate ? String(r.offerDate).slice(0,10) : '',
-              enquiryDate: r.enquiryDate ? String(r.enquiryDate).slice(0,10) : '',
-              projectTitle: r.projectTitle || r.lead?.projectTitle || '',
-              introductionText: r.introductionText || '',
+          companyInfo: r.companyInfo || {},
+          submittedTo: r.submittedTo || '',
+          attention: r.attention || '',
+          offerReference: r.offerReference || '',
+          enquiryNumber: r.enquiryNumber || '',
+          offerDate: r.offerDate ? String(r.offerDate).slice(0,10) : '',
+          enquiryDate: r.enquiryDate ? String(r.enquiryDate).slice(0,10) : '',
+          projectTitle: r.projectTitle || r.lead?.projectTitle || '',
+          introductionText: r.introductionText || '',
               scopeOfWork: typeof r.scopeOfWork === 'string'
                 ? r.scopeOfWork
                 : (r.scopeOfWork?.length
@@ -1945,7 +1945,7 @@ function RevisionManagement() {
                         `${item.description || ''}${item.quantity ? ` - Qty: ${item.quantity}` : ''}${item.unit ? ` ${item.unit}` : ''}${item.unitRate ? ` @ ${item.unitRate}` : ''}${item.totalAmount ? ` = ${item.totalAmount}` : ''}`
                       ).join('<br>')
                     : ''),
-              ourViewpoints: r.ourViewpoints || '',
+          ourViewpoints: r.ourViewpoints || '',
               exclusions: typeof r.exclusions === 'string'
                 ? r.exclusions
                 : (r.exclusions?.length
@@ -1958,7 +1958,7 @@ function RevisionManagement() {
                         `${term.milestoneDescription || ''}${term.amountPercent ? ` - ${term.amountPercent}%` : ''}`
                       ).join('<br>')
                     : ''),
-              deliveryCompletionWarrantyValidity: r.deliveryCompletionWarrantyValidity || { deliveryTimeline: '', warrantyPeriod: '', offerValidity: 30, authorizedSignatory: currentUser?.name || '' }
+          deliveryCompletionWarrantyValidity: r.deliveryCompletionWarrantyValidity || { deliveryTimeline: '', warrantyPeriod: '', offerValidity: 30, authorizedSignatory: currentUser?.name || '' }
             }
           })
         }}>Edit</button>
@@ -2011,22 +2011,22 @@ function RevisionManagement() {
                     setNotify({ open: true, title: 'Error', message: 'Invalid revision data. Please refresh the page and try again.' })
                     return
                   }
-                  try {
-                    await api.get(`/api/projects/by-revision/${r._id}`)
-                    setNotify({ open: true, title: 'Not Allowed', message: 'A project already exists for this revision.' })
-                    return
-                  } catch {}
-                  const hasChild = revisions.some(x => (x.parentRevision?._id || x.parentRevision) === r._id)
-                  if (hasChild) {
-                    setNotify({ open: true, title: 'Not Allowed', message: 'Project can only be created from the last approved child revision.' })
-                    return
-                  }
-                  const parentId = typeof r.parentQuotation === 'object' ? r.parentQuotation?._id : r.parentQuotation
-                  const groupItems = revisions.filter(x => {
-                    const xParentId = typeof x.parentQuotation === 'object' ? x.parentQuotation?._id : x.parentQuotation
-                    return xParentId === parentId
-                  })
-                  const approved = groupItems.filter(x => x.managementApproval?.status === 'approved')
+                try {
+                  await api.get(`/api/projects/by-revision/${r._id}`)
+                  setNotify({ open: true, title: 'Not Allowed', message: 'A project already exists for this revision.' })
+                  return
+                } catch {}
+                const hasChild = revisions.some(x => (x.parentRevision?._id || x.parentRevision) === r._id)
+                if (hasChild) {
+                  setNotify({ open: true, title: 'Not Allowed', message: 'Project can only be created from the last approved child revision.' })
+                  return
+                }
+                const parentId = typeof r.parentQuotation === 'object' ? r.parentQuotation?._id : r.parentQuotation
+                const groupItems = revisions.filter(x => {
+                  const xParentId = typeof x.parentQuotation === 'object' ? x.parentQuotation?._id : x.parentQuotation
+                  return xParentId === parentId
+                })
+                const approved = groupItems.filter(x => x.managementApproval?.status === 'approved')
                   const latest = approved.slice().sort((a,b) => {
                     // Extract numeric part from revisionNumber (e.g., "PROJ-REV-001" -> 1)
                     const getRevisionNum = (revNum) => {
@@ -2037,20 +2037,20 @@ function RevisionManagement() {
                     };
                     return getRevisionNum(b.revisionNumber) - getRevisionNum(a.revisionNumber);
                   })[0]
-                  if (latest && latest._id !== r._id) {
-                    setNotify({ open: true, title: 'Not Allowed', message: `Only the latest approved revision (#${latest.revisionNumber}) can be used to create a project.` })
-                    return
-                  }
-                  let engineers = []
-                  try {
-                    const resEng = await api.get('/api/projects/project-engineers')
-                    engineers = Array.isArray(resEng.data) ? resEng.data : []
-                  } catch {}
-                  setCreateProjectModal({ open: true, revision: r, engineers, ack: false, form: {
-                    name: r.projectTitle || r.lead?.projectTitle || 'Project',
-                    locationDetails: r.lead?.locationDetails || '',
-                    workingHours: r.lead?.workingHours || '',
-                    manpowerCount: r.lead?.manpowerCount || '',
+                if (latest && latest._id !== r._id) {
+                  setNotify({ open: true, title: 'Not Allowed', message: `Only the latest approved revision (#${latest.revisionNumber}) can be used to create a project.` })
+                  return
+                }
+                let engineers = []
+                try {
+                  const resEng = await api.get('/api/projects/project-engineers')
+                  engineers = Array.isArray(resEng.data) ? resEng.data : []
+                } catch {}
+                setCreateProjectModal({ open: true, revision: r, engineers, ack: false, form: {
+                  name: r.projectTitle || r.lead?.projectTitle || 'Project',
+                  locationDetails: r.lead?.locationDetails || '',
+                  workingHours: r.lead?.workingHours || '',
+                  manpowerCount: r.lead?.manpowerCount ?? '',
                     assignedProjectEngineerIds: []
                   }, selectedFiles: [], previewFiles: [] })
                 } catch (error) {
@@ -3258,12 +3258,12 @@ function RevisionManagement() {
             }
           `}</style>
           <div className="modal-overlay" onClick={() => setCreateProjectModal({ open: false, revision: null, form: { name: '', locationDetails: '', workingHours: '', manpowerCount: '', assignedProjectEngineerIds: [] }, engineers: [], ack: false, selectedFiles: [], previewFiles: [] })}>
-            <div className="modal" onClick={e => e.stopPropagation()}>
-              <div className="modal-header">
-                <h2>Create Project</h2>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>Create Project</h2>
                 <button onClick={() => setCreateProjectModal({ open: false, revision: null, form: { name: '', locationDetails: '', workingHours: '', manpowerCount: '', assignedProjectEngineerIds: [] }, engineers: [], ack: false, selectedFiles: [], previewFiles: [] })} className="close-btn">×</button>
-              </div>
-              <div className="lead-form">
+            </div>
+            <div className="lead-form">
               {currentUser?.roles?.includes('estimation_engineer') && (
                 <div className="edit-item" style={{ background: '#FEF3C7', border: '1px solid #F59E0B', padding: 14, marginBottom: 14, color: '#7C2D12' }}>
                   <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
@@ -3290,7 +3290,16 @@ function RevisionManagement() {
                 </div>
                 <div className="form-group" style={{ flex: 1 }}>
                   <label>Manpower Count</label>
-                  <input type="number" value={createProjectModal.form.manpowerCount} onChange={e => setCreateProjectModal({ ...createProjectModal, form: { ...createProjectModal.form, manpowerCount: Number(e.target.value || 0) } })} />
+                  <input 
+                    type="number" 
+                    value={createProjectModal.form.manpowerCount === null || createProjectModal.form.manpowerCount === undefined || createProjectModal.form.manpowerCount === '' ? '' : createProjectModal.form.manpowerCount} 
+                    onChange={e => {
+                      const inputVal = e.target.value
+                      // Allow empty string, otherwise convert to number
+                      const val = inputVal === '' ? '' : (isNaN(Number(inputVal)) ? createProjectModal.form.manpowerCount : Number(inputVal))
+                      setCreateProjectModal({ ...createProjectModal, form: { ...createProjectModal.form, manpowerCount: val } })
+                    }} 
+                  />
                 </div>
               </div>
               <div className="form-group">
@@ -3386,7 +3395,7 @@ function RevisionManagement() {
                               View Profile
                             </button>
                           )}
-                        </div>
+              </div>
                       );
                     })
                   ) : (
@@ -3412,7 +3421,7 @@ function RevisionManagement() {
                   </p>
                 )}
               </div>
-              <div className="form-group">
+                <div className="form-group">
                 <label>Attachments (Documents, Images & Videos)</label>
                 <input
                   type="file"
@@ -3474,8 +3483,8 @@ function RevisionManagement() {
                         </button>
                       </div>
                     ))}
-                  </div>
-                )}
+                </div>
+              )}
               </div>
               {currentUser?.roles?.includes('estimation_engineer') && (
                 <div className="form-group">
@@ -3534,7 +3543,10 @@ function RevisionManagement() {
                       formDataToSend.append('name', createProjectModal.form.name || '')
                       formDataToSend.append('locationDetails', createProjectModal.form.locationDetails || '')
                       formDataToSend.append('workingHours', createProjectModal.form.workingHours || '')
-                      formDataToSend.append('manpowerCount', createProjectModal.form.manpowerCount || '')
+                      // Only append manpowerCount if it has a value (not empty string)
+                      if (createProjectModal.form.manpowerCount !== '' && createProjectModal.form.manpowerCount !== null && createProjectModal.form.manpowerCount !== undefined) {
+                        formDataToSend.append('manpowerCount', createProjectModal.form.manpowerCount)
+                      }
                       
                       // Handle array field - append each ID separately
                       const ids = Array.isArray(createProjectModal.form.assignedProjectEngineerIds) 
@@ -3570,7 +3582,7 @@ function RevisionManagement() {
               </div>
             </div>
           </div>
-          </div>
+        </div>
         </>
       )}
 
@@ -3707,7 +3719,7 @@ function RevisionManagement() {
             <div className="modal-header">
               <h2>Changes from Parent</h2>
               <button onClick={() => setDiffModal({ open: false, revision: null })} className="close-btn">×</button>
-            </div>
+    </div>
             <div className="lead-form">
               <p style={{ marginBottom: '16px', color: 'var(--text-muted)' }}>
                 Revision #{diffModal.revision.revisionNumber} includes the following changes from the parent quotation:

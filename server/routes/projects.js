@@ -168,6 +168,19 @@ router.patch('/:id', auth, (req, res, next) => {
     const editable = ['name', 'locationDetails', 'workingHours', 'manpowerCount', 'status', 'assignedProjectEngineer'];
     const changes = [];
     
+    // Helper function to normalize values for comparison
+    const normalizeValue = (value, field) => {
+      if (value === null || value === undefined || value === '') {
+        return null;
+      }
+      // For manpowerCount, ensure it's a number
+      if (field === 'manpowerCount') {
+        const num = Number(value);
+        return isNaN(num) ? null : num;
+      }
+      return value;
+    };
+    
     for (const field of editable) {
       if (!(field in req.body)) continue;
       const from = project[field];
@@ -176,7 +189,17 @@ router.patch('/:id', auth, (req, res, next) => {
       // Handle assignedProjectEngineer as array
       if (field === 'assignedProjectEngineer') {
         if (!Array.isArray(to)) {
-          to = to ? [to] : [];
+          // Handle empty array indicator from FormData (empty string means clear all)
+          if (to === '' || to === '[]') {
+            to = [];
+          } else {
+            to = to ? [to] : [];
+          }
+        } else {
+          // If it's already an array, filter out empty markers
+          // This handles the case where FormData sends [''] or ['[]'] as an array
+          to = to.filter(item => item !== '' && item !== '[]');
+          // If after filtering we have an empty array, that's valid (means clear all)
         }
         const fromArray = Array.isArray(from) ? from : (from ? [from] : []);
         if (JSON.stringify(fromArray.sort()) !== JSON.stringify(to.sort())) {
@@ -184,12 +207,22 @@ router.patch('/:id', auth, (req, res, next) => {
           project[field] = to;
         }
       } else {
-        if (JSON.stringify(from) !== JSON.stringify(to)) {
-          changes.push({ field, from, to });
-          project[field] = to;
+        // Normalize values for comparison
+        const normalizedFrom = normalizeValue(from, field);
+        const normalizedTo = normalizeValue(to, field);
+        
+        // Only track change if values are actually different
+        if (JSON.stringify(normalizedFrom) !== JSON.stringify(normalizedTo)) {
+          changes.push({ field, from: normalizedFrom, to: normalizedTo });
+          project[field] = normalizedTo;
         }
       }
     }
+
+    // Track attachment changes for edit history
+    const attachmentChanges = [];
+    const originalAttachmentCount = project.attachments ? project.attachments.length : 0;
+    const originalAttachmentNames = project.attachments ? project.attachments.map(a => a.originalName || a.filename).sort() : [];
 
     // Handle file attachments
     if (req.files && req.files.length > 0) {
@@ -203,6 +236,7 @@ router.patch('/:id', auth, (req, res, next) => {
           size: file.size,
           uploadedAt: new Date()
         });
+        attachmentChanges.push({ action: 'added', filename: file.originalname });
       });
     }
 
@@ -212,11 +246,12 @@ router.patch('/:id', auth, (req, res, next) => {
         ? req.body.removeAttachments 
         : [req.body.removeAttachments];
       
-      // Delete files from filesystem
+      // Delete files from filesystem and track removals
       for (const index of indicesToRemove) {
         const idx = parseInt(index);
         if (idx >= 0 && idx < project.attachments.length) {
           const attachment = project.attachments[idx];
+          attachmentChanges.push({ action: 'removed', filename: attachment.originalName || attachment.filename });
           try {
             const filePath = path.join(__dirname, '..', 'uploads', 'projects', attachment.filename);
             if (fs.existsSync(filePath)) {
@@ -233,6 +268,16 @@ router.patch('/:id', auth, (req, res, next) => {
       project.attachments = project.attachments.filter((_, idx) => 
         !indicesToRemove.includes(idx.toString())
       );
+    }
+
+    // Add attachment changes to edit history if any attachments were added or removed
+    if (attachmentChanges.length > 0) {
+      const newAttachmentNames = project.attachments ? project.attachments.map(a => a.originalName || a.filename).sort() : [];
+      changes.push({ 
+        field: 'attachments', 
+        from: originalAttachmentNames.length > 0 ? `${originalAttachmentCount} file(s): ${originalAttachmentNames.join(', ')}` : '(none)',
+        to: newAttachmentNames.length > 0 ? `${newAttachmentNames.length} file(s): ${newAttachmentNames.join(', ')}` : '(none)'
+      });
     }
 
     // Save edit history
@@ -330,12 +375,21 @@ router.post('/from-revision/:revisionId', auth, (req, res, next) => {
       });
     }
     
+    // Parse manpowerCount from FormData (which sends strings)
+    let parsedManpowerCount = lead?.manpowerCount; // Default to lead's value
+    if (manpowerCount !== undefined && manpowerCount !== null && manpowerCount !== '') {
+      const num = Number(manpowerCount);
+      if (!isNaN(num)) {
+        parsedManpowerCount = num;
+      }
+    }
+    
     const project = new Project({
       name: name || revision.projectTitle || lead?.projectTitle || 'Project',
       budget: lead?.budget,
       locationDetails: (locationDetails ?? lead?.locationDetails ?? ''),
       workingHours: (workingHours ?? lead?.workingHours ?? ''),
-      manpowerCount: (typeof manpowerCount === 'number' ? manpowerCount : lead?.manpowerCount),
+      manpowerCount: parsedManpowerCount,
       leadId: leadId,
       createdBy: req.user.userId,
       assignedProjectEngineer: engineerIds.length > 0 ? engineerIds : undefined,

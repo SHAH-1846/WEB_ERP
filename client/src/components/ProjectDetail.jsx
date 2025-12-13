@@ -15,11 +15,13 @@ function ProjectDetail() {
   const [editProjectWarningModal, setEditProjectWarningModal] = useState({ open: false, existingVariations: [] })
   const [deleteModal, setDeleteModal] = useState({ open: false })
   const [projectEngineers, setProjectEngineers] = useState([])
+  const [siteEngineers, setSiteEngineers] = useState([])
   const [profileUser, setProfileUser] = useState(null)
   const [historyOpen, setHistoryOpen] = useState(true)
   const [selectedFiles, setSelectedFiles] = useState([])
   const [previewFiles, setPreviewFiles] = useState([])
   const [attachmentsToRemove, setAttachmentsToRemove] = useState([])
+  const [printPreviewModal, setPrintPreviewModal] = useState({ open: false, pdfUrl: null })
   const [currentUser, setCurrentUser] = useState(() => {
     try { return JSON.parse(localStorage.getItem('user')) } catch { return null }
   })
@@ -33,6 +35,73 @@ function ProjectDetail() {
     const sizes = ['Bytes', 'KB', 'MB', 'GB']
     const i = Math.floor(Math.log(bytes) / Math.log(k))
     return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i]
+  }
+
+  const formatProjectHistoryValue = (field, value) => {
+    // Handle null/undefined
+    if (value === null || value === undefined) {
+      return '(empty)'
+    }
+
+    // Handle arrays
+    if (Array.isArray(value)) {
+      if (value.length === 0) return '(empty)'
+      
+      if (field === 'assignedProjectEngineer') {
+        // Map ObjectIds to engineer names
+        const names = value.map(id => {
+          const engineer = projectEngineers.find(u => String(u._id) === String(id))
+          return engineer ? engineer.name : (typeof id === 'object' && id?.name ? id.name : String(id))
+        }).filter(name => name)
+        return names.length > 0 ? names.join(', ') : '(empty)'
+      }
+      
+      // Generic array handling
+      return value.map((v, i) => {
+        if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') {
+          return `${i + 1}. ${String(v)}`
+        }
+        return `${i + 1}. ${String(v)}`
+      }).join('\n')
+    }
+
+    // Handle objects
+    if (typeof value === 'object' && value !== null && !(value instanceof Date)) {
+      // Generic object handling
+      const entries = Object.entries(value).map(([k, v]) => {
+        if (v === null || v === undefined) return `${k}: (empty)`
+        return `${k}: ${String(v)}`
+      })
+      return entries.length > 0 ? entries.join('\n') : '(empty)'
+    }
+
+    // Handle assignedSiteEngineer (single ObjectId)
+    if (field === 'assignedSiteEngineer') {
+      const engineer = siteEngineers.find(u => String(u._id) === String(value))
+      if (engineer) return engineer.name
+      if (typeof value === 'object' && value?.name) return value.name
+      return String(value)
+    }
+
+    // Handle assignedProjectEngineer (single ObjectId - backward compatibility)
+    if (field === 'assignedProjectEngineer' && !Array.isArray(value)) {
+      const engineer = projectEngineers.find(u => String(u._id) === String(value))
+      if (engineer) return engineer.name
+      if (typeof value === 'object' && value?.name) return value.name
+      return String(value)
+    }
+
+    // Handle strings
+    if (typeof value === 'string') {
+      return value.trim() || '(empty)'
+    }
+
+    // Handle numbers and booleans
+    if (typeof value === 'number' || typeof value === 'boolean') {
+      return String(value)
+    }
+
+    return String(value)
   }
 
   const handleFileChange = (e) => {
@@ -118,6 +187,12 @@ function ProjectDetail() {
           const resEng = await api.get('/api/projects/project-engineers')
           setProjectEngineers(Array.isArray(resEng.data) ? resEng.data : [])
         } catch {}
+        // Preload site engineers for name mapping
+        try {
+          const resUsers = await api.get('/api/users')
+          const engineers = Array.isArray(resUsers.data) ? resUsers.data.filter(user => user.roles?.includes('site_engineer')) : []
+          setSiteEngineers(engineers)
+        } catch {}
       } catch (e) {
         console.error('Error loading project:', e)
       } finally {
@@ -126,7 +201,8 @@ function ProjectDetail() {
     })()
   }, [])
 
-  const exportProjectPDF = async () => {
+  // Helper function to build PDF content (shared between preview and export)
+  const buildProjectPDFContent = async () => {
     try {
       if (!project) return
       await ensurePdfMake()
@@ -568,7 +644,7 @@ function ProjectDetail() {
         })
       }
 
-      const docDefinition = {
+      return {
         pageMargins: [36, 36, 36, 48],
         content,
         styles: {
@@ -581,6 +657,30 @@ function ProjectDetail() {
         },
         defaultStyle: { fontSize: 10, lineHeight: 1.2 }
       }
+    } catch (e) {
+      throw e
+    }
+  }
+
+  const generatePDFPreview = async () => {
+    try {
+      if (!project) return
+      await ensurePdfMake()
+      const docDefinition = await buildProjectPDFContent()
+      const pdfDoc = window.pdfMake.createPdf(docDefinition)
+      pdfDoc.getDataUrl((dataUrl) => {
+        setPrintPreviewModal({ open: true, pdfUrl: dataUrl })
+      })
+    } catch (e) {
+      setNotify({ open: true, title: 'Preview Failed', message: 'We could not generate the PDF preview. Please try again.' })
+    }
+  }
+
+  const exportProjectPDF = async () => {
+    try {
+      if (!project) return
+      await ensurePdfMake()
+      const docDefinition = await buildProjectPDFContent()
       const filename = `Project_${project.name.replace(/\s+/g,'_')}.pdf`
       window.pdfMake.createPdf(docDefinition).download(filename)
     } catch (e) {
@@ -613,7 +713,7 @@ function ProjectDetail() {
           <span className="ld-subtitle">Status: {project.status}</span>
         </div>
         <div className="ld-sticky-actions">
-          <button className="save-btn" onClick={exportProjectPDF}>Export</button>
+          <button className="save-btn" onClick={generatePDFPreview}>Print Preview</button>
           <button className="assign-btn" onClick={async () => {
             try {
               const token = localStorage.getItem('token')
@@ -634,7 +734,7 @@ function ProjectDetail() {
               name: project.name || '', 
               locationDetails: project.locationDetails || '', 
               workingHours: project.workingHours || '', 
-              manpowerCount: project.manpowerCount || '', 
+              manpowerCount: project.manpowerCount !== null && project.manpowerCount !== undefined ? project.manpowerCount : '', 
               status: project.status || 'active', 
               assignedProjectEngineer: Array.isArray(project.assignedProjectEngineer) 
                 ? project.assignedProjectEngineer.map(e => typeof e === 'object' ? e._id : e)
@@ -792,18 +892,22 @@ function ProjectDetail() {
                   <div key={i} className="edit-item">
                     <div className="edit-header">
                       <span>By {e.editedBy?._id === currentUser?.id ? 'You' : (e.editedBy?.name || 'N/A')}</span>
+                      {e.editedBy?._id && e.editedBy._id !== currentUser?.id && (
+                        <button className="link-btn" onClick={() => setProfileUser(e.editedBy)} style={{ marginLeft: 6 }}>View Profile</button>
+                      )}
                       <span>{new Date(e.editedAt).toLocaleString()}</span>
                     </div>
                     <ul className="changes-list">
-                      {e.changes.map((c, k) => {
-                        const isPE = c.field === 'assignedProjectEngineer'
-                        const isSE = c.field === 'assignedSiteEngineer'
-                        const nameFrom = (isPE || isSE) ? (projectEngineers.find(u => String(u._id) === String(c.from))?.name || String(c.from || '')) : String(c.from || '')
-                        const nameTo = (isPE || isSE) ? (projectEngineers.find(u => String(u._id) === String(c.to))?.name || String(c.to || '')) : String(c.to || '')
-                        return (
-                          <li key={k}><strong>{c.field}:</strong> {nameFrom} → {nameTo}</li>
-                        )
-                      })}
+                      {e.changes.map((c, k) => (
+                        <li key={k}>
+                          <strong>{c.field}:</strong>
+                          <div className="change-diff">
+                            <pre className="change-block" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{formatProjectHistoryValue(c.field, c.from)}</pre>
+                            <span>→</span>
+                            <pre className="change-block" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{formatProjectHistoryValue(c.field, c.to)}</pre>
+                          </div>
+                        </li>
+                      ))}
                     </ul>
                   </div>
                 ))}
@@ -1401,14 +1505,29 @@ function ProjectDetail() {
                       const formData = new FormData()
                       Object.keys(editModal.form).forEach(key => {
                         if (key === 'assignedProjectEngineer') return // Skip, handle separately
-                        formData.append(key, editModal.form[key])
+                        const value = editModal.form[key]
+                        // Always send manpowerCount (even if 0) so backend can properly compare
+                        if (key === 'manpowerCount') {
+                          formData.append(key, value !== null && value !== undefined ? value : '')
+                        } else if (value !== '' && value !== null && value !== undefined) {
+                          formData.append(key, value)
+                        }
                       })
                       
                       // Append engineer IDs separately (FormData doesn't handle arrays well)
+                      // Always append the field, even if empty, so backend can clear all engineers
                       if (Array.isArray(editModal.form.assignedProjectEngineer)) {
-                        editModal.form.assignedProjectEngineer.forEach(id => {
-                          formData.append('assignedProjectEngineer', id)
-                        })
+                        if (editModal.form.assignedProjectEngineer.length > 0) {
+                          editModal.form.assignedProjectEngineer.forEach(id => {
+                            formData.append('assignedProjectEngineer', id)
+                          })
+                        } else {
+                          // Send empty string to indicate empty array - backend will treat this as empty array
+                          formData.append('assignedProjectEngineer', '')
+                        }
+                      } else {
+                        // Handle non-array case (backward compatibility)
+                        formData.append('assignedProjectEngineer', editModal.form.assignedProjectEngineer || '')
                       }
                       
                       // Append new files
@@ -1546,6 +1665,73 @@ function ProjectDetail() {
                   </ButtonLoader>
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Print Preview Modal */}
+      {printPreviewModal.open && printPreviewModal.pdfUrl && (
+        <div className="modal-overlay" onClick={() => setPrintPreviewModal({ open: false, pdfUrl: null })} style={{ zIndex: 10000 }}>
+          <div className="modal" onClick={e => e.stopPropagation()} style={{ zIndex: 10001, maxWidth: '95%', width: '100%', height: '95vh', display: 'flex', flexDirection: 'column' }}>
+            <div className="modal-header" style={{ flexShrink: 0, borderBottom: '1px solid var(--border)', padding: '16px 24px' }}>
+              <h2>PDF Preview - {project?.name || 'Project'}</h2>
+              <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                <button 
+                  className="save-btn" 
+                  onClick={async () => {
+                    try {
+                      await exportProjectPDF()
+                    } catch (e) {
+                      setNotify({ open: true, title: 'Export Failed', message: 'We could not generate the PDF. Please try again.' })
+                    }
+                  }}
+                >
+                  Download PDF
+                </button>
+                <button 
+                  className="save-btn" 
+                  onClick={() => {
+                    if (printPreviewModal.pdfUrl) {
+                      const printWindow = window.open('', '_blank')
+                      printWindow.document.write(`
+                        <!DOCTYPE html>
+                        <html>
+                          <head>
+                            <title>${project?.name || 'Project'} - PDF</title>
+                            <style>
+                              body { margin: 0; padding: 0; }
+                              iframe { width: 100%; height: 100vh; border: none; }
+                            </style>
+                          </head>
+                          <body>
+                            <iframe src="${printPreviewModal.pdfUrl}"></iframe>
+                          </body>
+                        </html>
+                      `)
+                      printWindow.document.close()
+                      setTimeout(() => {
+                        printWindow.frames[0].print()
+                      }, 500)
+                    }
+                  }}
+                >
+                  Print
+                </button>
+                <button onClick={() => setPrintPreviewModal({ open: false, pdfUrl: null })} className="close-btn">×</button>
+              </div>
+            </div>
+            <div style={{ flex: 1, overflow: 'hidden', background: '#525252', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <iframe 
+                src={printPreviewModal.pdfUrl}
+                style={{ 
+                  width: '100%', 
+                  height: '100%', 
+                  border: 'none',
+                  background: 'white'
+                }}
+                title="PDF Preview"
+              />
             </div>
           </div>
         </div>

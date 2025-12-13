@@ -4,6 +4,8 @@ import { Modal } from '../design-system/Modal'
 import './LeadManagement.css'
 import './LeadDetail.css'
 import '../design-system/Modal.css'
+import './LoadingComponents.css'
+import { ButtonLoader } from './LoadingComponents'
 import logo from '../assets/logo/WBES_Logo.png'
 
 // Google Docs-style Rich Text Editor using contentEditable (compatible with React 19)
@@ -875,7 +877,10 @@ function RevisionDetail() {
   const [sendApprovalConfirmModal, setSendApprovalConfirmModal] = useState(false)
   const [deleteModal, setDeleteModal] = useState({ open: false })
   const [printPreviewModal, setPrintPreviewModal] = useState({ open: false, pdfUrl: null, revision: null })
+  const [createProjectModal, setCreateProjectModal] = useState({ open: false, revision: null, form: { name: '', locationDetails: '', workingHours: '', manpowerCount: '', assignedProjectEngineerIds: [] }, engineers: [], ack: false, selectedFiles: [], previewFiles: [] })
   const [showApprovals, setShowApprovals] = useState(false)
+  const [isSubmitting, setIsSubmitting] = useState(false)
+  const [loadingAction, setLoadingAction] = useState(null)
   const [isCreateMode, setIsCreateMode] = useState(false)
   const [isEditMode, setIsEditMode] = useState(false)
   const [sourceQuotationId, setSourceQuotationId] = useState(null)
@@ -1643,6 +1648,58 @@ function RevisionDetail() {
     } catch (e) {
       setNotify({ open: true, title: 'Approval Failed', message: 'We could not update approval. Please try again.' })
     }
+  }
+
+  const handleProjectFileChange = (e) => {
+    const files = Array.from(e.target.files)
+    setCreateProjectModal(prev => ({
+      ...prev,
+      selectedFiles: [...prev.selectedFiles, ...files]
+    }))
+    
+    // Create previews for images and videos
+    files.forEach(file => {
+      if (file.type.startsWith('image/')) {
+        const reader = new FileReader()
+        reader.onloadend = () => {
+          setCreateProjectModal(prev => ({
+            ...prev,
+            previewFiles: [...prev.previewFiles, { file, preview: reader.result, type: 'image' }]
+          }))
+        }
+        reader.readAsDataURL(file)
+      } else if (file.type.startsWith('video/')) {
+        const reader = new FileReader()
+        reader.onloadend = () => {
+          setCreateProjectModal(prev => ({
+            ...prev,
+            previewFiles: [...prev.previewFiles, { file, preview: reader.result, type: 'video' }]
+          }))
+        }
+        reader.readAsDataURL(file)
+      } else {
+        setCreateProjectModal(prev => ({
+          ...prev,
+          previewFiles: [...prev.previewFiles, { file, preview: null, type: 'document' }]
+        }))
+      }
+    })
+  }
+
+  const removeProjectFile = (index) => {
+    setCreateProjectModal(prev => ({
+      ...prev,
+      selectedFiles: prev.selectedFiles.filter((_, i) => i !== index),
+      previewFiles: prev.previewFiles.filter((_, i) => i !== index)
+    }))
+  }
+
+  const formatFileSize = (bytes) => {
+    if (bytes === 0) return '0 Bytes'
+    const k = 1024
+    const sizes = ['Bytes', 'KB', 'MB', 'GB']
+    const i = Math.floor(Math.log(bytes) / Math.log(k))
+    return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i]
   }
 
   const sendForApproval = async () => {
@@ -2603,6 +2660,61 @@ function RevisionDetail() {
           )}
           {approvalStatus === 'approved' && (
             <>
+              <button className="assign-btn" onClick={async () => {
+                try {
+                  if (!revision || !revision._id) {
+                    setNotify({ open: true, title: 'Error', message: 'Invalid revision data. Please refresh the page and try again.' })
+                    return
+                  }
+                  try {
+                    await apiFetch(`/api/projects/by-revision/${revision._id}`)
+                    setNotify({ open: true, title: 'Not Allowed', message: 'A project already exists for this revision.' })
+                    return
+                  } catch {}
+                  const hasChild = childRevisions.some(x => (x.parentRevision?._id || x.parentRevision) === revision._id)
+                  if (hasChild) {
+                    setNotify({ open: true, title: 'Not Allowed', message: 'Project can only be created from the last approved child revision.' })
+                    return
+                  }
+                  const parentId = typeof revision.parentQuotation === 'object' ? revision.parentQuotation?._id : revision.parentQuotation
+                  let allRevisions = []
+                  try {
+                    if (parentId) {
+                      const revRes = await apiFetch(`/api/revisions?parentQuotation=${parentId}`)
+                      allRevisions = Array.isArray(await revRes.json()) ? await revRes.json() : []
+                    }
+                  } catch {}
+                  const approved = allRevisions.filter(x => x.managementApproval?.status === 'approved')
+                  const latest = approved.slice().sort((a,b) => {
+                    const getRevisionNum = (revNum) => {
+                      if (!revNum) return 0;
+                      if (typeof revNum === 'number') return revNum;
+                      const match = String(revNum).match(/-REV-(\d+)$/);
+                      return match ? parseInt(match[1], 10) : 0;
+                    };
+                    return getRevisionNum(b.revisionNumber) - getRevisionNum(a.revisionNumber);
+                  })[0]
+                  if (latest && latest._id !== revision._id) {
+                    setNotify({ open: true, title: 'Not Allowed', message: `Only the latest approved revision (#${latest.revisionNumber}) can be used to create a project.` })
+                    return
+                  }
+                  let engineers = []
+                  try {
+                    const resEng = await api.get('/api/projects/project-engineers')
+                    engineers = Array.isArray(resEng.data) ? resEng.data : []
+                  } catch {}
+                  setCreateProjectModal({ open: true, revision: revision, engineers, ack: false, form: {
+                    name: revision.projectTitle || revision.lead?.projectTitle || 'Project',
+                    locationDetails: revision.lead?.locationDetails || '',
+                    workingHours: revision.lead?.workingHours || '',
+                    manpowerCount: revision.lead?.manpowerCount ?? '',
+                    assignedProjectEngineerIds: []
+                  }, selectedFiles: [], previewFiles: [] })
+                } catch (error) {
+                  console.error('Error opening create project modal:', error)
+                  setNotify({ open: true, title: 'Error', message: 'An error occurred while opening the create project form. Please try again.' })
+                }
+              }}>Create Project</button>
               <button className="save-btn" onClick={async () => {
                 try {
                   await apiFetch(`/api/projects/by-revision/${revision._id}`)
@@ -2949,9 +3061,9 @@ function RevisionDetail() {
                       <li key={i}>
                         <strong>{c.field}:</strong>
                         <div className="change-diff">
-                          <pre className="change-block">{JSON.stringify(c.from, null, 2)}</pre>
+                          <pre className="change-block" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{formatHistoryValue(c.field, c.from)}</pre>
                           <span>→</span>
-                          <pre className="change-block">{JSON.stringify(c.to, null, 2)}</pre>
+                          <pre className="change-block" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{formatHistoryValue(c.field, c.to)}</pre>
                         </div>
                       </li>
                     ))}
@@ -3560,6 +3672,357 @@ function RevisionDetail() {
             </div>
           </div>
         </div>
+      )}
+
+      {createProjectModal.open && createProjectModal.revision && createProjectModal.form && (
+        <>
+          <style>{`
+            .engineers-scroll-container::-webkit-scrollbar {
+              width: 8px;
+            }
+            .engineers-scroll-container::-webkit-scrollbar-track {
+              background: var(--bg);
+              border-radius: 4px;
+            }
+            .engineers-scroll-container::-webkit-scrollbar-thumb {
+              background: var(--border);
+              border-radius: 4px;
+            }
+            .engineers-scroll-container::-webkit-scrollbar-thumb:hover {
+              background: var(--text-muted);
+            }
+            .engineers-scroll-container {
+              scrollbar-width: thin;
+              scrollbar-color: var(--border) var(--bg);
+            }
+          `}</style>
+          <div className="modal-overlay" onClick={() => setCreateProjectModal({ open: false, revision: null, form: { name: '', locationDetails: '', workingHours: '', manpowerCount: '', assignedProjectEngineerIds: [] }, engineers: [], ack: false, selectedFiles: [], previewFiles: [] })}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>Create Project</h2>
+                <button onClick={() => setCreateProjectModal({ open: false, revision: null, form: { name: '', locationDetails: '', workingHours: '', manpowerCount: '', assignedProjectEngineerIds: [] }, engineers: [], ack: false, selectedFiles: [], previewFiles: [] })} className="close-btn">×</button>
+            </div>
+            <div className="lead-form">
+              {currentUser?.roles?.includes('estimation_engineer') && (
+                <div className="edit-item" style={{ background: '#FEF3C7', border: '1px solid #F59E0B', padding: 14, marginBottom: 14, color: '#7C2D12' }}>
+                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+                    <span aria-hidden="true" style={{ fontSize: 20, lineHeight: '20px', marginTop: 2 }}>⚠️</span>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontWeight: 700, marginBottom: 4 }}>Warning</div>
+                      <div style={{ lineHeight: 1.4 }}>This action cannot be undone. Only managers can delete projects once created.</div>
+                    </div>
+                  </div>
+                </div>
+              )}
+              <div className="form-group">
+                <label>Project Name</label>
+                <input type="text" value={createProjectModal.form?.name || ''} onChange={e => setCreateProjectModal({ ...createProjectModal, form: { ...createProjectModal.form, name: e.target.value } })} />
+              </div>
+              <div className="form-group">
+                <label>Location Details</label>
+                <input type="text" value={createProjectModal.form.locationDetails} onChange={e => setCreateProjectModal({ ...createProjectModal, form: { ...createProjectModal.form, locationDetails: e.target.value } })} />
+              </div>
+              <div className="form-row">
+                <div className="form-group" style={{ flex: 1 }}>
+                  <label>Working Hours</label>
+                  <input type="text" value={createProjectModal.form.workingHours} onChange={e => setCreateProjectModal({ ...createProjectModal, form: { ...createProjectModal.form, workingHours: e.target.value } })} />
+                </div>
+                <div className="form-group" style={{ flex: 1 }}>
+                  <label>Manpower Count</label>
+                  <input 
+                    type="number" 
+                    value={createProjectModal.form.manpowerCount === null || createProjectModal.form.manpowerCount === undefined || createProjectModal.form.manpowerCount === '' ? '' : createProjectModal.form.manpowerCount} 
+                    onChange={e => {
+                      const inputVal = e.target.value
+                      // Allow empty string, otherwise convert to number
+                      const val = inputVal === '' ? '' : (isNaN(Number(inputVal)) ? createProjectModal.form.manpowerCount : Number(inputVal))
+                      setCreateProjectModal({ ...createProjectModal, form: { ...createProjectModal.form, manpowerCount: val } })
+                    }} 
+                  />
+                </div>
+              </div>
+              <div className="form-group">
+                <label>Assign Project Engineers</label>
+                <div 
+                  className="engineers-scroll-container"
+                  style={{ 
+                    border: '1px solid var(--border)', 
+                    borderRadius: '8px', 
+                    padding: '8px', 
+                    maxHeight: '180px', 
+                    minHeight: '80px',
+                    overflowY: 'auto',
+                    overflowX: 'hidden',
+                    background: 'var(--bg)',
+                    position: 'relative',
+                    scrollBehavior: 'smooth',
+                    WebkitOverflowScrolling: 'touch'
+                  }}
+                >
+                  {Array.isArray(createProjectModal.engineers) && createProjectModal.engineers.length > 0 ? (
+                    createProjectModal.engineers.map((u, index) => {
+                      const isSelected = Array.isArray(createProjectModal.form.assignedProjectEngineerIds) && 
+                        createProjectModal.form.assignedProjectEngineerIds.includes(u._id);
+                      const isLast = index === createProjectModal.engineers.length - 1;
+                      return (
+                        <div key={u._id} style={{ 
+                          display: 'flex', 
+                          alignItems: 'center', 
+                          gap: '12px', 
+                          padding: '10px 8px',
+                          borderBottom: isLast ? 'none' : '1px solid var(--border)',
+                          minHeight: '40px'
+                        }}>
+                          <input
+                            type="checkbox"
+                            id={`engineer-${u._id}`}
+                            checked={isSelected}
+                            onChange={(e) => {
+                              const currentIds = Array.isArray(createProjectModal.form.assignedProjectEngineerIds) 
+                                ? createProjectModal.form.assignedProjectEngineerIds 
+                                : [];
+                              const newIds = e.target.checked
+                                ? [...currentIds, u._id]
+                                : currentIds.filter(id => id !== u._id);
+                              setCreateProjectModal({ 
+                                ...createProjectModal, 
+                                form: { 
+                                  ...createProjectModal.form, 
+                                  assignedProjectEngineerIds: newIds 
+                                } 
+                              });
+                            }}
+                            style={{ 
+                              cursor: 'pointer',
+                              width: '18px',
+                              height: '18px',
+                              flexShrink: 0,
+                              margin: 0
+                            }}
+                          />
+                          <label 
+                            htmlFor={`engineer-${u._id}`} 
+                            style={{ 
+                              flex: 1, 
+                              cursor: 'pointer', 
+                              color: 'var(--text)',
+                              margin: 0,
+                              fontSize: '14px',
+                              lineHeight: '1.5',
+                              display: 'flex',
+                              alignItems: 'center',
+                              minHeight: '18px'
+                            }}
+                          >
+                            {u.name} ({u.email})
+                          </label>
+                          {isSelected && (
+                            <button 
+                              type="button" 
+                              className="link-btn" 
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                if (u) setProfileUser(u);
+                              }}
+                              style={{ 
+                                fontSize: '12px', 
+                                padding: '6px 12px',
+                                flexShrink: 0,
+                                whiteSpace: 'nowrap'
+                              }}
+                            >
+                              View Profile
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })
+                  ) : (
+                    <p style={{ 
+                      color: 'var(--text-secondary)', 
+                      margin: 0, 
+                      padding: '12px 8px',
+                      fontSize: '14px'
+                    }}>
+                      No project engineers available
+                    </p>
+                  )}
+                </div>
+                {Array.isArray(createProjectModal.form.assignedProjectEngineerIds) && 
+                 createProjectModal.form.assignedProjectEngineerIds.length > 0 && (
+                  <p style={{ 
+                    marginTop: '8px', 
+                    fontSize: '13px', 
+                    color: 'var(--text-secondary)',
+                    marginBottom: 0
+                  }}>
+                    {createProjectModal.form.assignedProjectEngineerIds.length} engineer(s) selected
+                  </p>
+                )}
+              </div>
+              <div className="form-group">
+                <label>Attachments (Documents, Images & Videos)</label>
+                <input
+                  type="file"
+                  multiple
+                  accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,video/*"
+                  onChange={handleProjectFileChange}
+                  className="file-input"
+                />
+                <small style={{ display: 'block', marginTop: '5px', color: 'var(--text-secondary)', fontSize: '12px' }}>
+                  Accepted: Images (JPEG, PNG, GIF, WebP), Documents (PDF, DOC, DOCX, XLS, XLSX), Videos (MP4, MOV, AVI, WMV, WebM, etc.). Max 10MB per file.
+                </small>
+                
+                {/* Display selected files */}
+                {createProjectModal.previewFiles && createProjectModal.previewFiles.length > 0 && (
+                  <div style={{ marginTop: '15px', display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
+                    {createProjectModal.previewFiles.map((preview, index) => (
+                      <div key={index} style={{ 
+                        position: 'relative', 
+                        border: '1px solid var(--border)', 
+                        borderRadius: '8px', 
+                        padding: '8px',
+                        background: 'var(--bg)',
+                        maxWidth: '200px'
+                      }}>
+                        {preview.type === 'image' && preview.preview && (
+                          <img src={preview.preview} alt={preview.file.name} style={{ width: '100%', height: 'auto', borderRadius: '4px', marginBottom: '8px' }} />
+                        )}
+                        {preview.type === 'video' && preview.preview && (
+                          <video src={preview.preview} style={{ width: '100%', height: 'auto', borderRadius: '4px', marginBottom: '8px' }} controls />
+                        )}
+                        <div style={{ fontSize: '12px', color: 'var(--text)', wordBreak: 'break-word' }}>
+                          {preview.file.name}
+                        </div>
+                        <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: '4px' }}>
+                          {formatFileSize(preview.file.size)}
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => removeProjectFile(index)}
+                          style={{
+                            position: 'absolute',
+                            top: '4px',
+                            right: '4px',
+                            background: 'rgba(0, 0, 0, 0.6)',
+                            color: 'white',
+                            border: 'none',
+                            borderRadius: '50%',
+                            width: '24px',
+                            height: '24px',
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            fontSize: '16px',
+                            lineHeight: '1'
+                          }}
+                        >
+                          ×
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+              {currentUser?.roles?.includes('estimation_engineer') && (
+                <div className="form-group">
+                  <div style={{ 
+                    display: 'flex', 
+                    gap: '12px', 
+                    alignItems: 'flex-start', 
+                    padding: '14px 16px', 
+                    border: '1px solid var(--border)', 
+                    borderRadius: '8px', 
+                    background: 'var(--bg)'
+                  }}>
+                    <input 
+                      id="ack-project-create" 
+                      type="checkbox" 
+                      checked={createProjectModal.ack} 
+                      onChange={e => setCreateProjectModal({ ...createProjectModal, ack: e.target.checked })} 
+                      style={{ 
+                        marginTop: '2px',
+                        width: '18px',
+                        height: '18px',
+                        cursor: 'pointer',
+                        flexShrink: 0
+                      }} 
+                    />
+                    <label 
+                      htmlFor="ack-project-create" 
+                      style={{ 
+                        color: 'var(--text)', 
+                        cursor: 'pointer',
+                        margin: 0,
+                        fontSize: '14px',
+                        lineHeight: '1.5',
+                        flex: 1
+                      }}
+                    >
+                      I understand this action cannot be undone and requires management involvement to reverse.
+                    </label>
+                  </div>
+                </div>
+              )}
+              <div className="form-actions">
+                <button type="button" className="cancel-btn" onClick={() => setCreateProjectModal({ open: false, revision: null, form: { name: '', locationDetails: '', workingHours: '', manpowerCount: '', assignedProjectEngineerIds: [] }, engineers: [], ack: false, selectedFiles: [], previewFiles: [] })}>Cancel</button>
+                <button 
+                  type="button" 
+                  className="save-btn" 
+                  disabled={(currentUser?.roles?.includes('estimation_engineer') && !createProjectModal.ack) || isSubmitting} 
+                  onClick={async () => {
+                    if (isSubmitting) return
+                    setLoadingAction('create-project')
+                    setIsSubmitting(true)
+                    try {
+                      const formDataToSend = new FormData()
+                      
+                      // Append form fields
+                      formDataToSend.append('name', createProjectModal.form.name || '')
+                      formDataToSend.append('locationDetails', createProjectModal.form.locationDetails || '')
+                      formDataToSend.append('workingHours', createProjectModal.form.workingHours || '')
+                      // Only append manpowerCount if it has a value (not empty string)
+                      if (createProjectModal.form.manpowerCount !== '' && createProjectModal.form.manpowerCount !== null && createProjectModal.form.manpowerCount !== undefined) {
+                        formDataToSend.append('manpowerCount', createProjectModal.form.manpowerCount)
+                      }
+                      
+                      // Handle array field - append each ID separately
+                      const ids = Array.isArray(createProjectModal.form.assignedProjectEngineerIds) 
+                        ? createProjectModal.form.assignedProjectEngineerIds 
+                        : []
+                      ids.forEach(id => {
+                        formDataToSend.append('assignedProjectEngineerIds', id)
+                      })
+                      
+                      // Append files
+                      if (createProjectModal.selectedFiles && createProjectModal.selectedFiles.length > 0) {
+                        createProjectModal.selectedFiles.forEach(file => {
+                          formDataToSend.append('attachments', file)
+                        })
+                      }
+                      
+                      await api.post(`/api/projects/from-revision/${createProjectModal.revision._id}`, formDataToSend)
+                      setCreateProjectModal({ open: false, revision: null, form: { name: '', locationDetails: '', workingHours: '', manpowerCount: '', assignedProjectEngineerIds: [] }, engineers: [], ack: false, selectedFiles: [], previewFiles: [] })
+                      setNotify({ open: true, title: 'Project Created', message: 'Project created from approved revision. Redirecting to Projects...' })
+                      setTimeout(() => { window.location.href = '/projects' }, 800)
+                    } catch (e) {
+                      setNotify({ open: true, title: 'Create Project Failed', message: e.response?.data?.message || 'We could not create the project. Please try again.' })
+                    } finally {
+                      setIsSubmitting(false)
+                      setLoadingAction(null)
+                    }
+                  }}
+                >
+                  <ButtonLoader loading={loadingAction === 'create-project'}>
+                    {isSubmitting ? 'Creating...' : 'Create Project'}
+                  </ButtonLoader>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+        </>
       )}
 
       {deleteModal.open && (
