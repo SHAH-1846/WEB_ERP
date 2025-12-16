@@ -92,6 +92,14 @@ const ProjectVariationSchema = new mongoose.Schema({
     field: { type: String, required: true },
     from: { type: mongoose.Schema.Types.Mixed },
     to: { type: mongoose.Schema.Types.Mixed }
+  }],
+
+  attachments: [{
+    filename: String,
+    originalName: String,
+    path: String,
+    mimetype: String,
+    size: Number
   }]
 }, {
   timestamps: true

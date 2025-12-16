@@ -1,10 +1,48 @@
 const express = require('express');
 const jwt = require('jsonwebtoken');
+const multer = require('multer');
+const path = require('path');
+const fs = require('fs');
 const ProjectVariation = require('../models/ProjectVariation');
 const Project = require('../models/Project');
 const Quotation = require('../models/Quotation');
 const Revision = require('../models/Revision');
+const AuditLog = require('../models/AuditLog');
 const router = express.Router();
+
+// Configure multer for file uploads (variations)
+const uploadsDir = path.join(__dirname, '..', 'uploads', 'variations');
+if (!fs.existsSync(uploadsDir)) {
+  fs.mkdirSync(uploadsDir, { recursive: true });
+}
+
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, uploadsDir);
+  },
+  filename: (req, file, cb) => {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    cb(null, uniqueSuffix + path.extname(file.originalname));
+  }
+});
+
+const fileFilter = (req, file, cb) => {
+  const allowedTypes = /jpeg|jpg|png|gif|webp|pdf|doc|docx|xls|xlsx|mp4|mov|avi|wmv|webm/;
+  const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
+  const mimetype = allowedTypes.test(file.mimetype);
+  
+  if (mimetype && extname) {
+    return cb(null, true);
+  } else {
+    cb(new Error('Invalid file type. Only images, documents, and videos are allowed.'));
+  }
+};
+
+const upload = multer({
+  storage: storage,
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB limit
+  fileFilter: fileFilter
+});
 
 const auth = (req, res, next) => {
   const token = req.header('Authorization')?.replace('Bearer ', '');
@@ -63,9 +101,51 @@ router.get('/:id', auth, async (req, res) => {
 });
 
 // Create a project variation from a project
-router.post('/', auth, async (req, res) => {
+router.post('/', auth, (req, res, next) => {
+  upload.array('attachments', 10)(req, res, (err) => {
+    if (err) {
+      if (err.code === 'LIMIT_FILE_SIZE') {
+        return res.status(400).json({ message: 'File size exceeds 10MB limit' });
+      }
+      if (err.code === 'LIMIT_FILE_COUNT') {
+        return res.status(400).json({ message: 'Too many files. Maximum 10 files allowed' });
+      }
+      if (err.message && err.message.includes('Invalid file type')) {
+        return res.status(400).json({ message: err.message });
+      }
+      return res.status(400).json({ message: err.message || 'File upload error' });
+    }
+    next();
+  });
+}, async (req, res) => {
   try {
-    const { parentProjectId, parentVariationId, data } = req.body;
+    // Parse data from FormData or JSON body
+    let parentProjectId, parentVariationId, data;
+    
+    // Check if this is FormData (has files or data[...] keys)
+    const isFormData = req.files && req.files.length > 0 || Object.keys(req.body).some(key => key.startsWith('data['));
+    
+    if (isFormData) {
+      // FormData format
+      parentProjectId = req.body.parentProjectId;
+      parentVariationId = req.body.parentVariationId;
+      data = {};
+      Object.keys(req.body).forEach(key => {
+        if (key.startsWith('data[') && key.endsWith(']')) {
+          const fieldName = key.slice(5, -1);
+          try {
+            data[fieldName] = JSON.parse(req.body[key]);
+          } catch {
+            data[fieldName] = req.body[key];
+          }
+        }
+      });
+    } else {
+      // JSON format
+      parentProjectId = req.body.parentProjectId;
+      parentVariationId = req.body.parentVariationId;
+      data = req.body.data;
+    }
     if (!parentProjectId && !parentVariationId) return res.status(400).json({ message: 'parentProjectId or parentVariationId is required' });
     
     let sourceDoc;
@@ -173,12 +253,52 @@ router.post('/', auth, async (req, res) => {
       }
     }
 
-    if (diffs.length === 0) {
+    // Check if files are present - they count as a change
+    const hasFiles = req.files && req.files.length > 0;
+    
+    if (diffs.length === 0 && !hasFiles) {
+      // Clean up any uploaded files if validation fails
+      if (req.files && req.files.length > 0) {
+        req.files.forEach(file => {
+          try {
+            const filePath = path.join(uploadsDir, file.filename);
+            if (fs.existsSync(filePath)) {
+              fs.unlinkSync(filePath);
+              console.log(`Cleaned up uploaded file after validation failure: ${file.filename}`);
+            }
+          } catch (fileError) {
+            console.error(`Error cleaning up file ${file.filename}:`, fileError);
+          }
+        });
+      }
       return res.status(400).json({ message: 'No changes detected. Please modify data before creating a variation.' });
+    }
+    
+    // If files are present, add them to diffs
+    if (hasFiles && !diffs.find(d => d.field === 'attachments')) {
+      diffs.push({ 
+        field: 'attachments', 
+        from: '(none)', 
+        to: `${req.files.length} file(s) uploaded` 
+      });
     }
 
     // Get lead from project (already fetched above)
     const leadId = project.leadId?._id || project.leadId;
+
+    // Handle file attachments
+    const attachments = [];
+    if (req.files && req.files.length > 0) {
+      req.files.forEach(file => {
+        attachments.push({
+          filename: file.filename,
+          originalName: file.originalname,
+          path: `/uploads/variations/${file.filename}`,
+          mimetype: file.mimetype,
+          size: file.size
+        });
+      });
+    }
 
     const variation = await ProjectVariation.create({
       ...nextData,
@@ -189,7 +309,8 @@ router.post('/', auth, async (req, res) => {
       createdBy: req.user.userId,
       diffFromParent: diffs,
       edits: [],
-      managementApproval: {}
+      managementApproval: {},
+      attachments: attachments
     });
 
     const populated = await ProjectVariation.findById(variation._id)
@@ -210,7 +331,23 @@ router.post('/', auth, async (req, res) => {
 });
 
 // Update project variation
-router.put('/:id', auth, async (req, res) => {
+router.put('/:id', auth, (req, res, next) => {
+  upload.array('attachments', 10)(req, res, (err) => {
+    if (err) {
+      if (err.code === 'LIMIT_FILE_SIZE') {
+        return res.status(400).json({ message: 'File size exceeds 10MB limit' });
+      }
+      if (err.code === 'LIMIT_FILE_COUNT') {
+        return res.status(400).json({ message: 'Too many files. Maximum 10 files allowed' });
+      }
+      if (err.message && err.message.includes('Invalid file type')) {
+        return res.status(400).json({ message: err.message });
+      }
+      return res.status(400).json({ message: err.message || 'File upload error' });
+    }
+    next();
+  });
+}, async (req, res) => {
   try {
     const roles = req.user.roles || [];
     if (!(roles.includes('manager') || roles.includes('admin') || roles.includes('estimation_engineer'))) {
@@ -225,17 +362,124 @@ router.put('/:id', auth, async (req, res) => {
       return res.status(403).json({ message: 'Cannot edit an approved variation. The variation must be rejected or have its approval status reverted first.' });
     }
 
+    // Parse data from FormData or JSON body
+    let updateData;
+    
+    // Check if this is FormData (has files or data[...] keys or direct field keys)
+    const isFormData = req.files && req.files.length > 0 || Object.keys(req.body).some(key => key.startsWith('data[')) || (req.body.removeAttachments !== undefined);
+    
+    if (isFormData) {
+      // FormData format
+      updateData = {};
+      Object.keys(req.body).forEach(key => {
+        if (key.startsWith('data[') && key.endsWith(']')) {
+          const fieldName = key.slice(5, -1);
+          try {
+            updateData[fieldName] = JSON.parse(req.body[key]);
+          } catch {
+            updateData[fieldName] = req.body[key];
+          }
+        } else if (key !== 'parentProjectId' && key !== 'parentVariationId' && key !== 'removeAttachments' && key !== 'attachments') {
+          // Try to parse as JSON first, fallback to string
+          try {
+            updateData[key] = JSON.parse(req.body[key]);
+          } catch {
+            updateData[key] = req.body[key];
+          }
+        }
+      });
+    } else {
+      // JSON format
+      updateData = req.body;
+    }
+
     const oldData = variation.toObject();
-    const updates = req.body;
     const changes = [];
 
-    Object.keys(updates).forEach(key => {
-      if (key === '_id' || key === 'createdAt' || key === 'updatedAt' || key === 'edits') return;
-      if (JSON.stringify(oldData[key]) !== JSON.stringify(updates[key])) {
-        changes.push({ field: key, from: oldData[key], to: updates[key] });
-        variation[key] = updates[key];
+    // Handle file attachments
+    if (req.files && req.files.length > 0) {
+      if (!variation.attachments) variation.attachments = [];
+      req.files.forEach(file => {
+        variation.attachments.push({
+          filename: file.filename,
+          originalName: file.originalname,
+          path: `/uploads/variations/${file.filename}`,
+          mimetype: file.mimetype,
+          size: file.size
+        });
+      });
+    }
+
+    // Handle attachment removals
+    if (req.body.removeAttachments) {
+      const indicesToRemove = Array.isArray(req.body.removeAttachments) 
+        ? req.body.removeAttachments 
+        : [req.body.removeAttachments];
+      
+      // Delete files from filesystem and track removals
+      for (const index of indicesToRemove) {
+        const idx = parseInt(index);
+        if (idx >= 0 && idx < variation.attachments.length) {
+          const attachment = variation.attachments[idx];
+          try {
+            const filePath = path.join(__dirname, '..', 'uploads', 'variations', attachment.filename);
+            if (fs.existsSync(filePath)) {
+              fs.unlinkSync(filePath);
+              console.log(`Removed attachment: ${attachment.filename}`);
+            }
+          } catch (fileError) {
+            console.error(`Error removing file ${attachment.filename}:`, fileError);
+          }
+        }
+      }
+      
+      // Remove from database
+      variation.attachments = variation.attachments.filter((_, idx) => 
+        !indicesToRemove.includes(idx.toString())
+      );
+    }
+
+    // Update other fields
+    const allowedFields = [
+      'companyInfo', 'submittedTo', 'attention', 'offerReference', 'enquiryNumber',
+      'offerDate', 'enquiryDate', 'projectTitle', 'introductionText',
+      'scopeOfWork', 'priceSchedule', 'ourViewpoints', 'exclusions',
+      'paymentTerms', 'deliveryCompletionWarrantyValidity'
+    ];
+
+    allowedFields.forEach(key => {
+      if (updateData[key] !== undefined) {
+        const oldVal = oldData[key];
+        const newVal = updateData[key];
+        
+        // Handle date fields
+        if (['offerDate', 'enquiryDate'].includes(key) && newVal) {
+          const dateVal = new Date(newVal);
+          if (!isNaN(dateVal.getTime())) {
+            if (JSON.stringify(oldVal) !== JSON.stringify(dateVal)) {
+              changes.push({ field: key, from: oldVal, to: dateVal });
+              variation[key] = dateVal;
+            }
+          }
+        } else if (JSON.stringify(oldVal) !== JSON.stringify(newVal)) {
+          changes.push({ field: key, from: oldVal, to: newVal });
+          variation[key] = newVal;
+        }
       }
     });
+
+    // Track attachment changes
+    const originalAttachmentCount = oldData.attachments ? oldData.attachments.length : 0;
+    const newAttachmentCount = variation.attachments ? variation.attachments.length : 0;
+    if (originalAttachmentCount !== newAttachmentCount) {
+      const originalNames = oldData.attachments ? oldData.attachments.map(a => a.originalName || a.filename).sort() : [];
+      const newNames = variation.attachments ? variation.attachments.map(a => a.originalName || a.filename).sort() : [];
+      changes.push({ 
+        field: 'attachments', 
+        from: originalNames.length > 0 ? `${originalAttachmentCount} file(s): ${originalNames.join(', ')}` : '(none)',
+        to: newNames.length > 0 ? `${newAttachmentCount} file(s): ${newNames.join(', ')}` : '(none)'
+      });
+    }
 
     if (changes.length > 0) {
       variation.edits = variation.edits || [];
@@ -316,6 +560,21 @@ router.delete('/:id', auth, async (req, res) => {
       });
     } catch (auditError) {
       console.error('Error creating audit log:', auditError);
+    }
+
+    // Delete attachment files from filesystem
+    if (variation.attachments && Array.isArray(variation.attachments) && variation.attachments.length > 0) {
+      variation.attachments.forEach(attachment => {
+        try {
+          const filePath = path.join(uploadsDir, attachment.filename);
+          if (fs.existsSync(filePath)) {
+            fs.unlinkSync(filePath);
+            console.log(`Deleted attachment file: ${attachment.filename}`);
+          }
+        } catch (fileError) {
+          console.error(`Error deleting attachment file ${attachment.filename}:`, fileError);
+        }
+      });
     }
 
     await ProjectVariation.findByIdAndDelete(req.params.id);

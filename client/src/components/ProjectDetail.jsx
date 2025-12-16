@@ -1,8 +1,698 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useMemo, useRef } from 'react'
 import { api } from '../lib/api'
 import './LeadManagement.css'
 import './LoadingComponents.css'
 import { Spinner, PageSkeleton, ButtonLoader } from './LoadingComponents'
+
+// Google Docs-style Rich Text Editor using contentEditable (compatible with React 19)
+function ScopeOfWorkEditor({ value, onChange }) {
+  const editorRef = useRef(null)
+  const savedSelectionRef = useRef(null)
+  const [isFocused, setIsFocused] = useState(false)
+  const [fontSize, setFontSize] = useState('14')
+  const [fontSizeInput, setFontSizeInput] = useState('14')
+  const [showFontSizeDropdown, setShowFontSizeDropdown] = useState(false)
+  const [fontFamily, setFontFamily] = useState('Arial')
+  const [textColor, setTextColor] = useState('#000000')
+  const [highlightColor, setHighlightColor] = useState('#ffff00')
+  const [showLinkModal, setShowLinkModal] = useState(false)
+  const [linkUrl, setLinkUrl] = useState('')
+
+  useEffect(() => {
+    if (editorRef.current) {
+      const currentHtml = editorRef.current.innerHTML
+      const newValue = value || ''
+      if (currentHtml !== newValue) {
+        editorRef.current.innerHTML = newValue
+      }
+    }
+  }, [value])
+
+  useEffect(() => {
+    if (!showFontSizeDropdown) return
+    const handleClickOutside = (e) => {
+      if (!e.target.closest('[data-font-size-container]')) {
+        setShowFontSizeDropdown(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [showFontSizeDropdown])
+
+  const handleInput = (e) => {
+    const html = e.target.innerHTML
+    onChange(html)
+    setTimeout(() => saveSelection(), 0)
+  }
+  
+  useEffect(() => {
+    if (!isFocused || !editorRef.current) return
+    const handleMouseUp = (e) => {
+      if (editorRef.current?.contains(e.target)) {
+        setTimeout(() => saveSelection(), 0)
+      }
+    }
+    const handleSelectionChange = () => {
+      const selection = window.getSelection()
+      if (selection.rangeCount > 0) {
+        const range = selection.getRangeAt(0)
+        if (editorRef.current?.contains(range.anchorNode)) {
+          saveSelection()
+        }
+      }
+    }
+    editorRef.current.addEventListener('mouseup', handleMouseUp)
+    document.addEventListener('selectionchange', handleSelectionChange)
+    return () => {
+      if (editorRef.current) {
+        editorRef.current.removeEventListener('mouseup', handleMouseUp)
+      }
+      document.removeEventListener('selectionchange', handleSelectionChange)
+    }
+  }, [isFocused])
+
+  const handlePaste = (e) => {
+    e.preventDefault()
+    const text = e.clipboardData.getData('text/plain')
+    document.execCommand('insertText', false, text)
+  }
+
+  const execCommand = (command, value = null) => {
+    document.execCommand(command, false, value)
+    editorRef.current?.focus()
+  }
+
+  const handleUndo = () => {
+    document.execCommand('undo', false, null)
+    editorRef.current?.focus()
+  }
+
+  const handleRedo = () => {
+    document.execCommand('redo', false, null)
+    editorRef.current?.focus()
+  }
+
+  const expandToWord = (range) => {
+    try {
+      if (range.expand) {
+        range.expand('word')
+      }
+    } catch (e) {
+      const textNode = range.startContainer
+      if (textNode && textNode.nodeType === 3) {
+        const text = textNode.textContent
+        const start = range.startOffset
+        let wordStart = start
+        let wordEnd = start
+        while (wordStart > 0 && /\S/.test(text[wordStart - 1])) {
+          wordStart--
+        }
+        while (wordEnd < text.length && /\S/.test(text[wordEnd])) {
+          wordEnd++
+        }
+        if (wordStart < wordEnd) {
+          range.setStart(textNode, wordStart)
+          range.setEnd(textNode, wordEnd)
+        }
+      }
+    }
+  }
+
+  const saveSelection = () => {
+    const selection = window.getSelection()
+    if (selection.rangeCount > 0) {
+      const range = selection.getRangeAt(0)
+      if (editorRef.current && 
+          (editorRef.current.contains(range.anchorNode) || editorRef.current.contains(range.focusNode))) {
+        if (!range.collapsed) {
+          savedSelectionRef.current = range.cloneRange()
+        } else {
+          savedSelectionRef.current = null
+        }
+      }
+    }
+  }
+
+  const applyFontSize = (size) => {
+    if (!savedSelectionRef.current) {
+      if (editorRef.current) {
+        editorRef.current.focus()
+      }
+      return
+    }
+    
+    const savedRange = savedSelectionRef.current
+    
+    if (!editorRef.current || 
+        !editorRef.current.contains(savedRange.startContainer) || 
+        !editorRef.current.contains(savedRange.endContainer)) {
+      savedSelectionRef.current = null
+      if (editorRef.current) {
+        editorRef.current.focus()
+      }
+      return
+    }
+    
+    const range = savedRange.cloneRange()
+    
+    if (range.collapsed) {
+      if (editorRef.current) {
+        editorRef.current.focus()
+      }
+      return
+    }
+    
+    const selection = window.getSelection()
+    selection.removeAllRanges()
+    try {
+      selection.addRange(range.cloneRange())
+    } catch (e) {
+      return
+    }
+    
+    if (!editorRef.current?.contains(range.commonAncestorContainer)) {
+      editorRef.current?.focus()
+      return
+    }
+    
+    const startContainer = range.startContainer
+    const endContainer = range.endContainer
+    const startOffset = range.startOffset
+    const endOffset = range.endOffset
+    
+    if (startContainer === endContainer && startContainer.nodeType === 3) {
+      const textNode = startContainer
+      const text = textNode.textContent
+      const beforeText = text.substring(0, startOffset)
+      const selectedText = text.substring(startOffset, endOffset)
+      const afterText = text.substring(endOffset)
+      
+      const beforeNode = document.createTextNode(beforeText)
+      const span = document.createElement('span')
+      span.style.fontSize = `${size}px`
+      span.textContent = selectedText
+      const afterNode = document.createTextNode(afterText)
+      
+      const parent = textNode.parentNode
+      if (beforeNode.textContent) {
+        parent.insertBefore(beforeNode, textNode)
+      }
+      parent.insertBefore(span, textNode)
+      if (afterNode.textContent) {
+        parent.insertBefore(afterNode, textNode)
+      }
+      parent.removeChild(textNode)
+    } else {
+      const workRange = range.cloneRange()
+      const wrapper = document.createElement('span')
+      wrapper.style.fontSize = `${size}px`
+      const contents = workRange.extractContents()
+      if (contents.hasChildNodes()) {
+        while (contents.firstChild) {
+          wrapper.appendChild(contents.firstChild)
+        }
+      } else if (contents.nodeType === 3) {
+        wrapper.appendChild(contents)
+      }
+      if (wrapper.textContent.trim() || wrapper.hasChildNodes()) {
+        range.insertNode(wrapper)
+      }
+    }
+    
+    savedSelectionRef.current = null
+    
+    if (editorRef.current) {
+      onChange(editorRef.current.innerHTML)
+    }
+    
+    editorRef.current?.focus()
+  }
+
+  const applyFontFamily = (family) => {
+    const selection = window.getSelection()
+    if (selection.rangeCount > 0) {
+      const range = selection.getRangeAt(0)
+      if (selection.isCollapsed) {
+        expandToWord(range)
+      }
+      if (!range.collapsed) {
+        const span = document.createElement('span')
+        span.style.fontFamily = family
+        try {
+          range.surroundContents(span)
+        } catch (e) {
+          const contents = range.extractContents()
+          span.appendChild(contents)
+          range.insertNode(span)
+        }
+      }
+    }
+    editorRef.current?.focus()
+  }
+
+  const handleFontSizeInputChange = (e) => {
+    const value = e.target.value
+    setFontSizeInput(value)
+  }
+
+  const handleFontSizeInputBlur = (e) => {
+    if (e.relatedTarget && e.relatedTarget.closest('[data-font-size-container]')) {
+      return
+    }
+    
+    setShowFontSizeDropdown(false)
+    
+    if (!savedSelectionRef.current) {
+      const numValue = parseFloat(fontSizeInput)
+      if (fontSizeInput && !isNaN(numValue) && numValue > 0 && numValue <= 200) {
+        const sizeStr = String(Math.round(numValue))
+        setFontSize(sizeStr)
+        setFontSizeInput(sizeStr)
+      } else {
+        setFontSizeInput(fontSize)
+      }
+      return
+    }
+    
+    const numValue = parseFloat(fontSizeInput)
+    if (fontSizeInput && !isNaN(numValue) && numValue > 0 && numValue <= 200) {
+      const sizeStr = String(Math.round(numValue))
+      setFontSize(sizeStr)
+      setFontSizeInput(sizeStr)
+      applyFontSize(numValue)
+    } else {
+      setFontSizeInput(fontSize)
+    }
+  }
+
+  const handleFontSizeInputKeyPress = (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      handleFontSizeInputBlur()
+    }
+  }
+
+  const handleFontSizeSelect = (size) => {
+    setFontSize(size)
+    setFontSizeInput(size)
+    setShowFontSizeDropdown(false)
+    
+    if (!savedSelectionRef.current) {
+      return
+    }
+    
+    setTimeout(() => {
+      applyFontSize(parseFloat(size))
+    }, 10)
+  }
+
+  const handleFontFamilyChange = (e) => {
+    const family = e.target.value
+    setFontFamily(family)
+    applyFontFamily(family)
+  }
+
+  const handleTextColorChange = (e) => {
+    const color = e.target.value
+    setTextColor(color)
+    document.execCommand('foreColor', false, color)
+    editorRef.current?.focus()
+  }
+
+  const handleHighlightColorChange = (e) => {
+    const color = e.target.value
+    setHighlightColor(color)
+    document.execCommand('backColor', false, color)
+    editorRef.current?.focus()
+  }
+
+  const handleFormatBlock = (e) => {
+    const format = e.target.value
+    if (format === 'p') {
+      document.execCommand('formatBlock', false, '<p>')
+    } else {
+      document.execCommand('formatBlock', false, `<${format}>`)
+    }
+    editorRef.current?.focus()
+  }
+
+  const handleInsertLink = () => {
+    setShowLinkModal(true)
+    setLinkUrl('')
+  }
+
+  const handleLinkModalSave = () => {
+    if (linkUrl && linkUrl.trim()) {
+      const url = linkUrl.trim()
+      const finalUrl = url.startsWith('http://') || url.startsWith('https://') ? url : `https://${url}`
+      
+      const selection = window.getSelection()
+      if (selection.rangeCount > 0 && editorRef.current) {
+        const range = selection.getRangeAt(0)
+        if (selection.isCollapsed) {
+          expandToWord(range)
+        }
+        if (!range.collapsed) {
+          const linkElement = range.commonAncestorContainer.nodeType === 1 
+            ? range.commonAncestorContainer.closest('a')
+            : range.commonAncestorContainer.parentElement?.closest('a')
+          
+          if (linkElement) {
+            linkElement.href = finalUrl
+          } else {
+            selection.removeAllRanges()
+            selection.addRange(range)
+            document.execCommand('createLink', false, finalUrl)
+          }
+        } else {
+          const link = document.createElement('a')
+          link.href = finalUrl
+          link.textContent = finalUrl
+          link.target = '_blank'
+          link.rel = 'noopener noreferrer'
+          range.insertNode(link)
+          range.setStartAfter(link)
+          range.collapse(true)
+          selection.removeAllRanges()
+          selection.addRange(range)
+        }
+      }
+    }
+    setShowLinkModal(false)
+    setLinkUrl('')
+    editorRef.current?.focus()
+  }
+
+  const handleLinkModalCancel = () => {
+    setShowLinkModal(false)
+    setLinkUrl('')
+    editorRef.current?.focus()
+  }
+
+  const handleListStyleChange = (listType, style) => {
+    const selection = window.getSelection()
+    if (selection.rangeCount > 0 && editorRef.current) {
+      const range = selection.getRangeAt(0)
+      let listElement = null
+      
+      if (range.commonAncestorContainer.nodeType === 1) {
+        listElement = range.commonAncestorContainer.closest('ul, ol')
+      } else {
+        listElement = range.commonAncestorContainer.parentElement?.closest('ul, ol')
+      }
+      
+      if (listElement) {
+        const currentType = listElement.tagName.toLowerCase()
+        if ((listType === 'ul' && currentType === 'ol') || (listType === 'ol' && currentType === 'ul')) {
+          const newList = document.createElement(listType === 'ul' ? 'ul' : 'ol')
+          newList.style.setProperty('list-style-type', style, 'important')
+          while (listElement.firstChild) {
+            newList.appendChild(listElement.firstChild)
+          }
+          listElement.parentNode?.replaceChild(newList, listElement)
+          listElement = newList
+        } else {
+          listElement.style.setProperty('list-style-type', style, 'important')
+          listElement.setAttribute('data-list-style', style)
+        }
+      } else {
+        if (listType === 'ul') {
+          document.execCommand('insertUnorderedList', false, null)
+          setTimeout(() => {
+            const newList = editorRef.current?.querySelector('ul:last-of-type')
+            if (newList) {
+              newList.style.setProperty('list-style-type', style, 'important')
+              newList.setAttribute('data-list-style', style)
+            }
+          }, 50)
+        } else {
+          document.execCommand('insertOrderedList', false, null)
+          setTimeout(() => {
+            const newList = editorRef.current?.querySelector('ol:last-of-type')
+            if (newList) {
+              newList.style.setProperty('list-style-type', style, 'important')
+              newList.setAttribute('data-list-style', style)
+            }
+          }, 50)
+        }
+      }
+    }
+    editorRef.current?.focus()
+  }
+
+  return (
+    <div style={{ border: '1px solid var(--border)', borderRadius: '6px', background: 'var(--input)', width: '100%', minWidth: '100%' }}>
+      <div 
+        style={{ 
+          display: 'flex', 
+          gap: '4px', 
+          padding: '8px', 
+          borderBottom: '1px solid var(--border)',
+          background: 'var(--bg)',
+          flexWrap: 'wrap',
+          alignItems: 'center',
+          width: '100%',
+          minHeight: '36px',
+          boxSizing: 'border-box'
+        }}
+        onMouseEnter={() => saveSelection()}
+        onMouseDown={(e) => saveSelection()}
+      >
+        <button type="button" onClick={handleUndo} style={{ padding: '4px 8px', border: '1px solid var(--border)', borderRadius: '4px', background: 'var(--input)', cursor: 'pointer' }} title="Undo">
+          ↶
+        </button>
+        <button type="button" onClick={handleRedo} style={{ padding: '4px 8px', border: '1px solid var(--border)', borderRadius: '4px', background: 'var(--input)', cursor: 'pointer' }} title="Redo">
+          ↷
+        </button>
+        <div style={{ width: '1px', height: '20px', background: 'var(--border)', margin: '0 4px' }} />
+        
+        <select 
+          onChange={handleFormatBlock}
+          style={{ padding: '4px 6px', border: '1px solid var(--border)', borderRadius: '4px', background: 'var(--input)', cursor: 'pointer', fontSize: '12px', width: '120px', minWidth: '120px', maxWidth: '120px' }}
+          title="Format"
+        >
+          <option value="p">Normal text</option>
+          <option value="h1">Heading 1</option>
+          <option value="h2">Heading 2</option>
+          <option value="h3">Heading 3</option>
+          <option value="h4">Heading 4</option>
+        </select>
+        
+        <select 
+          value={fontFamily}
+          onChange={handleFontFamilyChange}
+          style={{ padding: '4px 6px', border: '1px solid var(--border)', borderRadius: '4px', background: 'var(--input)', cursor: 'pointer', fontSize: '12px', width: '140px', minWidth: '140px', maxWidth: '140px' }}
+          title="Font Family"
+        >
+          <option value="Arial">Arial</option>
+          <option value="Times New Roman">Times New Roman</option>
+          <option value="Courier New">Courier New</option>
+          <option value="Georgia">Georgia</option>
+          <option value="Verdana">Verdana</option>
+          <option value="Helvetica">Helvetica</option>
+          <option value="Comic Sans MS">Comic Sans MS</option>
+        </select>
+        
+        <div 
+          style={{ position: 'relative', display: 'inline-block' }} 
+          data-font-size-container
+          onMouseEnter={() => saveSelection()}
+        >
+          <input
+            type="text"
+            value={fontSizeInput}
+            onChange={handleFontSizeInputChange}
+            onBlur={handleFontSizeInputBlur}
+            onKeyPress={handleFontSizeInputKeyPress}
+            onMouseDown={(e) => {
+              e.preventDefault()
+              saveSelection()
+              setTimeout(() => {
+                e.target.focus()
+              }, 0)
+            }}
+            onFocus={() => {
+              saveSelection()
+              setShowFontSizeDropdown(true)
+            }}
+            style={{ 
+              padding: '4px 6px', 
+              border: '1px solid var(--border)', 
+              borderRadius: '4px', 
+              background: 'var(--input)', 
+              fontSize: '12px', 
+              width: '60px',
+              boxSizing: 'border-box',
+              textAlign: 'center'
+            }}
+            title="Font Size (type custom value or click dropdown)"
+          />
+          {showFontSizeDropdown && (
+            <div
+              style={{
+                position: 'absolute',
+                top: '100%',
+                left: 0,
+                marginTop: '2px',
+                background: 'var(--input)',
+                border: '1px solid var(--border)',
+                borderRadius: '4px',
+                boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
+                zIndex: 1000,
+                maxHeight: '200px',
+                overflowY: 'auto',
+                minWidth: '60px'
+              }}
+              onMouseDown={(e) => e.preventDefault()}
+            >
+              {[8, 9, 10, 11, 12, 14, 16, 18, 20, 24, 28, 32, 36, 48, 72].map(size => (
+                <div
+                  key={size}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    if (!savedSelectionRef.current) {
+                      saveSelection()
+                    }
+                    handleFontSizeSelect(String(size))
+                  }}
+                  onMouseDown={(e) => {
+                    e.preventDefault()
+                    e.stopPropagation()
+                    saveSelection()
+                  }}
+                  style={{
+                    padding: '4px 8px',
+                    cursor: 'pointer',
+                    fontSize: '12px',
+                    backgroundColor: fontSize === String(size) ? 'var(--primary)' : 'transparent',
+                    color: fontSize === String(size) ? 'white' : 'var(--text)'
+                  }}
+                  onMouseEnter={(e) => {
+                    if (fontSize !== String(size)) {
+                      e.target.style.backgroundColor = 'var(--bg)'
+                    }
+                  }}
+                  onMouseLeave={(e) => {
+                    if (fontSize !== String(size)) {
+                      e.target.style.backgroundColor = 'transparent'
+                    }
+                  }}
+                >
+                  {size}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+        
+        <div style={{ width: '1px', height: '20px', background: 'var(--border)', margin: '0 4px' }} />
+        
+        <button type="button" onClick={() => execCommand('bold')} style={{ padding: '4px 8px', border: '1px solid var(--border)', borderRadius: '4px', background: 'var(--input)', cursor: 'pointer', fontWeight: 'bold' }} title="Bold">
+          <strong>B</strong>
+        </button>
+        <button type="button" onClick={() => execCommand('italic')} style={{ padding: '4px 8px', border: '1px solid var(--border)', borderRadius: '4px', background: 'var(--input)', cursor: 'pointer', fontStyle: 'italic' }} title="Italic">
+          <em>I</em>
+        </button>
+        <button type="button" onClick={() => execCommand('underline')} style={{ padding: '4px 8px', border: '1px solid var(--border)', borderRadius: '4px', background: 'var(--input)', cursor: 'pointer', textDecoration: 'underline' }} title="Underline">
+          <u>U</u>
+        </button>
+        
+        <div style={{ position: 'relative', display: 'inline-block' }}>
+          <input
+            type="color"
+            value={textColor}
+            onChange={handleTextColorChange}
+            style={{ width: '32px', height: '28px', border: '1px solid var(--border)', borderRadius: '4px', cursor: 'pointer', padding: 0 }}
+            title="Text Color"
+          />
+        </div>
+        
+        <div style={{ position: 'relative', display: 'inline-block' }}>
+          <input
+            type="color"
+            value={highlightColor}
+            onChange={handleHighlightColorChange}
+            style={{ width: '32px', height: '28px', border: '1px solid var(--border)', borderRadius: '4px', cursor: 'pointer', padding: 0 }}
+            title="Highlight Color"
+          />
+        </div>
+        
+        <div style={{ width: '1px', height: '20px', background: 'var(--border)', margin: '0 4px' }} />
+        
+        <button type="button" onClick={() => execCommand('justifyLeft')} style={{ padding: '4px 8px', border: '1px solid var(--border)', borderRadius: '4px', background: 'var(--input)', cursor: 'pointer' }} title="Align Left">
+          ⬅
+        </button>
+        <button type="button" onClick={() => execCommand('justifyCenter')} style={{ padding: '4px 8px', border: '1px solid var(--border)', borderRadius: '4px', background: 'var(--input)', cursor: 'pointer' }} title="Align Center">
+          ⬌
+        </button>
+        <button type="button" onClick={() => execCommand('justifyRight')} style={{ padding: '4px 8px', border: '1px solid var(--border)', borderRadius: '4px', background: 'var(--input)', cursor: 'pointer' }} title="Align Right">
+          ➡
+        </button>
+        <button type="button" onClick={() => execCommand('justifyFull')} style={{ padding: '4px 8px', border: '1px solid var(--border)', borderRadius: '4px', background: 'var(--input)', cursor: 'pointer' }} title="Justify">
+          ⬌⬌
+        </button>
+        
+        <div style={{ width: '1px', height: '20px', background: 'var(--border)', margin: '0 4px' }} />
+        
+        <button type="button" onClick={handleInsertLink} style={{ padding: '4px 8px', border: '1px solid var(--border)', borderRadius: '4px', background: 'var(--input)', cursor: 'pointer' }} title="Insert Link">
+          🔗
+        </button>
+        
+        <button type="button" onClick={() => handleListStyleChange('ul', 'disc')} style={{ padding: '4px 8px', border: '1px solid var(--border)', borderRadius: '4px', background: 'var(--input)', cursor: 'pointer' }} title="Bullet List">
+          •
+        </button>
+        <button type="button" onClick={() => handleListStyleChange('ol', 'decimal')} style={{ padding: '4px 8px', border: '1px solid var(--border)', borderRadius: '4px', background: 'var(--input)', cursor: 'pointer' }} title="Numbered List">
+          1.
+        </button>
+      </div>
+      
+      <div
+        contentEditable
+        ref={editorRef}
+        onInput={handleInput}
+        onPaste={handlePaste}
+        onFocus={() => setIsFocused(true)}
+        onBlur={() => setIsFocused(false)}
+        style={{
+          minHeight: '150px',
+          padding: '12px',
+          outline: 'none',
+          fontSize: '14px',
+          lineHeight: '1.5',
+          fontFamily: 'Arial, sans-serif',
+          color: 'var(--text)',
+          background: 'var(--input)',
+          overflowY: 'auto',
+          maxHeight: '400px'
+        }}
+        suppressContentEditableWarning
+      />
+      
+      {showLinkModal && (
+        <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', background: 'var(--card)', border: '1px solid var(--border)', borderRadius: '8px', padding: '16px', zIndex: 1001, minWidth: '300px', boxShadow: '0 4px 12px rgba(0,0,0,0.15)' }}>
+          <div style={{ marginBottom: '12px', fontWeight: '600' }}>Insert Link</div>
+          <input
+            type="text"
+            value={linkUrl}
+            onChange={(e) => setLinkUrl(e.target.value)}
+            placeholder="Enter URL"
+            style={{ width: '100%', padding: '8px', border: '1px solid var(--border)', borderRadius: '4px', marginBottom: '12px', boxSizing: 'border-box' }}
+            onKeyPress={(e) => {
+              if (e.key === 'Enter') {
+                handleLinkModalSave()
+              }
+            }}
+            autoFocus
+          />
+          <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+            <button type="button" onClick={handleLinkModalCancel} style={{ padding: '6px 12px', border: '1px solid var(--border)', borderRadius: '4px', background: 'var(--input)', cursor: 'pointer' }}>Cancel</button>
+            <button type="button" onClick={handleLinkModalSave} style={{ padding: '6px 12px', border: '1px solid var(--border)', borderRadius: '4px', background: 'var(--primary)', color: 'white', cursor: 'pointer' }}>Insert</button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
 
 function ProjectDetail() {
   const [project, setProject] = useState(null)
@@ -11,9 +701,15 @@ function ProjectDetail() {
   const [revisions, setRevisions] = useState([])
   const [variations, setVariations] = useState([])
   const [notify, setNotify] = useState({ open: false, title: '', message: '' })
+  const [showAttachmentsModal, setShowAttachmentsModal] = useState(false)
+  const [projectAttachmentsData, setProjectAttachmentsData] = useState({ leads: [], siteVisits: [], project: [], variations: [] })
+  const [loadingAttachments, setLoadingAttachments] = useState(false)
   const [editModal, setEditModal] = useState({ open: false, form: { name: '', locationDetails: '', workingHours: '', manpowerCount: '', status: 'active' } })
   const [editProjectWarningModal, setEditProjectWarningModal] = useState({ open: false, existingVariations: [] })
+  const [deleteProjectWarningModal, setDeleteProjectWarningModal] = useState({ open: false, existingVariations: [] })
   const [deleteModal, setDeleteModal] = useState({ open: false })
+  const [variationModal, setVariationModal] = useState({ open: false, form: null })
+  const [variationWarningModal, setVariationWarningModal] = useState({ open: false, existingVariations: [] })
   const [projectEngineers, setProjectEngineers] = useState([])
   const [siteEngineers, setSiteEngineers] = useState([])
   const [profileUser, setProfileUser] = useState(null)
@@ -21,6 +717,8 @@ function ProjectDetail() {
   const [selectedFiles, setSelectedFiles] = useState([])
   const [previewFiles, setPreviewFiles] = useState([])
   const [attachmentsToRemove, setAttachmentsToRemove] = useState([])
+  const [variationSelectedFiles, setVariationSelectedFiles] = useState([])
+  const [variationPreviewFiles, setVariationPreviewFiles] = useState([])
   const [printPreviewModal, setPrintPreviewModal] = useState({ open: false, pdfUrl: null })
   const [currentUser, setCurrentUser] = useState(() => {
     try { return JSON.parse(localStorage.getItem('user')) } catch { return null }
@@ -28,6 +726,136 @@ function ProjectDetail() {
   const [isLoading, setIsLoading] = useState(true)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [loadingAction, setLoadingAction] = useState(null)
+
+  const defaultCompany = useMemo(() => ({
+    logo: null,
+    name: 'WBES',
+    address: 'Dubai, UAE',
+    phone: '+971-00-000-0000',
+    email: 'info@wbes.example'
+  }), [])
+
+  const canCreateVariation = () => {
+    return currentUser?.roles?.some(role => ['admin', 'manager', 'estimation_engineer'].includes(role))
+  }
+
+  const createVariation = async () => {
+    if (isSubmitting) return
+    setLoadingAction('create-variation')
+    setIsSubmitting(true)
+    try {
+      const payload = { ...variationModal.form }
+      
+      // Convert HTML strings to backend array format
+      // Convert scopeOfWork string to array format for backend compatibility
+      if (typeof payload.scopeOfWork === 'string') {
+        payload.scopeOfWork = payload.scopeOfWork ? [{ description: payload.scopeOfWork, quantity: '', unit: '', locationRemarks: '' }] : []
+      }
+      
+      // Convert exclusions string to array format for backend compatibility
+      if (typeof payload.exclusions === 'string') {
+        if (payload.exclusions) {
+          // Split by <br> and filter out empty strings
+          const temp = document.createElement('div')
+          temp.innerHTML = payload.exclusions
+          const lines = temp.textContent || temp.innerText || ''
+          payload.exclusions = lines.split(/\n|<br\s*\/?>/i).map(line => line.trim()).filter(line => line)
+        } else {
+          payload.exclusions = []
+        }
+      }
+      
+      // Convert paymentTerms string to array format for backend compatibility
+      if (typeof payload.paymentTerms === 'string') {
+        payload.paymentTerms = payload.paymentTerms 
+          ? payload.paymentTerms.split(/<br\s*\/?>/i).map(term => {
+              // Remove HTML tags and get text content
+              const temp = document.createElement('div')
+              temp.innerHTML = term
+              const text = (temp.textContent || temp.innerText || '').trim()
+              // Try to parse "Milestone - X%" format
+              const match = text.match(/^(.+?)(?:\s*-\s*(\d+(?:\.\d+)?)%)?$/)
+              return {
+                milestoneDescription: match ? match[1].trim() : text,
+                amountPercent: match && match[2] ? parseFloat(match[2]) : 0
+              }
+            }).filter(term => term.milestoneDescription)
+          : []
+      }
+      
+      // Get source data from project's source revision or quotation
+      let sourceData = null
+      if (project?.sourceRevision) {
+        try {
+          const revRes = await api.get(`/api/revisions/${typeof project.sourceRevision === 'object' ? project.sourceRevision._id : project.sourceRevision}`)
+          sourceData = revRes.data
+        } catch {}
+      } else if (project?.sourceQuotation) {
+        try {
+          const qRes = await api.get(`/api/quotations/${typeof project.sourceQuotation === 'object' ? project.sourceQuotation._id : project.sourceQuotation}`)
+          sourceData = qRes.data
+        } catch {}
+      }
+      
+      if (!sourceData) {
+        setNotify({ open: true, title: 'Error', message: 'Project has no source quotation or revision to base variation on.' })
+        setIsSubmitting(false)
+        setLoadingAction(null)
+        return
+      }
+      
+      const fields = ['companyInfo','submittedTo','attention','offerReference','enquiryNumber','offerDate','enquiryDate','projectTitle','introductionText','scopeOfWork','priceSchedule','ourViewpoints','exclusions','paymentTerms','deliveryCompletionWarrantyValidity']
+      let changed = false
+      for (const f of fields) {
+        if (JSON.stringify(sourceData?.[f] ?? null) !== JSON.stringify(payload?.[f] ?? null)) { changed = true; break }
+      }
+      // Also consider attachments as a change
+      if (!changed && variationSelectedFiles.length > 0) {
+        changed = true
+      }
+      if (!changed) { 
+        setNotify({ open: true, title: 'No Changes', message: 'No changes detected. Please modify data before creating a variation.' })
+        setIsSubmitting(false)
+        setLoadingAction(null)
+        return 
+      }
+      
+      // Check if files are present
+      if (variationSelectedFiles.length > 0) {
+        // Use FormData for file uploads
+        const formData = new FormData()
+        formData.append('parentProjectId', project._id)
+        formData.append('data', JSON.stringify(payload))
+        
+        // Append files
+        variationSelectedFiles.forEach(file => {
+          formData.append('attachments', file)
+        })
+        
+        await api.post('/api/project-variations', formData, {
+          headers: { 'Content-Type': 'multipart/form-data' }
+        })
+      } else {
+        // Use JSON for non-file requests
+        await api.post('/api/project-variations', { parentProjectId: project._id, data: payload })
+      }
+      
+      setNotify({ open: true, title: 'Variation Created', message: 'The variation quotation was created successfully.' })
+      setVariationModal({ open: false, form: null })
+      setVariationSelectedFiles([])
+      setVariationPreviewFiles([])
+      // Refresh variations list
+      try {
+        const resV = await api.get(`/api/project-variations?parentProject=${project._id}`)
+        setVariations(Array.isArray(resV.data) ? resV.data : [])
+      } catch {}
+    } catch (e) {
+      setNotify({ open: true, title: 'Create Failed', message: e.response?.data?.message || 'We could not create the variation. Please try again.' })
+    } finally {
+      setIsSubmitting(false)
+      setLoadingAction(null)
+    }
+  }
 
   const formatFileSize = (bytes) => {
     if (bytes === 0) return '0 Bytes'
@@ -130,6 +958,34 @@ function ProjectDetail() {
   const removeFile = (index) => {
     setSelectedFiles(prev => prev.filter((_, i) => i !== index))
     setPreviewFiles(prev => prev.filter((_, i) => i !== index))
+  }
+
+  const handleVariationFileChange = (e) => {
+    const files = Array.from(e.target.files)
+    setVariationSelectedFiles(prev => [...prev, ...files])
+    
+    files.forEach(file => {
+      if (file.type.startsWith('image/')) {
+        const reader = new FileReader()
+        reader.onloadend = () => {
+          setVariationPreviewFiles(prev => [...prev, { file, preview: reader.result, type: 'image' }])
+        }
+        reader.readAsDataURL(file)
+      } else if (file.type.startsWith('video/')) {
+        const reader = new FileReader()
+        reader.onloadend = () => {
+          setVariationPreviewFiles(prev => [...prev, { file, preview: reader.result, type: 'video' }])
+        }
+        reader.readAsDataURL(file)
+      } else {
+        setVariationPreviewFiles(prev => [...prev, { file, preview: null, type: 'document' }])
+      }
+    })
+  }
+
+  const removeVariationFile = (index) => {
+    setVariationSelectedFiles(prev => prev.filter((_, i) => i !== index))
+    setVariationPreviewFiles(prev => prev.filter((_, i) => i !== index))
   }
 
   const ensurePdfMake = async () => {
@@ -714,6 +1570,70 @@ function ProjectDetail() {
         </div>
         <div className="ld-sticky-actions">
           <button className="save-btn" onClick={generatePDFPreview}>Print Preview</button>
+          <button className="link-btn" onClick={async () => {
+            setLoadingAttachments(true)
+            setShowAttachmentsModal(true)
+            try {
+              // Fetch all attachments
+              const attachmentsData = { leads: [], siteVisits: [], project: [], variations: [] }
+              
+              // Get project attachments
+              if (project.attachments && Array.isArray(project.attachments) && project.attachments.length > 0) {
+                attachmentsData.project = project.attachments.map(att => ({ ...att, source: 'project', sourceName: project.name }))
+              }
+              
+              // Get lead attachments
+              if (project.leadId) {
+                try {
+                  const leadId = typeof project.leadId === 'object' ? project.leadId._id : project.leadId
+                  const leadRes = await api.get(`/api/leads/${leadId}`)
+                  if (leadRes.data.attachments && Array.isArray(leadRes.data.attachments) && leadRes.data.attachments.length > 0) {
+                    attachmentsData.leads = leadRes.data.attachments.map(att => ({ ...att, source: 'lead', sourceName: leadRes.data.customerName || leadRes.data.projectTitle || 'Lead' }))
+                  }
+                } catch {}
+              }
+              
+              // Get site visit attachments
+              try {
+                const siteVisitsRes = await api.get(`/api/site-visits?project=${project._id}`)
+                if (Array.isArray(siteVisitsRes.data)) {
+                  siteVisitsRes.data.forEach(visit => {
+                    if (visit.attachments && Array.isArray(visit.attachments) && visit.attachments.length > 0) {
+                      const visitAttachments = visit.attachments.map(att => ({
+                        ...att,
+                        source: 'siteVisit',
+                        sourceName: `Site Visit - ${new Date(visit.visitAt).toLocaleDateString()} - ${visit.siteLocation}`
+                      }))
+                      attachmentsData.siteVisits.push(...visitAttachments)
+                    }
+                  })
+                }
+              } catch {}
+              
+              // Get variation attachments
+              try {
+                const variationsRes = await api.get(`/api/project-variations?parentProject=${project._id}`)
+                if (Array.isArray(variationsRes.data)) {
+                  variationsRes.data.forEach(variation => {
+                    if (variation.attachments && Array.isArray(variation.attachments) && variation.attachments.length > 0) {
+                      const variationAttachments = variation.attachments.map(att => ({
+                        ...att,
+                        source: 'variation',
+                        sourceName: `Variation ${variation.variationNumber || variation._id}`
+                      }))
+                      attachmentsData.variations.push(...variationAttachments)
+                    }
+                  })
+                }
+              } catch {}
+              
+              setProjectAttachmentsData(attachmentsData)
+            } catch (e) {
+              setNotify({ open: true, title: 'Error', message: 'Failed to load attachments. Please try again.' })
+            } finally {
+              setLoadingAttachments(false)
+            }
+          }}>View All Attachments</button>
           <button className="assign-btn" onClick={async () => {
             try {
               const token = localStorage.getItem('token')
@@ -752,6 +1672,75 @@ function ProjectDetail() {
           )}
           {(currentUser?.roles?.includes('manager') || currentUser?.roles?.includes('admin')) && (
             <button className="reject-btn" onClick={() => setDeleteModal({ open: true })}>Delete Project</button>
+          )}
+          {canCreateVariation() && (
+            <button className="assign-btn" onClick={async () => {
+              // Check if variations already exist for this project
+              if (variations && Array.isArray(variations) && variations.length > 0) {
+                setVariationWarningModal({ open: true, existingVariations: variations })
+                return
+              }
+              
+              // Get source data from project's source revision or quotation
+              let sourceData = null
+              if (project?.sourceRevision) {
+                try {
+                  const revRes = await api.get(`/api/revisions/${typeof project.sourceRevision === 'object' ? project.sourceRevision._id : project.sourceRevision}`)
+                  sourceData = revRes.data
+                } catch {}
+              } else if (project?.sourceQuotation) {
+                try {
+                  const qRes = await api.get(`/api/quotations/${typeof project.sourceQuotation === 'object' ? project.sourceQuotation._id : project.sourceQuotation}`)
+                  sourceData = qRes.data
+                } catch {}
+              }
+              
+              if (!sourceData) {
+                setNotify({ open: true, title: 'Error', message: 'Project has no source quotation or revision to base variation on.' })
+                return
+              }
+              
+              // Convert source data to form format
+              const scopeOfWorkValue = typeof sourceData.scopeOfWork === 'string' 
+                ? sourceData.scopeOfWork 
+                : (Array.isArray(sourceData.scopeOfWork) && sourceData.scopeOfWork.length
+                    ? sourceData.scopeOfWork.map(item => item.description || '').join('<br>')
+                    : '')
+              
+              const exclusionsValue = typeof sourceData.exclusions === 'string'
+                ? sourceData.exclusions
+                : (Array.isArray(sourceData.exclusions) && sourceData.exclusions.length
+                    ? sourceData.exclusions.join('<br>')
+                    : '')
+              
+              const paymentTermsValue = typeof sourceData.paymentTerms === 'string'
+                ? sourceData.paymentTerms
+                : (Array.isArray(sourceData.paymentTerms) && sourceData.paymentTerms.length
+                    ? sourceData.paymentTerms.map(term => `${term.milestoneDescription || ''}${term.amountPercent ? ` - ${term.amountPercent}%` : ''}`).join('<br>')
+                    : '')
+              
+              // Reset variation file states
+              setVariationSelectedFiles([])
+              setVariationPreviewFiles([])
+              
+              setVariationModal({ open: true, form: {
+                companyInfo: sourceData.companyInfo || defaultCompany,
+                submittedTo: sourceData.submittedTo || '',
+                attention: sourceData.attention || '',
+                offerReference: sourceData.offerReference || '',
+                enquiryNumber: sourceData.enquiryNumber || '',
+                offerDate: sourceData.offerDate ? sourceData.offerDate.substring(0,10) : '',
+                enquiryDate: sourceData.enquiryDate ? sourceData.enquiryDate.substring(0,10) : '',
+                projectTitle: sourceData.projectTitle || project?.name || '',
+                introductionText: sourceData.introductionText || '',
+                scopeOfWork: scopeOfWorkValue,
+                priceSchedule: sourceData.priceSchedule || { items: [], subTotal: 0, grandTotal: 0, currency: 'AED', taxDetails: { vatRate: 5, vatAmount: 0 } },
+                ourViewpoints: sourceData.ourViewpoints || '',
+                exclusions: exclusionsValue,
+                paymentTerms: paymentTermsValue,
+                deliveryCompletionWarrantyValidity: sourceData.deliveryCompletionWarrantyValidity || { deliveryTimeline: '', warrantyPeriod: '', offerValidity: 30, authorizedSignatory: currentUser?.name || '' }
+              } })
+            }}>Create Variation Quotation</button>
           )}
         </div>
       </div>
@@ -1151,8 +2140,8 @@ function ProjectDetail() {
       )}
     </div>
       {notify.open && (
-        <div className="modal-overlay" onClick={() => setNotify({ open: false, title: '', message: '' })}>
-          <div className="modal" onClick={e => e.stopPropagation()}>
+        <div className="modal-overlay" onClick={() => setNotify({ open: false, title: '', message: '' })} style={{ zIndex: 10002 }}>
+          <div className="modal" onClick={e => e.stopPropagation()} style={{ zIndex: 10003 }}>
             <div className="modal-header">
               <h2>{notify.title || 'Notice'}</h2>
               <button onClick={() => setNotify({ open: false, title: '', message: '' })} className="close-btn">×</button>
@@ -1191,7 +2180,70 @@ function ProjectDetail() {
           <div className="modal" onClick={e => e.stopPropagation()}>
             <div className="modal-header">
               <h2>Edit Project</h2>
-              <button onClick={() => setEditModal({ open: false, form: { name: '', locationDetails: '', workingHours: '', manpowerCount: '', status: 'active' } })} className="close-btn">×</button>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (project && project._id) {
+                      const projectId = typeof project._id === 'object' ? project._id._id : project._id
+                      window.open(`/projects/edit/${projectId}`, '_blank')
+                    }
+                  }}
+                  className="link-btn"
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    fontSize: '14px',
+                    padding: '6px 12px',
+                    border: '1px solid var(--border)',
+                    borderRadius: '6px',
+                    background: 'transparent',
+                    color: 'var(--text)',
+                    cursor: 'pointer',
+                    transition: 'all 0.2s'
+                  }}
+                  title="Open in New Tab"
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
+                    <polyline points="15 3 21 3 21 9"></polyline>
+                    <line x1="10" y1="14" x2="21" y2="3"></line>
+                  </svg>
+                  Open in New Tab
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (project && project._id) {
+                      const projectId = typeof project._id === 'object' ? project._id._id : project._id
+                      window.location.href = `/projects/edit/${projectId}`
+                    }
+                  }}
+                  className="link-btn"
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    fontSize: '14px',
+                    padding: '6px 12px',
+                    border: '1px solid var(--border)',
+                    borderRadius: '6px',
+                    background: 'transparent',
+                    color: 'var(--text)',
+                    cursor: 'pointer',
+                    transition: 'all 0.2s'
+                  }}
+                  title="Open Full Form"
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                    <line x1="9" y1="3" x2="9" y2="21"></line>
+                  </svg>
+                  Open Full Form
+                </button>
+                <button onClick={() => setEditModal({ open: false, form: { name: '', locationDetails: '', workingHours: '', manpowerCount: '', status: 'active' } })} className="close-btn">×</button>
+              </div>
             </div>
             <div className="lead-form">
               <div className="form-group">
@@ -1624,6 +2676,1103 @@ function ProjectDetail() {
           </div>
         </div>
       )}
+      {deleteProjectWarningModal.open && (
+        <div className="modal-overlay" onClick={() => setDeleteProjectWarningModal({ open: false, existingVariations: [] })}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>Cannot Delete Project</h2>
+              <button onClick={() => setDeleteProjectWarningModal({ open: false, existingVariations: [] })} className="close-btn">×</button>
+            </div>
+            <div className="lead-form">
+              <div style={{ padding: '16px', background: '#FEF3C7', border: '1px solid #F59E0B', borderRadius: '8px', marginBottom: '16px' }}>
+                <p style={{ margin: 0, color: '#7C2D12', fontWeight: 500 }}>
+                  ⚠️ This project cannot be deleted because it has {deleteProjectWarningModal.existingVariations.length} existing variation{deleteProjectWarningModal.existingVariations.length > 1 ? 's' : ''}.
+                </p>
+              </div>
+              <p style={{ marginBottom: '16px' }}>
+                This project has existing variation quotations. 
+                Deleting the project is blocked to maintain data integrity and ensure consistency with approved variations.
+              </p>
+              {deleteProjectWarningModal.existingVariations.length > 0 && (
+                <div style={{ marginBottom: '16px' }}>
+                  <p style={{ marginBottom: '8px', fontWeight: 600 }}>Existing Variations:</p>
+                  <ul style={{ marginLeft: '20px', marginBottom: '16px' }}>
+                    {deleteProjectWarningModal.existingVariations.map((v, idx) => (
+                      <li key={v._id || idx} style={{ marginBottom: '4px' }}>
+                        Variation #{v.variationNumber} 
+                        {v.offerReference && ` - ${v.offerReference}`}
+                        {v.managementApproval?.status && (
+                          <span className={`status-badge ${v.managementApproval.status === 'approved' ? 'approved' : v.managementApproval.status === 'rejected' ? 'rejected' : 'blue'}`} style={{ marginLeft: '8px' }}>
+                            {v.managementApproval.status}
+                          </span>
+                        )}
+                        <button 
+                          className="link-btn" 
+                          onClick={() => {
+                            try {
+                              localStorage.setItem('variationId', v._id)
+                              window.location.href = '/variation-detail'
+                            } catch {}
+                          }}
+                          style={{ marginLeft: '8px' }}
+                        >
+                          View
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              <p style={{ marginBottom: '16px', color: 'var(--text-muted)' }}>
+                To delete this project, you must first delete or remove all associated variations. 
+                Please contact a manager or administrator if you need to delete this project.
+              </p>
+              <div className="form-actions">
+                <button type="button" className="save-btn" onClick={() => setDeleteProjectWarningModal({ open: false, existingVariations: [] })}>Understood</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+      {variationWarningModal.open && (
+        <div className="modal-overlay" onClick={() => setVariationWarningModal({ open: false, existingVariations: [] })}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>Variation Already Exists</h2>
+              <button onClick={() => setVariationWarningModal({ open: false, existingVariations: [] })} className="close-btn">×</button>
+            </div>
+            <div className="lead-form">
+              <div style={{ padding: '16px', background: '#FEF3C7', border: '1px solid #F59E0B', borderRadius: '8px', marginBottom: '16px' }}>
+                <p style={{ margin: 0, color: '#7C2D12', fontWeight: 500 }}>
+                  ⚠️ This project already has {variationWarningModal.existingVariations.length} existing variation{variationWarningModal.existingVariations.length > 1 ? 's' : ''}.
+                </p>
+              </div>
+              <p style={{ marginBottom: '16px' }}>
+                A variation quotation already exists for project <strong>{project?.name}</strong>. 
+                You cannot create another variation directly from the project.
+              </p>
+              {variationWarningModal.existingVariations.length > 0 && (
+                <div style={{ marginBottom: '16px' }}>
+                  <p style={{ marginBottom: '8px', fontWeight: 600 }}>Existing Variations:</p>
+                  <ul style={{ marginLeft: '20px', marginBottom: '16px' }}>
+                    {variationWarningModal.existingVariations.map((v, idx) => (
+                      <li key={v._id || idx} style={{ marginBottom: '4px' }}>
+                        Variation #{v.variationNumber} 
+                        {v.offerReference && ` - ${v.offerReference}`}
+                        {v.managementApproval?.status && (
+                          <span className={`status-badge ${v.managementApproval.status === 'approved' ? 'approved' : v.managementApproval.status === 'rejected' ? 'rejected' : 'blue'}`} style={{ marginLeft: '8px' }}>
+                            {v.managementApproval.status}
+                          </span>
+                        )}
+                        <button 
+                          className="link-btn" 
+                          onClick={() => {
+                            try {
+                              localStorage.setItem('variationId', v._id)
+                              window.location.href = '/variation-detail'
+                            } catch {}
+                          }}
+                          style={{ marginLeft: '8px' }}
+                        >
+                          View
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              <p style={{ marginBottom: '16px', color: 'var(--text-muted)' }}>
+                To create a new variation, you should create it from an approved variation using the "Create Another Variation" button on the variation detail page.
+              </p>
+              <div className="form-actions">
+                <button type="button" className="save-btn" onClick={() => setVariationWarningModal({ open: false, existingVariations: [] })}>Understood</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+      {showAttachmentsModal && project && (
+        <div className="modal-overlay" onClick={() => {
+          setShowAttachmentsModal(false)
+          setProjectAttachmentsData({ leads: [], siteVisits: [], project: [], variations: [] })
+        }}>
+          <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: '95vw', width: '1200px' }}>
+            <div className="modal-header">
+              <h2>All Attachments - {project.name}</h2>
+              <button onClick={() => {
+                setShowAttachmentsModal(false)
+                setProjectAttachmentsData({ leads: [], siteVisits: [], project: [], variations: [] })
+              }} className="close-btn">×</button>
+            </div>
+            <div className="lead-form" style={{ maxHeight: '80vh', overflow: 'auto' }}>
+              {loadingAttachments ? (
+                <div style={{ padding: '40px', textAlign: 'center' }}>Loading attachments...</div>
+              ) : (
+                <>
+                  {/* Lead Attachments */}
+                  {projectAttachmentsData.leads.length > 0 && (
+                    <div className="form-section" style={{ marginBottom: '30px' }}>
+                      <div className="section-header">
+                        <h3>Lead Attachments ({projectAttachmentsData.leads.length})</h3>
+                      </div>
+                      <div style={{ 
+                        display: 'grid', 
+                        gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', 
+                        gap: '20px',
+                        marginTop: '15px'
+                      }}>
+                        {projectAttachmentsData.leads.map((attachment, index) => {
+                          const isImage = attachment.mimetype && attachment.mimetype.startsWith('image/')
+                          const isVideo = attachment.mimetype && attachment.mimetype.startsWith('video/')
+                          const apiBase = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'
+                          const fileUrl = attachment.path.startsWith('http') 
+                            ? attachment.path 
+                            : `${apiBase}${attachment.path}`
+
+                          const formatFileSize = (bytes) => {
+                            if (bytes === 0) return '0 Bytes'
+                            const k = 1024
+                            const sizes = ['Bytes', 'KB', 'MB', 'GB']
+                            const i = Math.floor(Math.log(bytes) / Math.log(k))
+                            return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i]
+                          }
+
+                          return (
+                            <div 
+                              key={`lead-${index}`}
+                              style={{ 
+                                border: '1px solid #ddd', 
+                                borderRadius: '8px', 
+                                padding: '12px',
+                                backgroundColor: '#fff',
+                                boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+                                transition: 'transform 0.2s, box-shadow 0.2s',
+                                cursor: (isImage || isVideo) ? 'pointer' : 'default'
+                              }}
+                              onMouseEnter={(e) => {
+                                e.currentTarget.style.transform = 'translateY(-2px)'
+                                e.currentTarget.style.boxShadow = '0 4px 8px rgba(0,0,0,0.15)'
+                              }}
+                              onMouseLeave={(e) => {
+                                e.currentTarget.style.transform = 'translateY(0)'
+                                e.currentTarget.style.boxShadow = '0 2px 4px rgba(0,0,0,0.1)'
+                              }}
+                              onClick={() => {
+                                if (isImage || isVideo) {
+                                  window.open(fileUrl, '_blank')
+                                }
+                              }}
+                            >
+                              {isImage && (
+                                <img 
+                                  src={fileUrl} 
+                                  alt={attachment.originalName}
+                                  style={{ 
+                                    width: '100%', 
+                                    height: '150px', 
+                                    objectFit: 'cover',
+                                    borderRadius: '4px',
+                                    marginBottom: '8px'
+                                  }}
+                                />
+                              )}
+                              {isVideo && (
+                                <video 
+                                  src={fileUrl}
+                                  style={{ 
+                                    width: '100%', 
+                                    height: '150px', 
+                                    objectFit: 'cover',
+                                    borderRadius: '4px',
+                                    marginBottom: '8px'
+                                  }}
+                                  controls
+                                  onClick={(e) => e.stopPropagation()}
+                                />
+                              )}
+                              {!isImage && !isVideo && (
+                                <div style={{ 
+                                  width: '100%', 
+                                  height: '150px', 
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  backgroundColor: '#f5f5f5',
+                                  borderRadius: '4px',
+                                  marginBottom: '8px',
+                                  fontSize: '48px'
+                                }}>
+                                  📄
+                                </div>
+                              )}
+                              <div style={{ fontSize: '12px', marginBottom: '4px', fontWeight: '500', color: '#333', wordBreak: 'break-word' }}>
+                                {attachment.originalName.length > 25 
+                                  ? attachment.originalName.substring(0, 25) + '...' 
+                                  : attachment.originalName}
+                              </div>
+                              <div style={{ fontSize: '11px', color: '#999', marginBottom: '8px' }}>
+                                {formatFileSize(attachment.size)}
+                              </div>
+                              <div style={{ fontSize: '10px', color: '#666', marginBottom: '8px' }}>
+                                Source: {attachment.sourceName}
+                              </div>
+                              <a 
+                                href={fileUrl} 
+                                target="_blank" 
+                                rel="noopener noreferrer"
+                                onClick={(e) => e.stopPropagation()}
+                                style={{
+                                  display: 'inline-block',
+                                  padding: '6px 12px',
+                                  backgroundColor: '#007bff',
+                                  color: 'white',
+                                  textDecoration: 'none',
+                                  borderRadius: '4px',
+                                  fontSize: '12px',
+                                  width: '100%',
+                                  textAlign: 'center'
+                                }}
+                              >
+                                {isImage ? 'View Full Size' : isVideo ? 'Play Video' : 'Download'}
+                              </a>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Site Visit Attachments */}
+                  {projectAttachmentsData.siteVisits.length > 0 && (
+                    <div className="form-section" style={{ marginBottom: '30px' }}>
+                      <div className="section-header">
+                        <h3>Site Visit Attachments ({projectAttachmentsData.siteVisits.length})</h3>
+                      </div>
+                      <div style={{ 
+                        display: 'grid', 
+                        gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', 
+                        gap: '20px',
+                        marginTop: '15px'
+                      }}>
+                        {projectAttachmentsData.siteVisits.map((attachment, index) => {
+                          const isImage = attachment.mimetype && attachment.mimetype.startsWith('image/')
+                          const isVideo = attachment.mimetype && attachment.mimetype.startsWith('video/')
+                          const apiBase = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'
+                          const fileUrl = attachment.path.startsWith('http') 
+                            ? attachment.path 
+                            : `${apiBase}${attachment.path}`
+
+                          const formatFileSize = (bytes) => {
+                            if (bytes === 0) return '0 Bytes'
+                            const k = 1024
+                            const sizes = ['Bytes', 'KB', 'MB', 'GB']
+                            const i = Math.floor(Math.log(bytes) / Math.log(k))
+                            return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i]
+                          }
+
+                          return (
+                            <div 
+                              key={`sitevisit-${index}`}
+                              style={{ 
+                                border: '1px solid #ddd', 
+                                borderRadius: '8px', 
+                                padding: '12px',
+                                backgroundColor: '#fff',
+                                boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+                                transition: 'transform 0.2s, box-shadow 0.2s',
+                                cursor: (isImage || isVideo) ? 'pointer' : 'default'
+                              }}
+                              onMouseEnter={(e) => {
+                                e.currentTarget.style.transform = 'translateY(-2px)'
+                                e.currentTarget.style.boxShadow = '0 4px 8px rgba(0,0,0,0.15)'
+                              }}
+                              onMouseLeave={(e) => {
+                                e.currentTarget.style.transform = 'translateY(0)'
+                                e.currentTarget.style.boxShadow = '0 2px 4px rgba(0,0,0,0.1)'
+                              }}
+                              onClick={() => {
+                                if (isImage || isVideo) {
+                                  window.open(fileUrl, '_blank')
+                                }
+                              }}
+                            >
+                              {isImage && (
+                                <img 
+                                  src={fileUrl} 
+                                  alt={attachment.originalName}
+                                  style={{ 
+                                    width: '100%', 
+                                    height: '150px', 
+                                    objectFit: 'cover',
+                                    borderRadius: '4px',
+                                    marginBottom: '8px'
+                                  }}
+                                />
+                              )}
+                              {isVideo && (
+                                <video 
+                                  src={fileUrl}
+                                  style={{ 
+                                    width: '100%', 
+                                    height: '150px', 
+                                    objectFit: 'cover',
+                                    borderRadius: '4px',
+                                    marginBottom: '8px'
+                                  }}
+                                  controls
+                                  onClick={(e) => e.stopPropagation()}
+                                />
+                              )}
+                              {!isImage && !isVideo && (
+                                <div style={{ 
+                                  width: '100%', 
+                                  height: '150px', 
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  backgroundColor: '#f5f5f5',
+                                  borderRadius: '4px',
+                                  marginBottom: '8px',
+                                  fontSize: '48px'
+                                }}>
+                                  📄
+                                </div>
+                              )}
+                              <div style={{ fontSize: '12px', marginBottom: '4px', fontWeight: '500', color: '#333', wordBreak: 'break-word' }}>
+                                {attachment.originalName.length > 25 
+                                  ? attachment.originalName.substring(0, 25) + '...' 
+                                  : attachment.originalName}
+                              </div>
+                              <div style={{ fontSize: '11px', color: '#999', marginBottom: '8px' }}>
+                                {formatFileSize(attachment.size)}
+                              </div>
+                              <div style={{ fontSize: '10px', color: '#666', marginBottom: '8px' }}>
+                                Source: {attachment.sourceName}
+                              </div>
+                              <a 
+                                href={fileUrl} 
+                                target="_blank" 
+                                rel="noopener noreferrer"
+                                onClick={(e) => e.stopPropagation()}
+                                style={{
+                                  display: 'inline-block',
+                                  padding: '6px 12px',
+                                  backgroundColor: '#007bff',
+                                  color: 'white',
+                                  textDecoration: 'none',
+                                  borderRadius: '4px',
+                                  fontSize: '12px',
+                                  width: '100%',
+                                  textAlign: 'center'
+                                }}
+                              >
+                                {isImage ? 'View Full Size' : isVideo ? 'Play Video' : 'Download'}
+                              </a>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Project Attachments */}
+                  {projectAttachmentsData.project.length > 0 && (
+                    <div className="form-section" style={{ marginBottom: '30px' }}>
+                      <div className="section-header">
+                        <h3>Project Attachments ({projectAttachmentsData.project.length})</h3>
+                      </div>
+                      <div style={{ 
+                        display: 'grid', 
+                        gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', 
+                        gap: '20px',
+                        marginTop: '15px'
+                      }}>
+                        {projectAttachmentsData.project.map((attachment, index) => {
+                          const isImage = attachment.mimetype && attachment.mimetype.startsWith('image/')
+                          const isVideo = attachment.mimetype && attachment.mimetype.startsWith('video/')
+                          const apiBase = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'
+                          const fileUrl = attachment.path.startsWith('http') 
+                            ? attachment.path 
+                            : `${apiBase}${attachment.path}`
+
+                          const formatFileSize = (bytes) => {
+                            if (bytes === 0) return '0 Bytes'
+                            const k = 1024
+                            const sizes = ['Bytes', 'KB', 'MB', 'GB']
+                            const i = Math.floor(Math.log(bytes) / Math.log(k))
+                            return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i]
+                          }
+
+                          return (
+                            <div 
+                              key={`project-${index}`}
+                              style={{ 
+                                border: '1px solid #ddd', 
+                                borderRadius: '8px', 
+                                padding: '12px',
+                                backgroundColor: '#fff',
+                                boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+                                transition: 'transform 0.2s, box-shadow 0.2s',
+                                cursor: (isImage || isVideo) ? 'pointer' : 'default'
+                              }}
+                              onMouseEnter={(e) => {
+                                e.currentTarget.style.transform = 'translateY(-2px)'
+                                e.currentTarget.style.boxShadow = '0 4px 8px rgba(0,0,0,0.15)'
+                              }}
+                              onMouseLeave={(e) => {
+                                e.currentTarget.style.transform = 'translateY(0)'
+                                e.currentTarget.style.boxShadow = '0 2px 4px rgba(0,0,0,0.1)'
+                              }}
+                              onClick={() => {
+                                if (isImage || isVideo) {
+                                  window.open(fileUrl, '_blank')
+                                }
+                              }}
+                            >
+                              {isImage && (
+                                <img 
+                                  src={fileUrl} 
+                                  alt={attachment.originalName}
+                                  style={{ 
+                                    width: '100%', 
+                                    height: '150px', 
+                                    objectFit: 'cover',
+                                    borderRadius: '4px',
+                                    marginBottom: '8px'
+                                  }}
+                                />
+                              )}
+                              {isVideo && (
+                                <video 
+                                  src={fileUrl}
+                                  style={{ 
+                                    width: '100%', 
+                                    height: '150px', 
+                                    objectFit: 'cover',
+                                    borderRadius: '4px',
+                                    marginBottom: '8px'
+                                  }}
+                                  controls
+                                  onClick={(e) => e.stopPropagation()}
+                                />
+                              )}
+                              {!isImage && !isVideo && (
+                                <div style={{ 
+                                  width: '100%', 
+                                  height: '150px', 
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  backgroundColor: '#f5f5f5',
+                                  borderRadius: '4px',
+                                  marginBottom: '8px',
+                                  fontSize: '48px'
+                                }}>
+                                  📄
+                                </div>
+                              )}
+                              <div style={{ fontSize: '12px', marginBottom: '4px', fontWeight: '500', color: '#333', wordBreak: 'break-word' }}>
+                                {attachment.originalName.length > 25 
+                                  ? attachment.originalName.substring(0, 25) + '...' 
+                                  : attachment.originalName}
+                              </div>
+                              <div style={{ fontSize: '11px', color: '#999', marginBottom: '8px' }}>
+                                {formatFileSize(attachment.size)}
+                              </div>
+                              <div style={{ fontSize: '10px', color: '#666', marginBottom: '8px' }}>
+                                Source: {attachment.sourceName}
+                              </div>
+                              <a 
+                                href={fileUrl} 
+                                target="_blank" 
+                                rel="noopener noreferrer"
+                                onClick={(e) => e.stopPropagation()}
+                                style={{
+                                  display: 'inline-block',
+                                  padding: '6px 12px',
+                                  backgroundColor: '#007bff',
+                                  color: 'white',
+                                  textDecoration: 'none',
+                                  borderRadius: '4px',
+                                  fontSize: '12px',
+                                  width: '100%',
+                                  textAlign: 'center'
+                                }}
+                              >
+                                {isImage ? 'View Full Size' : isVideo ? 'Play Video' : 'Download'}
+                              </a>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Variation Attachments */}
+                  {projectAttachmentsData.variations.length > 0 && (
+                    <div className="form-section" style={{ marginBottom: '30px' }}>
+                      <div className="section-header">
+                        <h3>Project Variation Attachments ({projectAttachmentsData.variations.length})</h3>
+                      </div>
+                      <div style={{ 
+                        display: 'grid', 
+                        gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', 
+                        gap: '20px',
+                        marginTop: '15px'
+                      }}>
+                        {projectAttachmentsData.variations.map((attachment, index) => {
+                          const isImage = attachment.mimetype && attachment.mimetype.startsWith('image/')
+                          const isVideo = attachment.mimetype && attachment.mimetype.startsWith('video/')
+                          const apiBase = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'
+                          const fileUrl = attachment.path.startsWith('http') 
+                            ? attachment.path 
+                            : `${apiBase}${attachment.path}`
+
+                          const formatFileSize = (bytes) => {
+                            if (bytes === 0) return '0 Bytes'
+                            const k = 1024
+                            const sizes = ['Bytes', 'KB', 'MB', 'GB']
+                            const i = Math.floor(Math.log(bytes) / Math.log(k))
+                            return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i]
+                          }
+
+                          return (
+                            <div 
+                              key={`variation-${index}`}
+                              style={{ 
+                                border: '1px solid #ddd', 
+                                borderRadius: '8px', 
+                                padding: '12px',
+                                backgroundColor: '#fff',
+                                boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+                                transition: 'transform 0.2s, box-shadow 0.2s',
+                                cursor: (isImage || isVideo) ? 'pointer' : 'default'
+                              }}
+                              onMouseEnter={(e) => {
+                                e.currentTarget.style.transform = 'translateY(-2px)'
+                                e.currentTarget.style.boxShadow = '0 4px 8px rgba(0,0,0,0.15)'
+                              }}
+                              onMouseLeave={(e) => {
+                                e.currentTarget.style.transform = 'translateY(0)'
+                                e.currentTarget.style.boxShadow = '0 2px 4px rgba(0,0,0,0.1)'
+                              }}
+                              onClick={() => {
+                                if (isImage || isVideo) {
+                                  window.open(fileUrl, '_blank')
+                                }
+                              }}
+                            >
+                              {isImage && (
+                                <img 
+                                  src={fileUrl} 
+                                  alt={attachment.originalName}
+                                  style={{ 
+                                    width: '100%', 
+                                    height: '150px', 
+                                    objectFit: 'cover',
+                                    borderRadius: '4px',
+                                    marginBottom: '8px'
+                                  }}
+                                />
+                              )}
+                              {isVideo && (
+                                <video 
+                                  src={fileUrl}
+                                  style={{ 
+                                    width: '100%', 
+                                    height: '150px', 
+                                    objectFit: 'cover',
+                                    borderRadius: '4px',
+                                    marginBottom: '8px'
+                                  }}
+                                  controls
+                                  onClick={(e) => e.stopPropagation()}
+                                />
+                              )}
+                              {!isImage && !isVideo && (
+                                <div style={{ 
+                                  width: '100%', 
+                                  height: '150px', 
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  backgroundColor: '#f5f5f5',
+                                  borderRadius: '4px',
+                                  marginBottom: '8px',
+                                  fontSize: '48px'
+                                }}>
+                                  📄
+                                </div>
+                              )}
+                              <div style={{ fontSize: '12px', marginBottom: '4px', fontWeight: '500', color: '#333', wordBreak: 'break-word' }}>
+                                {attachment.originalName.length > 25 
+                                  ? attachment.originalName.substring(0, 25) + '...' 
+                                  : attachment.originalName}
+                              </div>
+                              <div style={{ fontSize: '11px', color: '#999', marginBottom: '8px' }}>
+                                {formatFileSize(attachment.size)}
+                              </div>
+                              <div style={{ fontSize: '10px', color: '#666', marginBottom: '8px' }}>
+                                Source: {attachment.sourceName}
+                              </div>
+                              <a 
+                                href={fileUrl} 
+                                target="_blank" 
+                                rel="noopener noreferrer"
+                                onClick={(e) => e.stopPropagation()}
+                                style={{
+                                  display: 'inline-block',
+                                  padding: '6px 12px',
+                                  backgroundColor: '#007bff',
+                                  color: 'white',
+                                  textDecoration: 'none',
+                                  borderRadius: '4px',
+                                  fontSize: '12px',
+                                  width: '100%',
+                                  textAlign: 'center'
+                                }}
+                              >
+                                {isImage ? 'View Full Size' : isVideo ? 'Play Video' : 'Download'}
+                              </a>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* No attachments message */}
+                  {projectAttachmentsData.leads.length === 0 && 
+                   projectAttachmentsData.siteVisits.length === 0 && 
+                   projectAttachmentsData.project.length === 0 && 
+                   projectAttachmentsData.variations.length === 0 && (
+                    <div style={{ padding: '40px', textAlign: 'center', color: '#999' }}>
+                      No attachments found for this project.
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+      {variationModal.open && variationModal.form && project && (
+        <div className="modal-overlay" onClick={() => {
+          setVariationModal({ open: false, form: null })
+          setVariationSelectedFiles([])
+          setVariationPreviewFiles([])
+        }}>
+          <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: '90vw', width: '900px' }}>
+            <div className="modal-header">
+              <h2>Create Variation Quotation</h2>
+              <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                {variationModal.form && project?._id && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (project && project._id) {
+                          const projectId = typeof project._id === 'object' ? project._id._id : project._id
+                          window.open(`/projects/${projectId}/create-variation`, '_blank')
+                        }
+                      }}
+                      className="link-btn"
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                        fontSize: '14px',
+                        padding: '6px 12px',
+                        border: '1px solid var(--border)',
+                        borderRadius: '6px',
+                        background: 'transparent',
+                        color: 'var(--text)',
+                        cursor: 'pointer',
+                        transition: 'all 0.2s'
+                      }}
+                      title="Open in New Tab"
+                    >
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
+                        <polyline points="15 3 21 3 21 9"></polyline>
+                        <line x1="10" y1="14" x2="21" y2="3"></line>
+                      </svg>
+                      Open in New Tab
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (project && project._id) {
+                          const projectId = typeof project._id === 'object' ? project._id._id : project._id
+                          window.location.href = `/projects/${projectId}/create-variation`
+                        }
+                      }}
+                      className="link-btn"
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                        fontSize: '14px',
+                        padding: '6px 12px',
+                        border: '1px solid var(--border)',
+                        borderRadius: '6px',
+                        background: 'transparent',
+                        color: 'var(--text)',
+                        cursor: 'pointer',
+                        transition: 'all 0.2s'
+                      }}
+                      title="Open Full Form"
+                    >
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                        <line x1="9" y1="3" x2="9" y2="21"></line>
+                      </svg>
+                      Open Full Form
+                    </button>
+                  </>
+                )}
+                <button onClick={() => {
+                  setVariationModal({ open: false, form: null })
+                  setVariationSelectedFiles([])
+                  setVariationPreviewFiles([])
+                }} className="close-btn">×</button>
+              </div>
+            </div>
+            <div className="lead-form" style={{ maxHeight: '70vh', overflow: 'auto' }}>
+              <div className="form-section">
+                <div className="section-header">
+                  <h3>Cover & Basic Details</h3>
+                </div>
+                <div className="form-group">
+                  <label>Submitted To (Client Company)</label>
+                  <input type="text" value={variationModal.form.submittedTo} onChange={e => setVariationModal({ ...variationModal, form: { ...variationModal.form, submittedTo: e.target.value } })} />
+                </div>
+                <div className="form-group">
+                  <label>Attention (Contact Person)</label>
+                  <input type="text" value={variationModal.form.attention} onChange={e => setVariationModal({ ...variationModal, form: { ...variationModal.form, attention: e.target.value } })} />
+                </div>
+                <div className="form-row">
+                  <div className="form-group" style={{ flex: 1 }}>
+                    <label>Offer Reference</label>
+                    <input type="text" value={variationModal.form.offerReference} onChange={e => setVariationModal({ ...variationModal, form: { ...variationModal.form, offerReference: e.target.value } })} />
+                  </div>
+                  <div className="form-group" style={{ flex: 1 }}>
+                    <label>Enquiry Number</label>
+                    <input type="text" value={variationModal.form.enquiryNumber} onChange={e => setVariationModal({ ...variationModal, form: { ...variationModal.form, enquiryNumber: e.target.value } })} />
+                  </div>
+                </div>
+                <div className="form-row">
+                  <div className="form-group" style={{ flex: 1 }}>
+                    <label>Offer Date</label>
+                    <input type="date" value={variationModal.form.offerDate} onChange={e => setVariationModal({ ...variationModal, form: { ...variationModal.form, offerDate: e.target.value } })} />
+                  </div>
+                  <div className="form-group" style={{ flex: 1 }}>
+                    <label>Enquiry Date</label>
+                    <input type="date" value={variationModal.form.enquiryDate} onChange={e => setVariationModal({ ...variationModal, form: { ...variationModal.form, enquiryDate: e.target.value } })} />
+                  </div>
+                </div>
+              </div>
+
+              <div className="form-section">
+                <div className="section-header">
+                  <h3>Project Details</h3>
+                </div>
+                <div className="form-group">
+                  <label>Project Title</label>
+                  <input type="text" value={variationModal.form.projectTitle || ''} onChange={e => setVariationModal({ ...variationModal, form: { ...variationModal.form, projectTitle: e.target.value } })} />
+                </div>
+                <div className="form-group">
+                  <label>Introduction</label>
+                  <textarea value={variationModal.form.introductionText || ''} onChange={e => setVariationModal({ ...variationModal, form: { ...variationModal.form, introductionText: e.target.value } })} />
+                </div>
+              </div>
+
+              <div className="form-section">
+                <div className="section-header">
+                  <h3>Scope of Work</h3>
+                </div>
+                <div className="form-group">
+                  <ScopeOfWorkEditor
+                    value={typeof variationModal.form.scopeOfWork === 'string' ? variationModal.form.scopeOfWork : (Array.isArray(variationModal.form.scopeOfWork) ? variationModal.form.scopeOfWork.map(item => item.description || '').join('<br>') : '')}
+                    onChange={(value) => setVariationModal({ ...variationModal, form: { ...variationModal.form, scopeOfWork: value } })}
+                  />
+                </div>
+              </div>
+
+              <div className="form-section">
+                <div className="section-header">
+                  <h3>Price Schedule</h3>
+                </div>
+                <div className="form-row">
+                  <div className="form-group" style={{ flex: 1 }}>
+                    <label>Currency</label>
+                    <input type="text" value={variationModal.form.priceSchedule.currency} onChange={e => setVariationModal({ ...variationModal, form: { ...variationModal.form, priceSchedule: { ...variationModal.form.priceSchedule, currency: e.target.value } } })} />
+                  </div>
+                  <div className="form-group" style={{ flex: 1 }}>
+                    <label>VAT Rate (%)</label>
+                    <input type="number" value={variationModal.form.priceSchedule.taxDetails.vatRate} onChange={e => {
+                      const items = variationModal.form.priceSchedule.items
+                      const sub = items.reduce((sum, it) => sum + Number(it.totalAmount || 0), 0)
+                      const vat = sub * (Number(e.target.value || 0) / 100)
+                      const grand = sub + vat
+                      setVariationModal({ ...variationModal, form: { ...variationModal.form, priceSchedule: { ...variationModal.form.priceSchedule, subTotal: Number(sub.toFixed(2)), grandTotal: Number(grand.toFixed(2)), taxDetails: { ...variationModal.form.priceSchedule.taxDetails, vatRate: e.target.value, vatAmount: Number(vat.toFixed(2)) } } } })
+                    }} />
+                  </div>
+                </div>
+                {variationModal.form.priceSchedule.items.map((it, i) => (
+                  <div key={i} className="item-card">
+                    <div className="item-header">
+                      <span>Item {i + 1}</span>
+                      <button type="button" className="cancel-btn" onClick={() => {
+                        const items = variationModal.form.priceSchedule.items.filter((_, idx) => idx !== i)
+                        const sub = items.reduce((sum, it) => sum + Number(it.totalAmount || 0), 0)
+                        const vat = sub * (Number(variationModal.form.priceSchedule.taxDetails.vatRate || 0) / 100)
+                        const grand = sub + vat
+                        setVariationModal({ ...variationModal, form: { ...variationModal.form, priceSchedule: { ...variationModal.form.priceSchedule, items, subTotal: Number(sub.toFixed(2)), grandTotal: Number(grand.toFixed(2)), taxDetails: { ...variationModal.form.priceSchedule.taxDetails, vatAmount: Number(vat.toFixed(2)) } } } })
+                      }}>Remove</button>
+                    </div>
+                    <div className="form-row">
+                      <div className="form-group" style={{ flex: 2 }}>
+                        <label>Description</label>
+                        <input type="text" value={it.description} onChange={e => {
+                          const items = variationModal.form.priceSchedule.items.map((x, idx) => idx === i ? { ...x, description: e.target.value } : x)
+                          setVariationModal({ ...variationModal, form: { ...variationModal.form, priceSchedule: { ...variationModal.form.priceSchedule, items } } })
+                        }} />
+                      </div>
+                      <div className="form-group" style={{ flex: 1 }}>
+                        <label>Qty</label>
+                        <input type="number" value={it.quantity} onChange={e => {
+                          const items = variationModal.form.priceSchedule.items.map((x, idx) => idx === i ? { ...x, quantity: e.target.value, totalAmount: Number((Number(e.target.value || 0) * Number(x.unitRate || 0)).toFixed(2)) } : x)
+                          const sub = items.reduce((sum, it) => sum + Number(it.totalAmount || 0), 0)
+                          const vat = sub * (Number(variationModal.form.priceSchedule.taxDetails.vatRate || 0) / 100)
+                          const grand = sub + vat
+                          setVariationModal({ ...variationModal, form: { ...variationModal.form, priceSchedule: { ...variationModal.form.priceSchedule, items, subTotal: Number(sub.toFixed(2)), grandTotal: Number(grand.toFixed(2)), taxDetails: { ...variationModal.form.priceSchedule.taxDetails, vatAmount: Number(vat.toFixed(2)) } } } })
+                        }} />
+                      </div>
+                      <div className="form-group" style={{ flex: 1 }}>
+                        <label>Unit</label>
+                        <input type="text" value={it.unit} onChange={e => {
+                          const items = variationModal.form.priceSchedule.items.map((x, idx) => idx === i ? { ...x, unit: e.target.value } : x)
+                          setVariationModal({ ...variationModal, form: { ...variationModal.form, priceSchedule: { ...variationModal.form.priceSchedule, items } } })
+                        }} />
+                      </div>
+                      <div className="form-group" style={{ flex: 1 }}>
+                        <label>Unit Rate</label>
+                        <input type="number" value={it.unitRate} onChange={e => {
+                          const items = variationModal.form.priceSchedule.items.map((x, idx) => idx === i ? { ...x, unitRate: e.target.value, totalAmount: Number((Number(x.quantity || 0) * Number(e.target.value || 0)).toFixed(2)) } : x)
+                          const sub = items.reduce((sum, it) => sum + Number(it.totalAmount || 0), 0)
+                          const vat = sub * (Number(variationModal.form.priceSchedule.taxDetails.vatRate || 0) / 100)
+                          const grand = sub + vat
+                          setVariationModal({ ...variationModal, form: { ...variationModal.form, priceSchedule: { ...variationModal.form.priceSchedule, items, subTotal: Number(sub.toFixed(2)), grandTotal: Number(grand.toFixed(2)), taxDetails: { ...variationModal.form.priceSchedule.taxDetails, vatAmount: Number(vat.toFixed(2)) } } } })
+                        }} />
+                      </div>
+                      <div className="form-group" style={{ flex: 1 }}>
+                        <label>Total</label>
+                        <input type="number" readOnly value={Number(it.totalAmount || 0)} />
+                      </div>
+                    </div>
+                  </div>
+                ))}
+                <div className="section-actions">
+                  <button type="button" className="link-btn" onClick={() => setVariationModal({ ...variationModal, form: { ...variationModal.form, priceSchedule: { ...variationModal.form.priceSchedule, items: [...variationModal.form.priceSchedule.items, { description: '', quantity: 0, unit: '', unitRate: 0, totalAmount: 0 }] } } })}>+ Add Item</button>
+                </div>
+                <div className="form-row" style={{ marginTop: '16px' }}>
+                  <div className="form-group" style={{ flex: 1 }}>
+                    <label>Sub Total</label>
+                    <input type="number" readOnly value={Number(variationModal.form.priceSchedule.subTotal || 0)} />
+                  </div>
+                  <div className="form-group" style={{ flex: 1 }}>
+                    <label>VAT Amount</label>
+                    <input type="number" readOnly value={Number(variationModal.form.priceSchedule.taxDetails.vatAmount || 0)} />
+                  </div>
+                  <div className="form-group" style={{ flex: 1 }}>
+                    <label>Grand Total</label>
+                    <input type="number" readOnly value={Number(variationModal.form.priceSchedule.grandTotal || 0)} />
+                  </div>
+                </div>
+              </div>
+
+              <div className="form-section">
+                <div className="section-header">
+                  <h3>Our Viewpoints / Special Terms</h3>
+                </div>
+                <div className="form-group">
+                  <label>Our Viewpoints / Special Terms</label>
+                  <textarea value={variationModal.form.ourViewpoints || ''} onChange={e => setVariationModal({ ...variationModal, form: { ...variationModal.form, ourViewpoints: e.target.value } })} />
+                </div>
+              </div>
+
+              <div className="form-section">
+                <div className="section-header">
+                  <h3>Exclusions</h3>
+                </div>
+                <div className="form-group">
+                  <ScopeOfWorkEditor
+                    value={typeof variationModal.form.exclusions === 'string' ? variationModal.form.exclusions : (Array.isArray(variationModal.form.exclusions) ? variationModal.form.exclusions.join('<br>') : '')}
+                    onChange={(html) => setVariationModal({ ...variationModal, form: { ...variationModal.form, exclusions: html } })}
+                  />
+                </div>
+              </div>
+
+              <div className="form-section">
+                <div className="section-header">
+                  <h3>Payment Terms</h3>
+                </div>
+                <div className="form-group">
+                  <ScopeOfWorkEditor
+                    value={typeof variationModal.form.paymentTerms === 'string' ? variationModal.form.paymentTerms : (Array.isArray(variationModal.form.paymentTerms) ? variationModal.form.paymentTerms.map(term => `${term.milestoneDescription || ''}${term.amountPercent ? ` - ${term.amountPercent}%` : ''}`).join('<br>') : '')}
+                    onChange={(html) => setVariationModal({ ...variationModal, form: { ...variationModal.form, paymentTerms: html } })}
+                  />
+                </div>
+              </div>
+
+              <div className="form-section">
+                <div className="section-header">
+                  <h3>Delivery, Completion, Warranty & Validity</h3>
+                </div>
+                <div className="form-group">
+                  <label>Delivery / Completion Timeline</label>
+                  <input type="text" value={variationModal.form.deliveryCompletionWarrantyValidity?.deliveryTimeline || ''} onChange={e => setVariationModal({ ...variationModal, form: { ...variationModal.form, deliveryCompletionWarrantyValidity: { ...variationModal.form.deliveryCompletionWarrantyValidity, deliveryTimeline: e.target.value } } })} />
+                </div>
+                <div className="form-row">
+                  <div className="form-group" style={{ flex: 1 }}>
+                    <label>Warranty Period</label>
+                    <input type="text" value={variationModal.form.deliveryCompletionWarrantyValidity?.warrantyPeriod || ''} onChange={e => setVariationModal({ ...variationModal, form: { ...variationModal.form, deliveryCompletionWarrantyValidity: { ...variationModal.form.deliveryCompletionWarrantyValidity, warrantyPeriod: e.target.value } } })} />
+                  </div>
+                  <div className="form-group" style={{ flex: 1 }}>
+                    <label>Offer Validity (Days)</label>
+                    <input type="number" value={variationModal.form.deliveryCompletionWarrantyValidity?.offerValidity || 30} onChange={e => setVariationModal({ ...variationModal, form: { ...variationModal.form, deliveryCompletionWarrantyValidity: { ...variationModal.form.deliveryCompletionWarrantyValidity, offerValidity: e.target.value } } })} />
+                  </div>
+                </div>
+                <div className="form-group">
+                  <label>Authorized Signatory</label>
+                  <input type="text" value={variationModal.form.deliveryCompletionWarrantyValidity?.authorizedSignatory || ''} onChange={e => setVariationModal({ ...variationModal, form: { ...variationModal.form, deliveryCompletionWarrantyValidity: { ...variationModal.form.deliveryCompletionWarrantyValidity, authorizedSignatory: e.target.value } } })} />
+                </div>
+              </div>
+
+              <div className="form-section">
+                <div className="section-header">
+                  <h3>Attachments</h3>
+                </div>
+                <div className="form-group">
+                  <label>Upload Files</label>
+                  <input
+                    type="file"
+                    multiple
+                    onChange={handleVariationFileChange}
+                    style={{ marginBottom: '15px' }}
+                  />
+                  {variationPreviewFiles.length > 0 && (
+                    <div style={{ 
+                      display: 'grid', 
+                      gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', 
+                      gap: '15px',
+                      marginTop: '15px'
+                    }}>
+                      {variationPreviewFiles.map((preview, index) => (
+                        <div 
+                          key={index} 
+                          style={{ 
+                            border: '1px solid #ddd', 
+                            borderRadius: '8px', 
+                            padding: '10px',
+                            backgroundColor: '#fff',
+                            position: 'relative'
+                          }}
+                        >
+                          {preview.type === 'image' && preview.preview && (
+                            <img 
+                              src={preview.preview} 
+                              alt={preview.file.name}
+                              style={{ 
+                                width: '100%', 
+                                height: '150px', 
+                                objectFit: 'cover',
+                                borderRadius: '4px',
+                                marginBottom: '8px'
+                              }}
+                            />
+                          )}
+                          {preview.type === 'video' && preview.preview && (
+                            <video 
+                              src={preview.preview}
+                              style={{ 
+                                width: '100%', 
+                                height: '150px', 
+                                objectFit: 'cover',
+                                borderRadius: '4px',
+                                marginBottom: '8px'
+                              }}
+                              controls
+                            />
+                          )}
+                          {preview.type === 'document' && (
+                            <div style={{ 
+                              width: '100%', 
+                              height: '150px', 
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              backgroundColor: '#f5f5f5',
+                              borderRadius: '4px',
+                              marginBottom: '8px',
+                              fontSize: '48px'
+                            }}>
+                              📄
+                            </div>
+                          )}
+                          <div style={{ fontSize: '12px', marginBottom: '8px', wordBreak: 'break-word' }}>
+                            {preview.file.name.length > 20 
+                              ? preview.file.name.substring(0, 20) + '...' 
+                              : preview.file.name}
+                          </div>
+                          <div style={{ fontSize: '11px', color: '#999', marginBottom: '8px' }}>
+                            {formatFileSize(preview.file.size)}
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => removeVariationFile(index)}
+                            style={{
+                              width: '100%',
+                              padding: '6px',
+                              backgroundColor: '#dc3545',
+                              color: 'white',
+                              border: 'none',
+                              borderRadius: '4px',
+                              cursor: 'pointer',
+                              fontSize: '12px'
+                            }}
+                          >
+                            Remove
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="form-actions">
+                <button type="button" className="cancel-btn" onClick={() => {
+                  setVariationModal({ open: false, form: null })
+                  setVariationSelectedFiles([])
+                  setVariationPreviewFiles([])
+                }}>Cancel</button>
+                <button 
+                  type="button" 
+                  className="save-btn" 
+                  onClick={createVariation}
+                  disabled={isSubmitting}
+                >
+                  <ButtonLoader loading={loadingAction === 'create-variation'}>
+                    {isSubmitting ? 'Creating...' : 'Create Variation'}
+                  </ButtonLoader>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
       {deleteModal.open && (
         <div className="modal-overlay" onClick={() => setDeleteModal({ open: false })}>
           <div className="modal" onClick={e => e.stopPropagation()}>
@@ -1643,6 +3792,15 @@ function ProjectDetail() {
                     setLoadingAction('delete-project')
                     setIsSubmitting(true)
                     try {
+                      // Check if project has variations before deletion
+                      if (variations && Array.isArray(variations) && variations.length > 0) {
+                        setDeleteModal({ open: false })
+                        setDeleteProjectWarningModal({ open: true, existingVariations: variations })
+                        setIsSubmitting(false)
+                        setLoadingAction(null)
+                        return
+                      }
+                      
                       await api.delete(`/api/projects/${project._id}`)
                       setDeleteModal({ open: false })
                       setNotify({ open: true, title: 'Deleted', message: 'Project deleted successfully. Redirecting...' })

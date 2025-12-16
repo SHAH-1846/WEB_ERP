@@ -32,6 +32,7 @@ function ProjectVariationManagement() {
   const [profileUser, setProfileUser] = useState(null)
   const [notify, setNotify] = useState({ open: false, title: '', message: '' })
   const [confirmDelete, setConfirmDelete] = useState({ open: false, variation: null })
+  const [printPreviewModal, setPrintPreviewModal] = useState({ open: false, pdfUrl: null, variation: null })
   const [approvalsView, setApprovalsView] = useState(null)
   const [approvalModal, setApprovalModal] = useState({ open: false, variation: null, action: null, note: '' })
   const [sendApprovalConfirmModal, setSendApprovalConfirmModal] = useState({ open: false, variation: null })
@@ -148,6 +149,355 @@ function ProjectVariationManagement() {
     } catch {}
   }
 
+  const ensurePdfMake = async () => {
+    if (window.pdfMake) return
+    await new Promise((resolve, reject) => {
+      const script = document.createElement('script')
+      script.src = 'https://cdn.jsdelivr.net/npm/pdfmake@0.2.7/build/pdfmake.min.js'
+      script.onload = resolve
+      script.onerror = reject
+      document.body.appendChild(script)
+    })
+    await new Promise((resolve, reject) => {
+      const script = document.createElement('script')
+      script.src = 'https://cdn.jsdelivr.net/npm/pdfmake@0.2.7/build/vfs_fonts.js'
+      script.onload = resolve
+      script.onerror = reject
+      document.body.appendChild(script)
+    })
+  }
+
+  const toDataURL = async (url) => {
+    if (!url) return null
+    try {
+      const res = await fetch(url)
+      const blob = await res.blob()
+      return await new Promise((resolve) => {
+        const reader = new FileReader()
+        reader.onloadend = () => resolve(reader.result)
+        reader.readAsDataURL(blob)
+      })
+    } catch {
+      return null
+    }
+  }
+
+  // Helper function to build PDF content (shared between preview and export)
+  const buildVariationPDFContent = async (variation) => {
+    try {
+      await ensurePdfMake()
+      const logoDataUrl = await toDataURL(variation.companyInfo?.logo || logo)
+      const currency = variation.priceSchedule?.currency || 'AED'
+
+      // Fetch lead data if available
+      let leadFull = null
+      if (variation.lead) {
+        const leadId = typeof variation.lead === 'object' ? variation.lead?._id : variation.lead
+        if (leadId) {
+          try {
+            const leadRes = await api.get(`/api/leads/${leadId}`)
+            leadFull = leadRes.data
+            const visitsRes = await api.get(`/api/leads/${leadId}/site-visits`)
+            leadFull = { ...leadFull, siteVisits: Array.isArray(visitsRes.data) ? visitsRes.data : [] }
+          } catch {}
+        }
+      }
+
+      const siteVisits = Array.isArray(leadFull?.siteVisits) ? leadFull.siteVisits : []
+
+      const coverFieldsRaw = [
+        ['Submitted To', variation.submittedTo],
+        ['Attention', variation.attention],
+        ['Offer Reference', variation.offerReference],
+        ['Enquiry Number', variation.enquiryNumber || leadFull?.enquiryNumber],
+        ['Offer Date', variation.offerDate ? new Date(variation.offerDate).toLocaleDateString() : ''],
+        ['Enquiry Date', variation.enquiryDate ? new Date(variation.enquiryDate).toLocaleDateString() : ''],
+        ['Project Title', variation.projectTitle || leadFull?.projectTitle]
+      ]
+      const coverFields = coverFieldsRaw.filter(([, v]) => v && String(v).trim().length > 0)
+
+      const scopeRows = (variation.scopeOfWork || [])
+        .filter(s => (s?.description || '').trim().length > 0)
+        .map((s, i) => [
+          String(i + 1),
+          s.description,
+          String(s.quantity || ''),
+          s.unit || '',
+          s.locationRemarks || ''
+        ])
+
+      const priceItems = (variation.priceSchedule?.items || [])
+        .filter(it => (it?.description || '').trim().length > 0 || Number(it.quantity) > 0 || Number(it.unitRate) > 0)
+      const priceRows = priceItems.map((it, i) => [
+        String(i + 1),
+        it.description || '',
+        String(it.quantity || 0),
+        it.unit || '',
+        `${currency} ${Number(it.unitRate || 0).toFixed(2)}`,
+        `${currency} ${Number((it.quantity || 0) * (it.unitRate || 0)).toFixed(2)}`
+      ])
+
+      const exclusions = (variation.exclusions || []).map(x => String(x || '').trim()).filter(Boolean)
+      const paymentTerms = (variation.paymentTerms || []).filter(p => (p?.milestoneDescription || '').trim().length > 0 || String(p?.amountPercent || '').trim().length > 0)
+
+      const dcwv = variation.deliveryCompletionWarrantyValidity || {}
+      const deliveryRowsRaw = [
+        ['Delivery / Completion Timeline', dcwv.deliveryTimeline],
+        ['Warranty Period', dcwv.warrantyPeriod],
+        ['Offer Validity (Days)', typeof dcwv.offerValidity === 'number' ? String(dcwv.offerValidity) : (dcwv.offerValidity || '')],
+        ['Authorized Signatory', dcwv.authorizedSignatory]
+      ]
+      const deliveryRows = deliveryRowsRaw.filter(([, v]) => v && String(v).trim().length > 0)
+
+      const header = {
+        margin: [36, 20, 36, 8],
+        stack: [
+          {
+            columns: [
+              { image: logoDataUrl || logo, width: 60 },
+              [
+                { text: variation.companyInfo?.name || 'Company', style: 'brand' },
+                { text: [variation.companyInfo?.address, variation.companyInfo?.phone, variation.companyInfo?.email].filter(Boolean).join(' | '), color: '#64748b', fontSize: 9 }
+              ]
+            ],
+            columnGap: 12
+          },
+          { canvas: [{ type: 'line', x1: 0, y1: 0, x2: 523, y2: 0, lineWidth: 0.5, lineColor: '#e5e7eb' }] }
+        ]
+      }
+
+      const content = []
+      content.push({ text: `Variation ${variation.variationNumber} — Commercial Quotation`, style: 'h1', margin: [0, 0, 0, 8] })
+
+      if (coverFields.length > 0) {
+        content.push({ text: 'Cover & Basic Details', style: 'h2', margin: [0, 6, 0, 6] })
+        content.push({
+          table: {
+            widths: ['30%', '70%'],
+            body: [
+              [{ text: 'Field', style: 'th' }, { text: 'Value', style: 'th' }],
+              ...coverFields.map(([k, v]) => [{ text: k, style: 'tdKey' }, { text: v, style: 'tdVal' }])
+            ]
+          },
+          layout: 'lightHorizontalLines'
+        })
+      }
+
+      if (leadFull) {
+        const leadDetailsRaw = [
+          ['Customer', leadFull.customerName],
+          ['Project Title', leadFull.projectTitle],
+          ['Enquiry #', leadFull.enquiryNumber],
+          ['Enquiry Date', leadFull.enquiryDate ? new Date(leadFull.enquiryDate).toLocaleDateString() : ''],
+          ['Submission Due', leadFull.submissionDueDate ? new Date(leadFull.submissionDueDate).toLocaleDateString() : ''],
+          ['Scope Summary', leadFull.scopeSummary]
+        ]
+        const leadDetails = leadDetailsRaw.filter(([, v]) => v && String(v).trim().length > 0)
+        if (leadDetails.length > 0) {
+          content.push({ text: 'Project Details', style: 'h2', margin: [0, 12, 0, 6] })
+          content.push({
+            table: {
+              widths: ['30%', '70%'],
+              body: [
+                [{ text: 'Field', style: 'th' }, { text: 'Value', style: 'th' }],
+                ...leadDetails.map(([k, v]) => [{ text: k, style: 'tdKey' }, { text: v, style: 'tdVal' }])
+              ]
+            },
+            layout: 'lightHorizontalLines'
+          })
+        }
+      }
+
+      if ((variation.introductionText || '').trim().length > 0) {
+        content.push({ text: 'Introduction', style: 'h2', margin: [0, 10, 0, 6] })
+        content.push({ text: variation.introductionText, margin: [0, 0, 0, 6] })
+      }
+
+      if (scopeRows.length > 0) {
+        content.push({ text: 'Scope of Work', style: 'h2', margin: [0, 12, 0, 6] })
+        content.push({
+          table: {
+            widths: ['6%', '54%', '10%', '10%', '20%'],
+            body: [
+              [{ text: '#', style: 'th' }, { text: 'Description', style: 'th' }, { text: 'Qty', style: 'th' }, { text: 'Unit', style: 'th' }, { text: 'Location/Remarks', style: 'th' }],
+              ...scopeRows
+            ]
+          },
+          layout: 'lightHorizontalLines'
+        })
+      }
+
+      if (Array.isArray(siteVisits) && siteVisits.length > 0) {
+        const visitRows = siteVisits.map((v, i) => [
+          String(i + 1),
+          v.visitAt ? new Date(v.visitAt).toLocaleString() : '',
+          v.siteLocation || '',
+          v.engineerName || '',
+          (v.workProgressSummary || '').slice(0, 140)
+        ])
+        content.push({ text: 'Site Visit Reports', style: 'h2', margin: [0, 12, 0, 6] })
+        content.push({
+          table: {
+            widths: ['6%', '22%', '22%', '20%', '30%'],
+            body: [
+              [
+                { text: '#', style: 'th' },
+                { text: 'Date & Time', style: 'th' },
+                { text: 'Location', style: 'th' },
+                { text: 'Engineer', style: 'th' },
+                { text: 'Progress Summary', style: 'th' }
+              ],
+              ...visitRows
+            ]
+          },
+          layout: 'lightHorizontalLines'
+        })
+      }
+
+      if (priceRows.length > 0) {
+        content.push({ text: 'Price Schedule', style: 'h2', margin: [0, 12, 0, 6] })
+        content.push({
+          table: {
+            widths: ['6%', '44%', '10%', '10%', '15%', '15%'],
+            body: [
+              [
+                { text: '#', style: 'th' },
+                { text: 'Description', style: 'th' },
+                { text: 'Qty', style: 'th' },
+                { text: 'Unit', style: 'th' },
+                { text: `Unit Rate (${currency})`, style: 'th' },
+                { text: `Amount (${currency})`, style: 'th' }
+              ],
+              ...priceRows
+            ]
+          },
+          layout: 'lightHorizontalLines'
+        })
+
+        content.push({
+          columns: [
+            { width: '*', text: '' },
+            {
+              width: '40%',
+              table: {
+                widths: ['55%', '45%'],
+                body: [
+                  [{ text: 'Sub Total', style: 'tdKey' }, { text: `${currency} ${Number(variation.priceSchedule?.subTotal || 0).toFixed(2)}`, alignment: 'right' }],
+                  [{ text: `VAT (${variation.priceSchedule?.taxDetails?.vatRate || 0}%)`, style: 'tdKey' }, { text: `${currency} ${Number(variation.priceSchedule?.taxDetails?.vatAmount || 0).toFixed(2)}`, alignment: 'right' }],
+                  [{ text: 'Grand Total', style: 'th' }, { text: `${currency} ${Number(variation.priceSchedule?.grandTotal || 0).toFixed(2)}`, style: 'th', alignment: 'right' }]
+                ]
+              },
+              layout: 'lightHorizontalLines'
+            }
+          ],
+          margin: [0, 8, 0, 0]
+        })
+      }
+
+      if ((variation.ourViewpoints || '').trim().length > 0 || exclusions.length > 0) {
+        content.push({ text: 'Our Viewpoints / Special Terms', style: 'h2', margin: [0, 12, 0, 6] })
+        if ((variation.ourViewpoints || '').trim().length > 0) {
+          content.push({ text: variation.ourViewpoints, margin: [0, 0, 0, 6] })
+        }
+        if (exclusions.length > 0) {
+          content.push({ text: 'Exclusions', style: 'h3', margin: [0, 6, 0, 4] })
+          content.push({ ul: exclusions })
+        }
+      }
+
+      if (paymentTerms.length > 0) {
+        content.push({ text: 'Payment Terms', style: 'h2', margin: [0, 12, 0, 6] })
+        content.push({
+          table: {
+            widths: ['10%', '70%', '20%'],
+            body: [
+              [{ text: '#', style: 'th' }, { text: 'Milestone', style: 'th' }, { text: 'Amount %', style: 'th' }],
+              ...paymentTerms.map((p, i) => [String(i + 1), p.milestoneDescription || '', String(p.amountPercent || '')])
+            ]
+          },
+          layout: 'lightHorizontalLines'
+        })
+      }
+
+      if (deliveryRows.length > 0) {
+        content.push({ text: 'Delivery, Completion, Warranty & Validity', style: 'h2', margin: [0, 12, 0, 6] })
+        content.push({
+          table: {
+            widths: ['30%', '70%'],
+            body: [
+              ...deliveryRows.map(([k, v]) => [{ text: k, style: 'tdKey' }, { text: v, style: 'tdVal' }])
+            ]
+          },
+          layout: 'lightHorizontalLines'
+        })
+      }
+
+      const isPending = variation.managementApproval?.status === 'pending'
+      if (isPending) {
+        content.push({ text: 'Management Approval: Pending', italics: true, color: '#b45309', margin: [0, 12, 0, 0] })
+      } else if (variation.managementApproval?.status === 'approved') {
+        content.push({ text: `Approved by: ${variation.managementApproval?.approvedBy?.name || 'Management'}`, italics: true, color: '#16a34a', margin: [0, 12, 0, 0] })
+      }
+
+      return {
+        pageMargins: [36, 96, 36, 60],
+        header,
+        footer: function (currentPage, pageCount) {
+          return {
+            margin: [36, 0, 36, 20],
+            stack: [
+              { canvas: [{ type: 'line', x1: 0, y1: 0, x2: 523, y2: 0, lineWidth: 0.5, lineColor: '#e5e7eb' }] },
+              {
+                columns: [
+                  { text: isPending ? 'Approval Pending' : (variation.managementApproval?.status === 'approved' ? 'Approved' : ''), color: isPending ? '#b45309' : '#16a34a' },
+                  { text: `Page ${currentPage} of ${pageCount}`, alignment: 'right', color: '#94a3b8' }
+                ]
+              }
+            ]
+          }
+        },
+        content,
+        styles: {
+          brand: { fontSize: 14, color: '#1f2937', bold: true, margin: [0, 0, 0, 2] },
+          h1: { fontSize: 18, bold: true, color: '#0f172a' },
+          h2: { fontSize: 12, bold: true, color: '#0f172a' },
+          h3: { fontSize: 11, bold: true, color: '#0f172a' },
+          th: { bold: true, fillColor: '#f1f5f9' },
+          tdKey: { color: '#64748b' },
+          tdVal: { color: '#0f172a' }
+        },
+        defaultStyle: { fontSize: 10, lineHeight: 1.2 },
+        watermark: isPending ? { text: 'Approval Pending', color: '#94a3b8', opacity: 0.12, bold: true } : undefined
+      }
+    } catch (e) {
+      throw e
+    }
+  }
+
+  const generatePDFPreview = async (variation) => {
+    try {
+      await ensurePdfMake()
+      const docDefinition = await buildVariationPDFContent(variation)
+      const pdfDoc = window.pdfMake.createPdf(docDefinition)
+      pdfDoc.getDataUrl((dataUrl) => {
+        setPrintPreviewModal({ open: true, pdfUrl: dataUrl, variation })
+      })
+    } catch (e) {
+      setNotify({ open: true, title: 'Preview Failed', message: 'We could not generate the PDF preview. Please try again.' })
+    }
+  }
+
+  const exportVariationPDF = async (variation) => {
+    try {
+      await ensurePdfMake()
+      const docDefinition = await buildVariationPDFContent(variation)
+      const filename = `Variation_${variation.variationNumber}_${variation.projectTitle || 'Quotation'}.pdf`
+      window.pdfMake.createPdf(docDefinition).download(filename)
+    } catch (e) {
+      setNotify({ open: true, title: 'Export Failed', message: 'We could not generate the PDF for this variation. Please try again.' })
+    }
+  }
+
   const sendForApproval = async (variation) => {
     setLoadingAction(`approve-${variation._id}`)
     setIsSubmitting(true)
@@ -175,6 +525,22 @@ function ProjectVariationManagement() {
       setNotify({ open: true, title: status === 'approved' ? 'Variation Approved' : 'Variation Rejected', message: `The variation has been ${status === 'approved' ? 'approved' : 'rejected'} successfully.` })
     } catch (e) {
       setNotify({ open: true, title: 'Approval Failed', message: e.response?.data?.message || 'We could not update approval. Please try again.' })
+    } finally {
+      setIsSubmitting(false)
+      setLoadingAction(null)
+    }
+  }
+
+  const deleteVariation = async (variation) => {
+    setLoadingAction(`delete-${variation._id}`)
+    setIsSubmitting(true)
+    try {
+      await api.delete(`/api/project-variations/${variation._id}`)
+      await fetchVariations()
+      setConfirmDelete({ open: false, variation: null })
+      setNotify({ open: true, title: 'Deleted', message: 'Variation deleted successfully.' })
+    } catch (e) {
+      setNotify({ open: true, title: 'Delete Failed', message: e.response?.data?.message || 'We could not delete the variation. Please try again.' })
     } finally {
       setIsSubmitting(false)
       setLoadingAction(null)
@@ -925,6 +1291,7 @@ function ProjectVariationManagement() {
                 <p><strong>Created At:</strong> {v.createdAt ? new Date(v.createdAt).toLocaleDateString() : 'N/A'}</p>
               </div>
               <div className="lead-actions">
+                <button className="save-btn" onClick={() => generatePDFPreview(v)}>Print Preview</button>
                 <button className="link-btn" onClick={() => { try { localStorage.setItem('variationId', v._id) } catch {}; window.location.href = '/variation-detail' }}>View Details</button>
                 {v.managementApproval?.status === 'pending' ? (
                   <span className="status-badge blue" style={{ marginLeft: '8px' }}>Approval Pending</span>
@@ -966,6 +1333,18 @@ function ProjectVariationManagement() {
                       </ButtonLoader>
                     </button>
                   </>
+                )}
+                {(currentUser?.roles?.includes('manager') || currentUser?.roles?.includes('admin')) && (
+                  <button 
+                    className="reject-btn" 
+                    onClick={() => setConfirmDelete({ open: true, variation: v })} 
+                    style={{ marginLeft: '8px' }}
+                    disabled={isSubmitting}
+                  >
+                    <ButtonLoader loading={loadingAction === `delete-${v._id}`}>
+                      Delete
+                    </ButtonLoader>
+                  </button>
                 )}
                 {v.managementApproval?.status === 'approved' && (currentUser?.roles?.includes('estimation_engineer') || v.createdBy?._id === currentUser?.id) && (
                   <button className="save-btn" onClick={async () => {
@@ -1102,6 +1481,7 @@ function ProjectVariationManagement() {
                   <td data-label="Created At">{v.createdAt ? new Date(v.createdAt).toLocaleDateString() : 'N/A'}</td>
                   <td data-label="Actions">
                     <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                      <button className="save-btn" onClick={() => generatePDFPreview(v)}>Print Preview</button>
                       <button className="link-btn" onClick={() => { try { localStorage.setItem('variationId', v._id) } catch {}; window.location.href = '/variation-detail' }}>View</button>
                       {v.managementApproval?.status === 'pending' ? (
                         <span className="status-badge blue">Approval Pending</span>
@@ -1140,6 +1520,17 @@ function ProjectVariationManagement() {
                             </ButtonLoader>
                           </button>
                         </>
+                      )}
+                      {(currentUser?.roles?.includes('manager') || currentUser?.roles?.includes('admin')) && (
+                        <button 
+                          className="reject-btn" 
+                          onClick={() => setConfirmDelete({ open: true, variation: v })}
+                          disabled={isSubmitting}
+                        >
+                          <ButtonLoader loading={loadingAction === `delete-${v._id}`}>
+                            Delete
+                          </ButtonLoader>
+                        </button>
                       )}
                       {v.managementApproval?.status === 'approved' && (currentUser?.roles?.includes('estimation_engineer') || v.createdBy?._id === currentUser?.id) && (
                         <button className="save-btn" onClick={async () => {
@@ -1678,6 +2069,64 @@ function ProjectVariationManagement() {
         </div>
       )}
 
+      {confirmDelete.open && confirmDelete.variation && (
+        <div className="modal-overlay" onClick={() => setConfirmDelete({ open: false, variation: null })}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>Delete Variation</h2>
+              <button onClick={() => setConfirmDelete({ open: false, variation: null })} className="close-btn">×</button>
+            </div>
+            <div className="lead-form">
+              <p>Are you sure you want to delete Variation #{confirmDelete.variation.variationNumber}? This action cannot be undone.</p>
+              {confirmDelete.variation.parentProject?.name && (
+                <p style={{ color: 'var(--text-muted)', marginTop: '8px' }}>
+                  Project: {confirmDelete.variation.parentProject.name}
+                </p>
+              )}
+              {confirmDelete.variation.offerReference && (
+                <p style={{ color: 'var(--text-muted)', marginTop: '4px' }}>
+                  Offer Reference: {confirmDelete.variation.offerReference}
+                </p>
+              )}
+              <div style={{ 
+                padding: '12px', 
+                background: '#FEF3C7', 
+                border: '1px solid #F59E0B', 
+                borderRadius: '8px', 
+                marginTop: '16px',
+                color: '#7C2D12'
+              }}>
+                <strong>Warning:</strong> This will permanently delete the variation. If this variation has child variations, deletion will be blocked.
+              </div>
+              <div className="form-actions">
+                <button 
+                  type="button" 
+                  className="cancel-btn" 
+                  onClick={() => setConfirmDelete({ open: false, variation: null })}
+                  disabled={isSubmitting}
+                >
+                  Cancel
+                </button>
+                <button 
+                  type="button" 
+                  className="reject-btn" 
+                  onClick={async () => {
+                    if (confirmDelete.variation) {
+                      await deleteVariation(confirmDelete.variation)
+                    }
+                  }}
+                  disabled={isSubmitting}
+                >
+                  <ButtonLoader loading={loadingAction === `delete-${confirmDelete.variation?._id}`}>
+                    {isSubmitting ? 'Deleting...' : 'Confirm Delete'}
+                  </ButtonLoader>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {notify.open && (
         <div className="modal-overlay" onClick={() => setNotify({ open: false, title: '', message: '' })}>
           <div className="modal" onClick={e => e.stopPropagation()}>
@@ -1690,6 +2139,75 @@ function ProjectVariationManagement() {
               <div className="form-actions">
                 <button type="button" className="save-btn" onClick={() => setNotify({ open: false, title: '', message: '' })}>OK</button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Print Preview Modal */}
+      {printPreviewModal.open && printPreviewModal.pdfUrl && printPreviewModal.variation && (
+        <div className="modal-overlay" onClick={() => setPrintPreviewModal({ open: false, pdfUrl: null, variation: null })} style={{ zIndex: 10000 }}>
+          <div className="modal" onClick={e => e.stopPropagation()} style={{ zIndex: 10001, maxWidth: '95%', width: '100%', height: '95vh', display: 'flex', flexDirection: 'column' }}>
+            <div className="modal-header" style={{ flexShrink: 0, borderBottom: '1px solid var(--border)', padding: '16px 24px' }}>
+              <h2>PDF Preview - {printPreviewModal.variation?.variationNumber || 'Variation'}</h2>
+              <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                <button 
+                  className="save-btn" 
+                  onClick={async () => {
+                    if (printPreviewModal.variation) {
+                      try {
+                        await exportVariationPDF(printPreviewModal.variation)
+                      } catch (e) {
+                        setNotify({ open: true, title: 'Export Failed', message: 'We could not generate the PDF. Please try again.' })
+                      }
+                    }
+                  }}
+                >
+                  Download PDF
+                </button>
+                <button 
+                  className="save-btn" 
+                  onClick={() => {
+                    if (printPreviewModal.pdfUrl) {
+                      const printWindow = window.open('', '_blank')
+                      printWindow.document.write(`
+                        <!DOCTYPE html>
+                        <html>
+                          <head>
+                            <title>${printPreviewModal.variation?.variationNumber || 'Variation'} - PDF</title>
+                            <style>
+                              body { margin: 0; padding: 0; }
+                              iframe { width: 100%; height: 100vh; border: none; }
+                            </style>
+                          </head>
+                          <body>
+                            <iframe src="${printPreviewModal.pdfUrl}"></iframe>
+                          </body>
+                        </html>
+                      `)
+                      printWindow.document.close()
+                      setTimeout(() => {
+                        printWindow.frames[0].print()
+                      }, 500)
+                    }
+                  }}
+                >
+                  Print
+                </button>
+                <button onClick={() => setPrintPreviewModal({ open: false, pdfUrl: null, variation: null })} className="close-btn">×</button>
+              </div>
+            </div>
+            <div style={{ flex: 1, overflow: 'hidden', background: '#525252', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <iframe 
+                src={printPreviewModal.pdfUrl}
+                style={{ 
+                  width: '100%', 
+                  height: '100%', 
+                  border: 'none',
+                  background: 'white'
+                }}
+                title="PDF Preview"
+              />
             </div>
           </div>
         </div>

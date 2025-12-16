@@ -53,9 +53,13 @@ api.interceptors.response.use(
 export const apiFetch = async (path, options = {}) => {
   const token = localStorage.getItem('token');
   const headers = {
-    'Content-Type': 'application/json',
     ...(options.headers || {}),
   };
+
+  // Don't set Content-Type for FormData, let browser set it with boundary
+  if (!(options.body instanceof FormData)) {
+    headers['Content-Type'] = 'application/json';
+  }
 
   if (token) {
     headers.Authorization = `Bearer ${token}`;

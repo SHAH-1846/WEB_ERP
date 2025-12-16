@@ -14,6 +14,8 @@ import SiteVisitFormPage from './components/SiteVisitFormPage'
 import QuotationModal from './components/QuotationModal'
 import QuotationFormPage from './components/QuotationFormPage'
 import LeadFormPage from './components/LeadFormPage'
+import ProjectFormPage from './components/ProjectFormPage'
+import VariationFormPage from './components/VariationFormPage'
 import { initTheme, setTheme } from './utils/theme'
 
 function Login() {
@@ -312,6 +314,26 @@ function App() {
         <Route path="/projects/:projectId/site-visits/edit/:visitId" element={
           <ProtectedRoute>
             <SiteVisitFormPage />
+          </ProtectedRoute>
+        } />
+        <Route path="/revisions/:revisionId/create-project" element={
+          <ProtectedRoute>
+            <ProjectFormPage />
+          </ProtectedRoute>
+        } />
+        <Route path="/projects/edit/:projectId" element={
+          <ProtectedRoute>
+            <ProjectFormPage />
+          </ProtectedRoute>
+        } />
+        <Route path="/projects/:projectId/create-variation" element={
+          <ProtectedRoute>
+            <VariationFormPage />
+          </ProtectedRoute>
+        } />
+        <Route path="/variations/edit/:variationId" element={
+          <ProtectedRoute>
+            <VariationFormPage />
           </ProtectedRoute>
         } />
       </Routes>
