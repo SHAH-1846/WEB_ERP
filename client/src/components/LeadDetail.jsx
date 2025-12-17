@@ -3,11 +3,14 @@ import './LeadManagement.css'
 import './LeadDetail.css'
 import { setTheme } from '../utils/theme'
 import { apiFetch, api } from '../lib/api'
+import { CreateQuotationModal } from './CreateQuotationModal'
 import logo from '../assets/logo/WBES_Logo.png'
 
 function LeadDetail() {
   const [lead, setLead] = useState(null)
   const [quotations, setQuotations] = useState([])
+  const [showQuotationModal, setShowQuotationModal] = useState(false)
+  const [selectedLeadForQuotation, setSelectedLeadForQuotation] = useState(null)
   const [currentUser, setCurrentUser] = useState(() => {
     try { return JSON.parse(localStorage.getItem('user')) } catch { return null }
   })
@@ -136,6 +139,39 @@ function LeadDetail() {
     const sizes = ['Bytes', 'KB', 'MB', 'GB']
     const i = Math.floor(Math.log(bytes) / Math.log(k))
     return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i]
+  }
+
+  const fetchQuotationsForLead = async (leadId) => {
+    try {
+      const qRes = await apiFetch('/api/quotations')
+      const allQ = await qRes.json()
+      const list = Array.isArray(allQ)
+        ? allQ.filter((q) => {
+            const qLeadId = typeof q.lead === 'object' ? q.lead?._id : q.lead
+            return qLeadId === leadId
+          })
+        : []
+      setQuotations(list)
+    } catch {}
+  }
+
+  const handleQuotationSave = async (payload, editing) => {
+    try {
+      if (editing) {
+        await api.put(`/api/quotations/${editing._id}`, payload)
+        setNotify({ open: true, title: 'Success', message: 'Quotation updated successfully.' })
+      } else {
+        await api.post('/api/quotations', payload)
+        setNotify({ open: true, title: 'Success', message: 'Quotation created successfully.' })
+      }
+      setShowQuotationModal(false)
+      setSelectedLeadForQuotation(null)
+      if (lead?._id) {
+        await fetchQuotationsForLead(lead._id)
+      }
+    } catch (e) {
+      setNotify({ open: true, title: 'Save Failed', message: e?.response?.data?.message || 'We could not save the quotation. Please try again.' })
+    }
   }
 
   const handleVisitFileChange = (e, isEdit = false) => {
@@ -357,6 +393,17 @@ ${visit.actionItems ? 'Recommended follow‑up: ' + visit.actionItems : 'Continu
               onClick={() => setNewVisitOpen(true)}
             >
               New Site Visit
+            </button>
+          )}
+          {currentUser?.roles?.includes('estimation_engineer') && (
+            <button
+              className="save-btn"
+              onClick={() => {
+                setSelectedLeadForQuotation(lead._id)
+                setShowQuotationModal(true)
+              }}
+            >
+              Create Quotation
             </button>
           )}
           {lead.status === 'draft' && (currentUser?.roles?.includes('sales_engineer') || currentUser?.roles?.includes('estimation_engineer') || currentUser?.id === lead.createdBy?._id) && (
@@ -2326,6 +2373,19 @@ ${v.actionItems ? 'Recommended follow‑up: ' + v.actionItems : 'Continue with c
           </div>
         </div>
       )}
+
+      <CreateQuotationModal
+        isOpen={showQuotationModal}
+        onClose={() => {
+          setShowQuotationModal(false)
+          setSelectedLeadForQuotation(null)
+        }}
+        source="leads"
+        editing={null}
+        leads={lead ? [lead] : []}
+        preselectedLeadId={selectedLeadForQuotation}
+        onSave={handleQuotationSave}
+      />
 
       {quotationEditBlockModal.open && (
         <div className="modal-overlay" onClick={() => setQuotationEditBlockModal({ open: false })}>

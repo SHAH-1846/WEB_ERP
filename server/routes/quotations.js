@@ -170,13 +170,43 @@ router.put('/:id', auth, async (req, res) => {
 
     const changes = [];
 
+    // Helper to normalize date values for comparison
+    const normalizeDateForComparison = (field, value) => {
+      if (['offerDate', 'enquiryDate'].includes(field)) {
+        if (!value) return null;
+        // If it's already a Date object, convert to YYYY-MM-DD
+        if (value instanceof Date) {
+          return value.toISOString().slice(0, 10);
+        }
+        // If it's a string, try to parse and normalize
+        if (typeof value === 'string') {
+          const d = new Date(value);
+          if (!isNaN(d.getTime())) {
+            return d.toISOString().slice(0, 10);
+          }
+        }
+        return null;
+      }
+      return value;
+    };
+
     for (const field of updatableRootFields) {
       if (typeof req.body[field] === 'undefined') continue;
       const from = q[field];
       const to = req.body[field];
-      if (JSON.stringify(from) !== JSON.stringify(to)) {
+      
+      // Normalize dates for comparison
+      const fromNormalized = normalizeDateForComparison(field, from);
+      const toNormalized = normalizeDateForComparison(field, to);
+      
+      if (JSON.stringify(fromNormalized) !== JSON.stringify(toNormalized)) {
         changes.push({ field, from, to });
-        q[field] = to;
+        // Convert date strings to Date objects when saving
+        if (['offerDate', 'enquiryDate'].includes(field) && to) {
+          q[field] = new Date(to);
+        } else {
+          q[field] = to;
+        }
       }
     }
 

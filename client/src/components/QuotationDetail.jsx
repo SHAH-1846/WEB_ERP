@@ -945,8 +945,7 @@ function QuotationDetail() {
     return clone
   }
 
-  // Convert rich text HTML to pdfMake-friendly fragments (basic tags)
-  // Robust HTML -> pdfMake content converter (handles lists/headings/inline styles)
+  // Convert rich text HTML to pdfMake-friendly fragments (preserve inline styles)
   const htmlToPdfFragments = (html) => {
     if (!html) return [{ text: '' }]
 
@@ -955,10 +954,32 @@ function QuotationDetail() {
         .replace(/<\s*br\s*\/?>/gi, '\n')
         .replace(/<\/\s*li\s*>/gi, '\n')
         .replace(/<\s*li\s*>/gi, '• ')
-        .replace(/<\s*\/p\s*>/gi, '\n')
-        .replace(/<\s*p[^>]*>/gi, '')
       const stripped = withBreaks.replace(/<[^>]+>/g, '')
       return [{ text: stripped.trim() }]
+    }
+
+    const applyInlineStyles = (node, base = {}) => {
+      const next = { ...base }
+      const style = (node.getAttribute && node.getAttribute('style')) || ''
+      if (style) {
+        const colorMatch = style.match(/color\s*:\s*([^;]+)/i)
+        if (colorMatch) next.color = colorMatch[1].trim()
+        const bgMatch = style.match(/background(?:-color)?\s*:\s*([^;]+)/i)
+        if (bgMatch) next.background = bgMatch[1].trim()
+        const ffMatch = style.match(/font-family\s*:\s*([^;]+)/i)
+        if (ffMatch) next.font = ffMatch[1].trim().replace(/['"]/g, '')
+        const fsMatch = style.match(/font-size\s*:\s*([^;]+)/i)
+        if (fsMatch) {
+          const raw = fsMatch[1].trim()
+          const num = parseFloat(raw)
+          if (!Number.isNaN(num)) next.fontSize = num
+        }
+      }
+      if (node.tagName?.toLowerCase() === 'font' && node.getAttribute) {
+        const c = node.getAttribute('color')
+        if (c) next.color = c
+      }
+      return next
     }
 
     if (typeof DOMParser === 'undefined' || typeof Node === 'undefined') {
@@ -986,7 +1007,7 @@ function QuotationDetail() {
         }
         case Node.ELEMENT_NODE: {
           const tag = node.tagName.toLowerCase()
-          const next = { ...inherited }
+          const next = applyInlineStyles(node, inherited)
           if (['strong', 'b'].includes(tag)) next.bold = true
           if (['em', 'i'].includes(tag)) next.italics = true
           if (tag === 'u') next.decoration = 'underline'
@@ -1044,10 +1065,7 @@ function QuotationDetail() {
     }
 
     const output = []
-    doc.body.childNodes.forEach(n => {
-      output.push(...walk(n))
-    })
-
+    doc.body.childNodes.forEach(n => output.push(...walk(n)))
     if (!output.length) return fallback(html)
     return output
   }
@@ -1055,6 +1073,226 @@ function QuotationDetail() {
   const richTextCell = (val) => {
     const frags = htmlToPdfFragments(val)
     return { stack: frags, preserveLeadingSpaces: true, margin: [0, 0, 0, 2] }
+  }
+
+  // Build a single pdfMake docDefinition used for download, preview, and print
+  const buildDocDefinition = ({
+    q,
+    logoDataUrl,
+    leadFull,
+    siteVisits,
+    currency,
+    isPending,
+    scopeRows,
+    priceRows,
+    exclusions,
+    paymentTerms,
+    deliveryRows,
+    coverFields
+  }) => {
+    const content = []
+
+    // Title
+    content.push({ text: 'Commercial Quotation', style: 'h1', margin: [0, 0, 0, 8] })
+
+    // Cover & Basic Details
+    if (coverFields.length > 0) {
+      content.push({ text: 'Cover & Basic Details', style: 'h2', margin: [0, 6, 0, 6] })
+      content.push({
+        table: {
+          widths: ['30%', '70%'],
+          body: [
+            [{ text: 'Field', style: 'th' }, { text: 'Value', style: 'th' }],
+            ...coverFields.map(([k, v]) => [{ text: k, style: 'tdKey' }, { text: v, style: 'tdVal' }])
+          ]
+        },
+        layout: 'lightHorizontalLines'
+      })
+    }
+
+    // Lead Details
+    if (leadFull) {
+      const leadDetailsRaw = [
+        ['Customer', leadFull.customerName],
+        ['Project Title', leadFull.projectTitle],
+        ['Enquiry #', leadFull.enquiryNumber],
+        ['Enquiry Date', leadFull.enquiryDate ? new Date(leadFull.enquiryDate).toLocaleDateString() : ''],
+        ['Submission Due', leadFull.submissionDueDate ? new Date(leadFull.submissionDueDate).toLocaleDateString() : ''],
+        ['Scope Summary', leadFull.scopeSummary]
+      ]
+      const leadDetails = leadDetailsRaw.filter(([, v]) => v && String(v).trim().length > 0)
+      if (leadDetails.length > 0) {
+        content.push({ text: 'Project Details', style: 'h2', margin: [0, 12, 0, 6] })
+        content.push({
+          table: {
+            widths: ['30%', '70%'],
+            body: [
+              [{ text: 'Field', style: 'th' }, { text: 'Value', style: 'th' }],
+              ...leadDetails.map(([k, v]) => [{ text: k, style: 'tdKey' }, { text: v, style: 'tdVal' }])
+            ]
+          },
+          layout: 'lightHorizontalLines'
+        })
+      }
+    }
+
+    // Introduction
+    if ((q.introductionText || '').trim().length > 0) {
+      content.push({ text: 'Introduction', style: 'h2', margin: [0, 10, 0, 6] })
+      content.push({ stack: htmlToPdfFragments(q.introductionText), margin: [0, 0, 0, 6], preserveLeadingSpaces: true })
+    }
+
+    // Scope of Work (stacked rich text)
+    if (scopeRows.length > 0) {
+      content.push({ text: 'Scope of Work', style: 'h2', margin: [0, 12, 0, 6] })
+      content.push({
+        stack: scopeRows
+          .map(row => row[1])
+          .filter(Boolean)
+          .map(cell => ({ ...cell, margin: [0, 0, 0, 8] }))
+      })
+    }
+
+    // Site Visit Reports (keep as table)
+    if (Array.isArray(siteVisits) && siteVisits.length > 0) {
+      const visitRows = siteVisits.map((v, i) => [
+        String(i + 1),
+        v.visitAt ? new Date(v.visitAt).toLocaleString() : '',
+        v.siteLocation || '',
+        v.engineerName || '',
+        (v.workProgressSummary || '').slice(0, 140)
+      ])
+      content.push({ text: 'Site Visit Reports', style: 'h2', margin: [0, 12, 0, 6] })
+      content.push({
+        table: {
+          widths: ['6%', '22%', '22%', '20%', '30%'],
+          body: [
+            [
+              { text: '#', style: 'th' },
+              { text: 'Date & Time', style: 'th' },
+              { text: 'Location', style: 'th' },
+              { text: 'Engineer', style: 'th' },
+              { text: 'Progress Summary', style: 'th' }
+            ],
+            ...visitRows
+          ]
+        },
+        layout: 'lightHorizontalLines'
+      })
+    }
+
+    // Price Schedule (stacked + totals)
+    if (priceRows.length > 0) {
+      content.push({ text: 'Price Schedule', style: 'h2', margin: [0, 12, 0, 6] })
+      content.push({
+        stack: priceRows
+          .map(row => row[1])
+          .filter(Boolean)
+          .map(cell => ({ ...cell, margin: [0, 0, 0, 8] }))
+      })
+
+      content.push({
+        stack: [
+          { text: `Sub Total: ${currency} ${Number(q.priceSchedule?.subTotal || 0).toFixed(2)}`, margin: [0, 2, 0, 0] },
+          { text: `VAT (${q.priceSchedule?.taxDetails?.vatRate || 0}%): ${currency} ${Number(q.priceSchedule?.taxDetails?.vatAmount || 0).toFixed(2)}`, margin: [0, 2, 0, 0] },
+          { text: `Grand Total: ${currency} ${Number(q.priceSchedule?.grandTotal || 0).toFixed(2)}`, bold: true, margin: [0, 2, 0, 0] }
+        ],
+        margin: [0, 6, 0, 0]
+      })
+    }
+
+    // Our Viewpoints / Exclusions
+    if ((q.ourViewpoints || '').trim().length > 0 || exclusions.length > 0) {
+      content.push({ text: 'Our Viewpoints / Special Terms', style: 'h2', margin: [0, 12, 0, 6] })
+      if ((q.ourViewpoints || '').trim().length > 0) {
+        content.push({ stack: htmlToPdfFragments(q.ourViewpoints), margin: [0, 0, 0, 6], preserveLeadingSpaces: true })
+      }
+      if (exclusions.length > 0) {
+        content.push({ text: 'Exclusions', style: 'h3', margin: [0, 6, 0, 4] })
+        content.push({ ul: exclusions.map(ex => ({ stack: htmlToPdfFragments(ex), preserveLeadingSpaces: true })) })
+      }
+    }
+
+    // Payment Terms (stacked)
+    if (paymentTerms.length > 0) {
+      content.push({ text: 'Payment Terms', style: 'h2', margin: [0, 12, 0, 6] })
+      content.push({
+        stack: paymentTerms.map(p => ({
+          stack: [
+            { ...richTextCell(p.milestoneDescription || ''), margin: [0, 0, 0, 2] },
+            p.amountPercent ? { text: `${p.amountPercent}%`, margin: [0, 0, 0, 4] } : null
+          ].filter(Boolean),
+          margin: [0, 0, 0, 8]
+        }))
+      })
+    }
+
+    // Delivery/Completion/Warranty/Validity
+    if (deliveryRows.length > 0) {
+      content.push({ text: 'Delivery, Completion, Warranty & Validity', style: 'h2', margin: [0, 12, 0, 6] })
+      content.push({
+        table: {
+          widths: ['30%', '70%'],
+          body: deliveryRows.map(([k, v]) => [{ text: k, style: 'tdKey' }, { text: v, style: 'tdVal' }])
+        },
+        layout: 'lightHorizontalLines'
+      })
+    }
+
+    // Approval status line
+    if (isPending) {
+      content.push({ text: 'Management Approval: Pending', italics: true, color: '#b45309', margin: [0, 12, 0, 0] })
+    } else if (q.managementApproval?.status === 'approved') {
+      content.push({ text: `Approved by: ${q.managementApproval?.approvedBy?.name || 'Management'}`, italics: true, color: '#16a34a', margin: [0, 12, 0, 0] })
+    } else {
+      content.push({ text: 'Management Approval: Not Approved', italics: true, color: '#b91c1c', margin: [0, 12, 0, 0] })
+    }
+
+    return {
+      pageMargins: [36, 96, 36, 60],
+      header: {
+        margin: [36, 20, 36, 8],
+        stack: [
+          {
+            columns: [
+              { image: logoDataUrl || logo, width: 60 },
+              [
+                { text: q.companyInfo?.name || 'Company', style: 'brand' },
+                { text: [q.companyInfo?.address, q.companyInfo?.phone, q.companyInfo?.email].filter(Boolean).join(' | '), color: '#64748b', fontSize: 9 }
+              ]
+            ],
+            columnGap: 12
+          },
+          { canvas: [{ type: 'line', x1: 0, y1: 0, x2: 523, y2: 0, lineWidth: 0.5, lineColor: '#e5e7eb' }] }
+        ]
+      },
+      footer: function (currentPage, pageCount) {
+        return {
+          margin: [36, 0, 36, 20],
+          stack: [
+            { canvas: [{ type: 'line', x1: 0, y1: 0, x2: 523, y2: 0, lineWidth: 0.5, lineColor: '#e5e7eb' }] },
+            {
+              columns: [
+                { text: isPending ? 'Approval Pending' : (q.managementApproval?.status === 'approved' ? 'Approved' : 'Not Approved'), color: isPending ? '#b45309' : (q.managementApproval?.status === 'approved' ? '#16a34a' : '#b91c1c') },
+                { text: `Page ${currentPage} of ${pageCount}`, alignment: 'right', color: '#94a3b8' }
+              ]
+            }
+          ]
+        }
+      },
+      content,
+      styles: {
+        brand: { fontSize: 14, color: '#1f2937', bold: true, margin: [0, 0, 0, 2] },
+        h1: { fontSize: 18, bold: true, color: '#0f172a' },
+        h2: { fontSize: 12, bold: true, color: '#0f172a' },
+        h3: { fontSize: 11, bold: true, color: '#0f172a' },
+        th: { bold: true, fillColor: '#f1f5f9' },
+        tdKey: { color: '#64748b' },
+        tdVal: { color: '#0f172a' }
+      },
+      defaultStyle: { fontSize: 10, lineHeight: 1.2 },
+      watermark: isPending ? { text: 'Approval Pending', color: '#94a3b8', opacity: 0.12, bold: true } : undefined
+    }
   }
 
   const ensurePdfMake = async () => {
@@ -1207,14 +1445,10 @@ function QuotationDetail() {
       if (scopeRows.length > 0) {
         content.push({ text: 'Scope of Work', style: 'h2', margin: [0, 12, 0, 6] })
         content.push({
-          table: {
-            widths: ['6%', '54%', '10%', '10%', '20%'],
-            body: [
-              [{ text: '#', style: 'th' }, { text: 'Description', style: 'th' }, { text: 'Qty', style: 'th' }, { text: 'Unit', style: 'th' }, { text: 'Location/Remarks', style: 'th' }],
-              ...scopeRows
-            ]
-          },
-          layout: 'lightHorizontalLines'
+          stack: scopeRows
+            .map(row => row[1])
+            .filter(Boolean)
+            .map(cell => ({ ...cell, margin: [0, 0, 0, 8] }))
         })
       }
 
@@ -1248,40 +1482,19 @@ function QuotationDetail() {
       if (priceRows.length > 0) {
         content.push({ text: 'Price Schedule', style: 'h2', margin: [0, 12, 0, 6] })
         content.push({
-          table: {
-            widths: ['6%', '44%', '10%', '10%', '15%', '15%'],
-            body: [
-              [
-                { text: '#', style: 'th' },
-                { text: 'Description', style: 'th' },
-                { text: 'Qty', style: 'th' },
-                { text: 'Unit', style: 'th' },
-                { text: `Unit Rate (${currency})`, style: 'th' },
-                { text: `Amount (${currency})`, style: 'th' }
-              ],
-              ...priceRows
-            ]
-          },
-          layout: 'lightHorizontalLines'
+          stack: priceRows
+            .map(row => row[1])
+            .filter(Boolean)
+            .map(cell => ({ ...cell, margin: [0, 0, 0, 8] }))
         })
 
         content.push({
-          columns: [
-            { width: '*', text: '' },
-            {
-              width: '40%',
-              table: {
-                widths: ['55%', '45%'],
-                body: [
-                  [{ text: 'Sub Total', style: 'tdKey' }, { text: `${currency} ${Number(q.priceSchedule?.subTotal || 0).toFixed(2)}`, alignment: 'right' }],
-                  [{ text: `VAT (${q.priceSchedule?.taxDetails?.vatRate || 0}%)`, style: 'tdKey' }, { text: `${currency} ${Number(q.priceSchedule?.taxDetails?.vatAmount || 0).toFixed(2)}`, alignment: 'right' }],
-                  [{ text: 'Grand Total', style: 'th' }, { text: `${currency} ${Number(q.priceSchedule?.grandTotal || 0).toFixed(2)}`, style: 'th', alignment: 'right' }]
-                ]
-              },
-              layout: 'lightHorizontalLines'
-            }
+          stack: [
+            { text: `Sub Total: ${currency} ${Number(q.priceSchedule?.subTotal || 0).toFixed(2)}`, margin: [0, 2, 0, 0] },
+            { text: `VAT (${q.priceSchedule?.taxDetails?.vatRate || 0}%): ${currency} ${Number(q.priceSchedule?.taxDetails?.vatAmount || 0).toFixed(2)}`, margin: [0, 2, 0, 0] },
+            { text: `Grand Total: ${currency} ${Number(q.priceSchedule?.grandTotal || 0).toFixed(2)}`, bold: true, margin: [0, 2, 0, 0] }
           ],
-          margin: [0, 8, 0, 0]
+          margin: [0, 6, 0, 0]
         })
       }
 
@@ -1299,14 +1512,13 @@ function QuotationDetail() {
       if (paymentTerms.length > 0) {
         content.push({ text: 'Payment Terms', style: 'h2', margin: [0, 12, 0, 6] })
         content.push({
-          table: {
-            widths: ['10%', '70%', '20%'],
-            body: [
-              [{ text: '#', style: 'th' }, { text: 'Milestone', style: 'th' }, { text: 'Amount %', style: 'th' }],
-              ...paymentTerms.map((p, i) => [String(i + 1), richTextCell(p.milestoneDescription || ''), String(p.amountPercent || '')])
-            ]
-          },
-          layout: 'lightHorizontalLines'
+          stack: paymentTerms.map(p => ({
+            stack: [
+              { ...richTextCell(p.milestoneDescription || ''), margin: [0, 0, 0, 2] },
+              p.amountPercent ? { text: `${p.amountPercent}%`, margin: [0, 0, 0, 4] } : null
+            ].filter(Boolean),
+            margin: [0, 0, 0, 8]
+          }))
         })
       }
 
@@ -1328,36 +1540,20 @@ function QuotationDetail() {
         content.push({ text: `Approved by: ${q.managementApproval?.approvedBy?.name || 'Management'}`, italics: true, color: '#16a34a', margin: [0, 12, 0, 0] })
       }
 
-      const docDefinition = {
-        pageMargins: [36, 96, 36, 60],
-        header,
-        footer: function (currentPage, pageCount) {
-          return {
-            margin: [36, 0, 36, 20],
-            stack: [
-              { canvas: [{ type: 'line', x1: 0, y1: 0, x2: 523, y2: 0, lineWidth: 0.5, lineColor: '#e5e7eb' }] },
-              {
-                columns: [
-                  { text: isPending ? 'Approval Pending' : (q.managementApproval?.status === 'approved' ? 'Approved' : ''), color: isPending ? '#b45309' : '#16a34a' },
-                  { text: `Page ${currentPage} of ${pageCount}`, alignment: 'right', color: '#94a3b8' }
-                ]
-              }
-            ]
-          }
-        },
-        content,
-        styles: {
-          brand: { fontSize: 14, color: '#1f2937', bold: true, margin: [0, 0, 0, 2] },
-          h1: { fontSize: 18, bold: true, color: '#0f172a' },
-          h2: { fontSize: 12, bold: true, color: '#0f172a' },
-          h3: { fontSize: 11, bold: true, color: '#0f172a' },
-          th: { bold: true, fillColor: '#f1f5f9' },
-          tdKey: { color: '#64748b' },
-          tdVal: { color: '#0f172a' }
-        },
-        defaultStyle: { fontSize: 10, lineHeight: 1.2 },
-        watermark: isPending ? { text: 'Approval Pending', color: '#94a3b8', opacity: 0.12, bold: true } : undefined
-      }
+      const docDefinition = buildDocDefinition({
+        q,
+        logoDataUrl,
+        leadFull,
+        siteVisits,
+        currency,
+        isPending,
+        scopeRows,
+        priceRows,
+        exclusions,
+        paymentTerms,
+        deliveryRows,
+        coverFields
+      })
 
       const filename = `${q.projectTitle || 'Quotation'}_${q.offerReference || q._id}.pdf`
       window.pdfMake.createPdf(docDefinition).download(filename)
@@ -1609,36 +1805,20 @@ function QuotationDetail() {
         content.push({ text: `Approved by: ${q.managementApproval?.approvedBy?.name || 'Management'}`, italics: true, color: '#16a34a', margin: [0, 12, 0, 0] })
       }
 
-      const docDefinition = {
-        pageMargins: [36, 96, 36, 60],
-        header,
-        footer: function (currentPage, pageCount) {
-          return {
-            margin: [36, 0, 36, 20],
-            stack: [
-              { canvas: [{ type: 'line', x1: 0, y1: 0, x2: 523, y2: 0, lineWidth: 0.5, lineColor: '#e5e7eb' }] },
-              {
-                columns: [
-                  { text: isPending ? 'Approval Pending' : (q.managementApproval?.status === 'approved' ? 'Approved' : ''), color: isPending ? '#b45309' : '#16a34a' },
-                  { text: `Page ${currentPage} of ${pageCount}`, alignment: 'right', color: '#94a3b8' }
-                ]
-              }
-            ]
-          }
-        },
-        content,
-        styles: {
-          brand: { fontSize: 14, color: '#1f2937', bold: true, margin: [0, 0, 0, 2] },
-          h1: { fontSize: 18, bold: true, color: '#0f172a' },
-          h2: { fontSize: 12, bold: true, color: '#0f172a' },
-          h3: { fontSize: 11, bold: true, color: '#0f172a' },
-          th: { bold: true, fillColor: '#f1f5f9' },
-          tdKey: { color: '#64748b' },
-          tdVal: { color: '#0f172a' }
-        },
-        defaultStyle: { fontSize: 10, lineHeight: 1.2 },
-        watermark: isPending ? { text: 'Approval Pending', color: '#94a3b8', opacity: 0.12, bold: true } : undefined
-      }
+      const docDefinition = buildDocDefinition({
+        q,
+        logoDataUrl,
+        leadFull,
+        siteVisits,
+        currency,
+        isPending,
+        scopeRows,
+        priceRows,
+        exclusions,
+        paymentTerms,
+        deliveryRows,
+        coverFields
+      })
 
       const pdfDoc = window.pdfMake.createPdf(docDefinition)
       pdfDoc.getDataUrl((dataUrl) => {
@@ -1885,31 +2065,43 @@ function QuotationDetail() {
     }
   }
 
-  const formatHistoryValue = (field, value) => {
+  const formatHistoryValue = (field, value, { asHtml = false } = {}) => {
+    const richFields = ['scopeOfWork', 'priceSchedule', 'exclusions', 'paymentTerms']
+    const isRich = richFields.includes(field)
     if (value === null || value === undefined) return ''
-    if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') return String(value)
+    if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+      if (isRich && asHtml) return String(value)
+      return String(value)
+    }
     try {
       if (Array.isArray(value)) {
         if (field === 'paymentTerms') {
           const terms = value || []
-          return terms.map((t, i) => `${i + 1}. ${t?.milestoneDescription || '-'} — ${t?.amountPercent ?? ''}%`).join('\n')
+          const lines = terms.map((t, i) => `${i + 1}. ${t?.milestoneDescription || '-'} — ${t?.amountPercent ?? ''}%`)
+          return asHtml ? lines.join('<br>') : lines.join('\n')
         }
         if (field === 'scopeOfWork') {
           const scopes = value || []
-          return scopes.map((s, i) => {
+          const lines = scopes.map((s, i) => {
             const qtyUnit = [s?.quantity ?? '', s?.unit || ''].filter(x => String(x).trim().length > 0).join(' ')
             const remarks = s?.locationRemarks ? ` — ${s.locationRemarks}` : ''
             return `${i + 1}. ${s?.description || '-'}${qtyUnit ? ` — Qty: ${qtyUnit}` : ''}${remarks}`
-          }).join('\n')
+          })
+          return asHtml ? lines.join('<br>') : lines.join('\n')
         }
-        return value.map((v, i) => {
+        if (field === 'exclusions') {
+          const lines = (value || []).map((v, i) => `${i + 1}. ${String(v || '')}`)
+          return asHtml ? lines.join('<br>') : lines.join('\n')
+        }
+        const lines = value.map((v, i) => {
           if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') return `${i + 1}. ${String(v)}`
           if (v && typeof v === 'object') {
             const parts = Object.entries(v).map(([k, val]) => `${k}: ${val}`)
             return `${i + 1}. ${parts.join(', ')}`
           }
           return `${i + 1}. ${String(v)}`
-        }).join('\n')
+        })
+        return asHtml ? lines.join('<br>') : lines.join('\n')
       }
       if (typeof value === 'object') {
         if (field === 'priceSchedule') {
@@ -1933,7 +2125,7 @@ function QuotationDetail() {
             lines.push(`VAT: ${rate}%${amt !== '' ? ` = ${amt}` : ''}`)
           }
           if (ps?.grandTotal !== undefined) lines.push(`Grand Total: ${ps.grandTotal}`)
-          return lines.join('\n')
+        return asHtml ? lines.join('<br>') : lines.join('\n')
         }
         if (field === 'deliveryCompletionWarrantyValidity') {
           const d = value || {}
@@ -1942,10 +2134,10 @@ function QuotationDetail() {
           if (d?.warrantyPeriod) lines.push(`Warranty Period: ${d.warrantyPeriod}`)
           if (d?.offerValidity !== undefined) lines.push(`Offer Validity: ${d.offerValidity} days`)
           if (d?.authorizedSignatory) lines.push(`Authorized Signatory: ${d.authorizedSignatory}`)
-          return lines.join('\n')
+        return asHtml ? lines.join('<br>') : lines.join('\n')
         }
         const entries = Object.entries(value).map(([k, v]) => `${k}: ${typeof v === 'object' ? JSON.stringify(v) : String(v)}`)
-        return entries.join('\n')
+      return asHtml ? entries.join('<br>') : entries.join('\n')
       }
     } catch {}
     return String(value)
@@ -2219,11 +2411,6 @@ function QuotationDetail() {
             }}>View Lead</button>
           )}
           <button className="link-btn" onClick={() => setApprovalsViewOpen(true)}>View Approvals/Rejections</button>
-          {quotation.edits?.length > 0 && (
-            <button className="link-btn" onClick={() => setShowQuoteHistory(!showQuoteHistory)}>
-              {showQuoteHistory ? 'Hide Quotation Edit History' : 'View Quotation Edit History'}
-            </button>
-          )}
           {(quotation.managementApproval?.status !== 'approved' || currentUser?.roles?.includes('manager') || currentUser?.roles?.includes('admin')) && (
             <button className="reject-btn" onClick={() => setDeleteModal({ open: true })}>
               Delete
@@ -2388,31 +2575,50 @@ function QuotationDetail() {
         )}
       </div>
 
-      {showQuoteHistory && quotation.edits?.length > 0 && (
+      {quotation.edits?.length > 0 && (
         <div className="ld-card ld-section">
-          <h3>Quotation Edit History</h3>
-          <div className="edits-list">
-            {quotation.edits.slice().reverse().map((edit, idx) => (
-              <div key={idx} className="edit-item">
-                <div className="edit-header">
-                  <span>By {edit.editedBy?._id === currentUser?.id ? 'You' : (edit.editedBy?.name || 'N/A')}</span>
-                  <span>{new Date(edit.editedAt).toLocaleString()}</span>
-                </div>
-                <ul className="changes-list">
-                  {edit.changes.map((c, i) => (
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+            <h3 style={{ margin: 0 }}>Quotation Edit History</h3>
+            <button className="link-btn" onClick={() => setShowQuoteHistory(!showQuoteHistory)}>
+              {showQuoteHistory ? 'Hide Quotation Edit History' : 'View Quotation Edit History'}
+            </button>
+          </div>
+          {showQuoteHistory ? (
+            <div className="edits-list">
+              {quotation.edits.slice().reverse().map((edit, idx) => (
+                <div key={idx} className="edit-item">
+                  <div className="edit-header">
+                    <span>By {edit.editedBy?._id === currentUser?.id ? 'You' : (edit.editedBy?.name || 'N/A')}</span>
+                    <span>{new Date(edit.editedAt).toLocaleString()}</span>
+                  </div>
+                  <ul className="changes-list">
+                    {edit.changes.map((c, i) => (
                     <li key={i}>
                       <strong>{c.field}:</strong>
                       <div className="change-diff">
-                        <pre className="change-block">{formatHistoryValue(c.field, c.from)}</pre>
-                        <span>→</span>
-                        <pre className="change-block">{formatHistoryValue(c.field, c.to)}</pre>
+                        {['scopeOfWork','priceSchedule','exclusions','paymentTerms'].includes(c.field) ? (
+                          <>
+                            <div className="change-block" dangerouslySetInnerHTML={{ __html: formatHistoryValue(c.field, c.from, { asHtml: true }) }} />
+                            <span>→</span>
+                            <div className="change-block" dangerouslySetInnerHTML={{ __html: formatHistoryValue(c.field, c.to, { asHtml: true }) }} />
+                          </>
+                        ) : (
+                          <>
+                            <pre className="change-block">{formatHistoryValue(c.field, c.from)}</pre>
+                            <span>→</span>
+                            <pre className="change-block">{formatHistoryValue(c.field, c.to)}</pre>
+                          </>
+                        )}
                       </div>
                     </li>
-                  ))}
-                </ul>
-              </div>
-            ))}
-          </div>
+                    ))}
+                  </ul>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p style={{ marginTop: '8px', color: 'var(--text-muted)' }}>Click "View Quotation Edit History" to expand.</p>
+          )}
         </div>
       )}
       {Array.isArray(revisions) && revisions.length > 0 && (
