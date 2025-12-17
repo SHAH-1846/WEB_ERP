@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState, useRef } from 'react'
-import { api } from '../lib/api'
+import { useEffect, useMemo, useState, useRef, Fragment } from 'react'
+import { api, apiFetch } from '../lib/api'
 import './LeadManagement.css'
 import './LoadingComponents.css'
 import { CreateQuotationModal } from './CreateQuotationModal'
@@ -881,8 +881,10 @@ function QuotationManagement() {
   const [originalRevisionForm, setOriginalRevisionForm] = useState(null)
   const priceScheduleEditedRef = useRef(false)
   const [hasRevisionFor, setHasRevisionFor] = useState({})
+  const [hasProjectFor, setHasProjectFor] = useState({}) // Track projects created directly from quotations
   const [notify, setNotify] = useState({ open: false, title: '', message: '' })
   const [showRevisionsModal, setShowRevisionsModal] = useState(false)
+  const [createProjectModal, setCreateProjectModal] = useState({ open: false, quotation: null, form: { name: '', locationDetails: '', workingHours: '', manpowerCount: '', assignedProjectEngineerIds: [] }, engineers: [], ack: false, selectedFiles: [], previewFiles: [] })
   const [revisionsForQuotation, setRevisionsForQuotation] = useState([])
   const [selectedQuotationForRevisions, setSelectedQuotationForRevisions] = useState(null)
   const [viewMode, setViewMode] = useState(() => {
@@ -924,6 +926,170 @@ function QuotationManagement() {
   const [isLoading, setIsLoading] = useState(true)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [loadingAction, setLoadingAction] = useState(null)
+
+  // Convert rich text HTML to pdfMake-friendly fragments (basic tags)
+  // Robust HTML -> pdfMake content converter (handles lists/headings/inline styles)
+  const htmlToPdfFragments = (html) => {
+    if (!html) return [{ text: '' }]
+
+    const fallback = (raw) => {
+      const withBreaks = raw
+        .replace(/<\s*br\s*\/?>/gi, '\n')
+        .replace(/<\/\s*li\s*>/gi, '\n')
+        .replace(/<\s*li\s*>/gi, '• ')
+      const stripped = withBreaks.replace(/<[^>]+>/g, '')
+      return [{ text: stripped.trim() }]
+    }
+
+    if (typeof DOMParser === 'undefined' || typeof Node === 'undefined') {
+      return fallback(html)
+    }
+
+    const parser = new DOMParser()
+    const doc = parser.parseFromString(`<div>${html}</div>`, 'text/html')
+
+    const walk = (node, inherited = {}) => {
+      const results = []
+      const pushText = (text, style = inherited) => {
+        if (text === undefined || text === null) return
+        const val = String(text)
+        if (val.length === 0) return
+        results.push({ text: val, ...style })
+      }
+
+      switch (node.nodeType) {
+        case Node.TEXT_NODE: {
+          const t = node.textContent || ''
+          if (t.trim().length === 0 && /\s+/.test(t)) break
+          pushText(t, inherited)
+          break
+        }
+        case Node.ELEMENT_NODE: {
+          const tag = node.tagName.toLowerCase()
+          const next = { ...inherited }
+          if (['strong', 'b'].includes(tag)) next.bold = true
+          if (['em', 'i'].includes(tag)) next.italics = true
+          if (tag === 'u') next.decoration = 'underline'
+          if (['h1', 'h2', 'h3', 'h4'].includes(tag)) next.fontSize = 12
+
+          if (tag === 'br') {
+            results.push({ text: '\n', ...next })
+            break
+          }
+
+          if (tag === 'ul' || tag === 'ol') {
+            const isOrdered = tag === 'ol'
+            const items = []
+            node.childNodes.forEach((child, idx) => {
+              if (child.tagName?.toLowerCase() === 'li') {
+                const liParts = walk(child, next)
+                const combined = liParts.map(p => p.text || '').join('').trim()
+                if (combined.length) {
+                  items.push({ text: isOrdered ? `${idx + 1}. ${combined}` : `• ${combined}`, ...next })
+                }
+              }
+            })
+            if (items.length) {
+              results.push({ stack: items, margin: [0, 0, 0, 2] })
+            }
+            break
+          }
+
+          if (tag === 'li') {
+            node.childNodes.forEach(child => {
+              results.push(...walk(child, next))
+            })
+            break
+          }
+
+          const blockLike = ['p', 'div', 'h1', 'h2', 'h3', 'h4'].includes(tag)
+          const children = []
+          node.childNodes.forEach(child => {
+            children.push(...walk(child, next))
+          })
+          if (children.length) {
+            if (blockLike) {
+              results.push({ stack: children, margin: [0, 0, 0, 4] })
+            } else {
+              results.push(...children)
+            }
+          }
+          break
+        }
+        default:
+          break
+      }
+
+      return results
+    }
+
+    const output = []
+    doc.body.childNodes.forEach(n => {
+      output.push(...walk(n))
+    })
+
+    if (!output.length) return fallback(html)
+    return output
+  }
+
+  const richTextCell = (val) => {
+    const frags = htmlToPdfFragments(val)
+    return { stack: frags, preserveLeadingSpaces: true, margin: [0, 0, 0, 2] }
+  }
+
+  // File handling helpers for the create-project modal
+  const handleProjectFileChange = (e) => {
+    const files = Array.from(e.target.files || [])
+    if (!files.length) return
+
+    setCreateProjectModal(prev => ({
+      ...prev,
+      selectedFiles: [...prev.selectedFiles, ...files]
+    }))
+
+    files.forEach(file => {
+      if (file.type.startsWith('image/')) {
+        const reader = new FileReader()
+        reader.onloadend = () => {
+          setCreateProjectModal(prev => ({
+            ...prev,
+            previewFiles: [...prev.previewFiles, { file, preview: reader.result, type: 'image' }]
+          }))
+        }
+        reader.readAsDataURL(file)
+      } else if (file.type.startsWith('video/')) {
+        const reader = new FileReader()
+        reader.onloadend = () => {
+          setCreateProjectModal(prev => ({
+            ...prev,
+            previewFiles: [...prev.previewFiles, { file, preview: reader.result, type: 'video' }]
+          }))
+        }
+        reader.readAsDataURL(file)
+      } else {
+        setCreateProjectModal(prev => ({
+          ...prev,
+          previewFiles: [...prev.previewFiles, { file, preview: null, type: 'document' }]
+        }))
+      }
+    })
+  }
+
+  const removeProjectFile = (index) => {
+    setCreateProjectModal(prev => ({
+      ...prev,
+      selectedFiles: prev.selectedFiles.filter((_, i) => i !== index),
+      previewFiles: prev.previewFiles.filter((_, i) => i !== index)
+    }))
+  }
+
+  const formatFileSize = (bytes) => {
+    if (!bytes || bytes <= 0) return '0 Bytes'
+    const k = 1024
+    const sizes = ['Bytes', 'KB', 'MB', 'GB']
+    const i = Math.floor(Math.log(bytes) / Math.log(k))
+    return `${Math.round((bytes / Math.pow(k, i)) * 100) / 100} ${sizes[i]}`
+  }
 
   const defaultCompany = useMemo(() => ({
     logo,
@@ -1055,6 +1221,20 @@ function QuotationManagement() {
         })
         setHasRevisionFor(map)
         setRevisionCounts(counts)
+        
+        // Check for projects created directly from quotations (no revisions)
+        const projectMap = {}
+        for (const q of res.data) {
+          if (q.managementApproval?.status === 'approved' && !map[q._id]) {
+            try {
+              await api.get(`/api/projects/by-quotation/${q._id}`)
+              projectMap[q._id] = true
+            } catch {
+              // No project for this quotation
+            }
+          }
+        }
+        setHasProjectFor(projectMap)
       } catch {}
     } catch {}
   }
@@ -1070,30 +1250,103 @@ function QuotationManagement() {
 
   const ensurePdfMake = async () => {
     if (window.pdfMake) return
-    await new Promise((resolve, reject) => {
-      const script = document.createElement('script')
-      script.src = 'https://cdn.jsdelivr.net/npm/pdfmake@0.2.7/build/pdfmake.min.js'
-      script.onload = resolve
-      script.onerror = reject
-      document.body.appendChild(script)
-    })
-    await new Promise((resolve, reject) => {
-      const script = document.createElement('script')
-      script.src = 'https://cdn.jsdelivr.net/npm/pdfmake@0.2.7/build/vfs_fonts.js'
-      script.onload = resolve
-      script.onerror = reject
-      document.body.appendChild(script)
-    })
+
+    const loadScript = (src) =>
+      new Promise((resolve, reject) => {
+        const script = document.createElement('script')
+        script.src = src
+        script.onload = resolve
+        script.onerror = reject
+        document.body.appendChild(script)
+      })
+
+    const cdnPrimary = 'https://cdn.jsdelivr.net/npm/pdfmake@0.2.7/build'
+    const cdnFallback = 'https://unpkg.com/pdfmake@0.2.7/build'
+
+    try {
+      await loadScript(`${cdnPrimary}/pdfmake.min.js`)
+      await loadScript(`${cdnPrimary}/vfs_fonts.js`)
+    } catch {
+      await loadScript(`${cdnFallback}/pdfmake.min.js`)
+      await loadScript(`${cdnFallback}/vfs_fonts.js`)
+    }
+
+    if (!window.pdfMake) {
+      throw new Error('pdfMake failed to load')
+    }
   }
 
   const toDataURL = async (url) => {
     const res = await fetch(url)
     const blob = await res.blob()
-    return await new Promise((resolve) => {
+    return await new Promise((resolve, reject) => {
+      if (!blob || !blob.size) return reject(new Error('Empty logo blob'))
       const reader = new FileReader()
       reader.onloadend = () => resolve(reader.result)
+      reader.onerror = reject
       reader.readAsDataURL(blob)
     })
+  }
+
+  const FALLBACK_PIXEL =
+    'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9YqK8W8AAAAASUVORK5CYII='
+
+  // Safely get logo as data URL, falling back to bundled logo, then 1x1 pixel
+  const getLogoDataUrl = async (url) => {
+    try {
+      if (url) return await toDataURL(url)
+    } catch {}
+    try {
+      return await toDataURL(logo)
+    } catch {
+      return FALLBACK_PIXEL
+    }
+  }
+
+  // Normalize rich text fields for PDF rendering (align with QuotationDetail)
+  const normalizeQuotationForPdf = (q) => {
+    if (!q) return q
+    const clone = { ...q }
+
+    if (typeof clone.scopeOfWork === 'string') {
+      const desc = clone.scopeOfWork
+      clone.scopeOfWork = desc ? [{ description: desc, quantity: '', unit: '', locationRemarks: '' }] : []
+    }
+
+    if (typeof clone.priceSchedule === 'string') {
+      const desc = clone.priceSchedule
+      clone.priceSchedule = {
+        items: desc ? [{ description: desc, quantity: 0, unit: '', unitRate: 0, totalAmount: 0 }] : [],
+        subTotal: 0,
+        grandTotal: 0,
+        currency: 'AED',
+        taxDetails: { vatRate: 0, vatAmount: 0 }
+      }
+    }
+
+    if (typeof clone.exclusions === 'string') {
+      clone.exclusions = clone.exclusions
+        ? clone.exclusions.split(/<br\s*\/?>|\n/gi).map(s => s.trim()).filter(Boolean)
+        : []
+    } else if (!Array.isArray(clone.exclusions)) {
+      clone.exclusions = []
+    }
+
+    if (typeof clone.paymentTerms === 'string') {
+      clone.paymentTerms = clone.paymentTerms
+        ? clone.paymentTerms.split(/<br\s*\/?>|\n/gi).map(term => {
+            const match = term.match(/^(.+?)(?:\s*-\s*(\d+(?:\.\d+)?)%)?$/)
+            return {
+              milestoneDescription: match ? match[1].trim() : term.trim(),
+              amountPercent: match && match[2] ? parseFloat(match[2]) : 0
+            }
+          }).filter(t => t.milestoneDescription)
+        : []
+    } else if (!Array.isArray(clone.paymentTerms)) {
+      clone.paymentTerms = []
+    }
+
+    return clone
   }
 
   const openCreate = () => {
@@ -1298,18 +1551,21 @@ function QuotationManagement() {
     }
   }
 
+
   const exportPDF = async (q) => {
     try {
-      await ensurePdfMake()
-      const logoDataUrl = await toDataURL(q.companyInfo?.logo || logo)
-      const isPending = q.managementApproval?.status === 'pending'
+      const qNorm = normalizeQuotationForPdf(q)
 
-      const currency = q.priceSchedule?.currency || 'AED'
+      await ensurePdfMake()
+      const logoDataUrl = await getLogoDataUrl(qNorm.companyInfo?.logo)
+      const isPending = qNorm.managementApproval?.status === 'pending'
+
+      const currency = qNorm.priceSchedule?.currency || 'AED'
       // Fetch lead details and site visits for inclusion
-      let leadFull = q.lead || null
+      let leadFull = qNorm.lead || null
       let siteVisits = []
       try {
-        const leadId = typeof q.lead === 'object' ? q.lead?._id : q.lead
+        const leadId = typeof qNorm.lead === 'object' ? qNorm.lead?._id : qNorm.lead
         if (leadId) {
           const resLead = await api.get(`/api/leads/${leadId}`)
           leadFull = resLead.data
@@ -1318,41 +1574,41 @@ function QuotationManagement() {
         }
       } catch {}
       const coverFieldsRaw = [
-        ['Submitted To', q.submittedTo],
-        ['Attention', q.attention],
-        ['Offer Reference', q.offerReference],
-        ['Enquiry Number', q.enquiryNumber || leadFull?.enquiryNumber],
-        ['Offer Date', q.offerDate ? new Date(q.offerDate).toLocaleDateString() : ''],
-        ['Enquiry Date', q.enquiryDate ? new Date(q.enquiryDate).toLocaleDateString() : ''],
-        ['Project Title', q.projectTitle || leadFull?.projectTitle]
+        ['Submitted To', qNorm.submittedTo],
+        ['Attention', qNorm.attention],
+        ['Offer Reference', qNorm.offerReference],
+        ['Enquiry Number', qNorm.enquiryNumber || leadFull?.enquiryNumber],
+        ['Offer Date', qNorm.offerDate ? new Date(qNorm.offerDate).toLocaleDateString() : ''],
+        ['Enquiry Date', qNorm.enquiryDate ? new Date(qNorm.enquiryDate).toLocaleDateString() : ''],
+        ['Project Title', qNorm.projectTitle || leadFull?.projectTitle]
       ]
       const coverFields = coverFieldsRaw.filter(([, v]) => v && String(v).trim().length > 0)
 
-      const scopeRows = (q.scopeOfWork || [])
+      const scopeRows = (qNorm.scopeOfWork || [])
         .filter(s => (s?.description || '').trim().length > 0)
         .map((s, i) => [
           String(i + 1),
-          s.description,
+          richTextCell(s.description || ''),
           String(s.quantity || ''),
           s.unit || '',
-          s.locationRemarks || ''
+          richTextCell(s.locationRemarks || '')
         ])
 
-      const priceItems = (q.priceSchedule?.items || [])
+      const priceItems = (qNorm.priceSchedule?.items || [])
         .filter(it => (it?.description || '').trim().length > 0 || Number(it.quantity) > 0 || Number(it.unitRate) > 0)
       const priceRows = priceItems.map((it, i) => [
         String(i + 1),
-        it.description || '',
+        richTextCell(it.description || ''),
         String(it.quantity || 0),
         it.unit || '',
         `${currency} ${Number(it.unitRate || 0).toFixed(2)}`,
         `${currency} ${Number((it.quantity || 0) * (it.unitRate || 0)).toFixed(2)}`
       ])
 
-      const exclusions = (q.exclusions || []).map(x => String(x || '').trim()).filter(Boolean)
-      const paymentTerms = (q.paymentTerms || []).filter(p => (p?.milestoneDescription || '').trim().length > 0 || String(p?.amountPercent || '').trim().length > 0)
+      const exclusions = (qNorm.exclusions || []).map(x => String(x || '')).filter(x => x.trim().length > 0)
+      const paymentTerms = (qNorm.paymentTerms || []).filter(p => (p?.milestoneDescription || '').trim().length > 0 || String(p?.amountPercent || '').trim().length > 0)
 
-      const dcwv = q.deliveryCompletionWarrantyValidity || {}
+      const dcwv = qNorm.deliveryCompletionWarrantyValidity || {}
       const deliveryRowsRaw = [
         ['Delivery / Completion Timeline', dcwv.deliveryTimeline],
         ['Warranty Period', dcwv.warrantyPeriod],
@@ -1366,7 +1622,7 @@ function QuotationManagement() {
         stack: [
           {
             columns: [
-              { image: logoDataUrl, width: 60 },
+              { image: logoDataUrl || FALLBACK_PIXEL, width: 60 },
               [
                 { text: q.companyInfo?.name || 'Company', style: 'brand' },
                 { text: [q.companyInfo?.address, q.companyInfo?.phone, q.companyInfo?.email].filter(Boolean).join(' | '), color: '#64748b', fontSize: 9 }
@@ -1427,7 +1683,7 @@ function QuotationManagement() {
       // Introduction
       if ((q.introductionText || '').trim().length > 0) {
         content.push({ text: 'Introduction', style: 'h2', margin: [0, 10, 0, 6] })
-        content.push({ text: q.introductionText, margin: [0, 0, 0, 6] })
+        content.push({ stack: htmlToPdfFragments(q.introductionText), margin: [0, 0, 0, 6], preserveLeadingSpaces: true })
       }
 
       // Scope of Work
@@ -1518,11 +1774,11 @@ function QuotationManagement() {
       if ((q.ourViewpoints || '').trim().length > 0 || exclusions.length > 0) {
         content.push({ text: 'Our Viewpoints / Special Terms', style: 'h2', margin: [0, 12, 0, 6] })
         if ((q.ourViewpoints || '').trim().length > 0) {
-          content.push({ text: q.ourViewpoints, margin: [0, 0, 0, 6] })
+          content.push({ stack: htmlToPdfFragments(q.ourViewpoints), margin: [0, 0, 0, 6], preserveLeadingSpaces: true })
         }
         if (exclusions.length > 0) {
           content.push({ text: 'Exclusions', style: 'h3', margin: [0, 6, 0, 4] })
-          content.push({ ul: exclusions })
+          content.push({ ul: exclusions.map(ex => ({ stack: htmlToPdfFragments(ex), preserveLeadingSpaces: true })) })
         }
       }
 
@@ -1534,7 +1790,7 @@ function QuotationManagement() {
             widths: ['10%', '70%', '20%'],
             body: [
               [{ text: '#', style: 'th' }, { text: 'Milestone', style: 'th' }, { text: 'Amount %', style: 'th' }],
-              ...paymentTerms.map((p, i) => [String(i + 1), p.milestoneDescription || '', String(p.amountPercent || '')])
+              ...paymentTerms.map((p, i) => [String(i + 1), richTextCell(p.milestoneDescription || ''), String(p.amountPercent || '')])
             ]
           },
           layout: 'lightHorizontalLines'
@@ -1558,8 +1814,8 @@ function QuotationManagement() {
       // Approval status line
       if (isPending) {
         content.push({ text: 'Management Approval: Pending', italics: true, color: '#b45309', margin: [0, 12, 0, 0] })
-      } else if (q.managementApproval?.status === 'approved') {
-        content.push({ text: `Approved by: ${q.managementApproval?.approvedBy?.name || 'Management'}`, italics: true, color: '#16a34a', margin: [0, 12, 0, 0] })
+      } else if (qNorm.managementApproval?.status === 'approved') {
+        content.push({ text: `Approved by: ${qNorm.managementApproval?.approvedBy?.name || 'Management'}`, italics: true, color: '#16a34a', margin: [0, 12, 0, 0] })
       }
 
       const docDefinition = {
@@ -1572,7 +1828,7 @@ function QuotationManagement() {
               { canvas: [{ type: 'line', x1: 0, y1: 0, x2: 523, y2: 0, lineWidth: 0.5, lineColor: '#e5e7eb' }] },
               {
                 columns: [
-                  { text: isPending ? 'Approval Pending' : (q.managementApproval?.status === 'approved' ? 'Approved' : ''), color: isPending ? '#b45309' : '#16a34a' },
+                  { text: isPending ? 'Approval Pending' : (qNorm.managementApproval?.status === 'approved' ? 'Approved' : ''), color: isPending ? '#b45309' : '#16a34a' },
                   { text: `Page ${currentPage} of ${pageCount}`, alignment: 'right', color: '#94a3b8' }
                 ]
               }
@@ -1593,7 +1849,7 @@ function QuotationManagement() {
         watermark: isPending ? { text: 'Approval Pending', color: '#94a3b8', opacity: 0.12, bold: true } : undefined
       }
 
-      const filename = `${q.projectTitle || 'Quotation'}_${q.offerReference || q._id}.pdf`
+      const filename = `${qNorm.projectTitle || 'Quotation'}_${qNorm.offerReference || qNorm._id}.pdf`
       window.pdfMake.createPdf(docDefinition).download(filename)
     } catch (e) {
       setNotify({ open: true, title: 'Export Failed', message: 'We could not generate the PDF for this quotation. Please try again.' })
@@ -1602,16 +1858,18 @@ function QuotationManagement() {
 
   const generatePDFPreview = async (q) => {
     try {
-      await ensurePdfMake()
-      const logoDataUrl = await toDataURL(q.companyInfo?.logo || logo)
-      const isPending = q.managementApproval?.status === 'pending'
+      const qNorm = normalizeQuotationForPdf(q)
 
-      const currency = q.priceSchedule?.currency || 'AED'
+      await ensurePdfMake()
+      const logoDataUrl = await getLogoDataUrl(qNorm.companyInfo?.logo)
+      const isPending = qNorm.managementApproval?.status === 'pending'
+
+      const currency = qNorm.priceSchedule?.currency || 'AED'
       // Fetch lead details and site visits for inclusion
-      let leadFull = q.lead || null
+      let leadFull = qNorm.lead || null
       let siteVisits = []
       try {
-        const leadId = typeof q.lead === 'object' ? q.lead?._id : q.lead
+        const leadId = typeof qNorm.lead === 'object' ? qNorm.lead?._id : qNorm.lead
         if (leadId) {
           const resLead = await api.get(`/api/leads/${leadId}`)
           leadFull = resLead.data
@@ -1620,41 +1878,41 @@ function QuotationManagement() {
         }
       } catch {}
       const coverFieldsRaw = [
-        ['Submitted To', q.submittedTo],
-        ['Attention', q.attention],
-        ['Offer Reference', q.offerReference],
-        ['Enquiry Number', q.enquiryNumber || leadFull?.enquiryNumber],
-        ['Offer Date', q.offerDate ? new Date(q.offerDate).toLocaleDateString() : ''],
-        ['Enquiry Date', q.enquiryDate ? new Date(q.enquiryDate).toLocaleDateString() : ''],
-        ['Project Title', q.projectTitle || leadFull?.projectTitle]
+        ['Submitted To', qNorm.submittedTo],
+        ['Attention', qNorm.attention],
+        ['Offer Reference', qNorm.offerReference],
+        ['Enquiry Number', qNorm.enquiryNumber || leadFull?.enquiryNumber],
+        ['Offer Date', qNorm.offerDate ? new Date(qNorm.offerDate).toLocaleDateString() : ''],
+        ['Enquiry Date', qNorm.enquiryDate ? new Date(qNorm.enquiryDate).toLocaleDateString() : ''],
+        ['Project Title', qNorm.projectTitle || leadFull?.projectTitle]
       ]
       const coverFields = coverFieldsRaw.filter(([, v]) => v && String(v).trim().length > 0)
 
-      const scopeRows = (q.scopeOfWork || [])
+      const scopeRows = (qNorm.scopeOfWork || [])
         .filter(s => (s?.description || '').trim().length > 0)
         .map((s, i) => [
           String(i + 1),
-          s.description,
+          richTextCell(s.description || ''),
           String(s.quantity || ''),
           s.unit || '',
-          s.locationRemarks || ''
+          richTextCell(s.locationRemarks || '')
         ])
 
-      const priceItems = (q.priceSchedule?.items || [])
+      const priceItems = (qNorm.priceSchedule?.items || [])
         .filter(it => (it?.description || '').trim().length > 0 || Number(it.quantity) > 0 || Number(it.unitRate) > 0)
       const priceRows = priceItems.map((it, i) => [
         String(i + 1),
-        it.description || '',
+        richTextCell(it.description || ''),
         String(it.quantity || 0),
         it.unit || '',
         `${currency} ${Number(it.unitRate || 0).toFixed(2)}`,
         `${currency} ${Number((it.quantity || 0) * (it.unitRate || 0)).toFixed(2)}`
       ])
 
-      const exclusions = (q.exclusions || []).map(x => String(x || '').trim()).filter(Boolean)
-      const paymentTerms = (q.paymentTerms || []).filter(p => (p?.milestoneDescription || '').trim().length > 0 || String(p?.amountPercent || '').trim().length > 0)
+      const exclusions = (qNorm.exclusions || []).map(x => String(x || '').trim()).filter(Boolean)
+      const paymentTerms = (qNorm.paymentTerms || []).filter(p => (p?.milestoneDescription || '').trim().length > 0 || String(p?.amountPercent || '').trim().length > 0)
 
-      const dcwv = q.deliveryCompletionWarrantyValidity || {}
+      const dcwv = qNorm.deliveryCompletionWarrantyValidity || {}
       const deliveryRowsRaw = [
         ['Delivery / Completion Timeline', dcwv.deliveryTimeline],
         ['Warranty Period', dcwv.warrantyPeriod],
@@ -1668,7 +1926,7 @@ function QuotationManagement() {
         stack: [
           {
             columns: [
-              { image: logoDataUrl, width: 60 },
+              { image: logoDataUrl || FALLBACK_PIXEL, width: 60 },
               [
                 { text: q.companyInfo?.name || 'Company', style: 'brand' },
                 { text: [q.companyInfo?.address, q.companyInfo?.phone, q.companyInfo?.email].filter(Boolean).join(' | '), color: '#64748b', fontSize: 9 }
@@ -1860,8 +2118,8 @@ function QuotationManagement() {
       // Approval status line
       if (isPending) {
         content.push({ text: 'Management Approval: Pending', italics: true, color: '#b45309', margin: [0, 12, 0, 0] })
-      } else if (q.managementApproval?.status === 'approved') {
-        content.push({ text: `Approved by: ${q.managementApproval?.approvedBy?.name || 'Management'}`, italics: true, color: '#16a34a', margin: [0, 12, 0, 0] })
+      } else if (qNorm.managementApproval?.status === 'approved') {
+        content.push({ text: `Approved by: ${qNorm.managementApproval?.approvedBy?.name || 'Management'}`, italics: true, color: '#16a34a', margin: [0, 12, 0, 0] })
       }
 
       const docDefinition = {
@@ -1874,7 +2132,7 @@ function QuotationManagement() {
               { canvas: [{ type: 'line', x1: 0, y1: 0, x2: 523, y2: 0, lineWidth: 0.5, lineColor: '#e5e7eb' }] },
               {
                 columns: [
-                  { text: isPending ? 'Approval Pending' : (q.managementApproval?.status === 'approved' ? 'Approved' : ''), color: isPending ? '#b45309' : '#16a34a' },
+                  { text: isPending ? 'Approval Pending' : (qNorm.managementApproval?.status === 'approved' ? 'Approved' : ''), color: isPending ? '#b45309' : '#16a34a' },
                   { text: `Page ${currentPage} of ${pageCount}`, alignment: 'right', color: '#94a3b8' }
                 ]
               }
@@ -1895,9 +2153,12 @@ function QuotationManagement() {
         watermark: isPending ? { text: 'Approval Pending', color: '#94a3b8', opacity: 0.12, bold: true } : undefined
       }
 
+      const filename = `${qNorm.projectTitle || 'Quotation'}_${qNorm.offerReference || qNorm._id}.pdf`
       const pdfDoc = window.pdfMake.createPdf(docDefinition)
       pdfDoc.getDataUrl((dataUrl) => {
-        setPrintPreviewModal({ open: true, pdfUrl: dataUrl, quotation: q })
+        setPrintPreviewModal({ open: true, pdfUrl: dataUrl, quotation: qNorm, filename })
+      }, () => {
+        setNotify({ open: true, title: 'Preview Failed', message: 'We could not generate the PDF preview. Please try again.' })
       })
     } catch (e) {
       setNotify({ open: true, title: 'Preview Failed', message: 'We could not generate the PDF preview. Please try again.' })
@@ -2133,6 +2394,62 @@ function QuotationManagement() {
           setOriginalRevisionForm({ ...formData })
           setRevisionModal({ open: true, quote: q, form: formData })
         }}>Create Revision</button>
+      )}
+      {q.managementApproval?.status === 'approved' && !hasRevisionFor[q._id] && !hasProjectFor[q._id] && (
+        <button className="assign-btn" onClick={async () => {
+          try {
+            // Check if project already exists
+            try {
+              await api.get(`/api/projects/by-quotation/${q._id}`)
+              setNotify({ open: true, title: 'Not Allowed', message: 'A project already exists for this quotation.' })
+              return
+            } catch {}
+            
+            // Check if revisions exist
+            try {
+              const revRes = await api.get(`/api/revisions?parentQuotation=${q._id}`)
+              if (Array.isArray(revRes.data) && revRes.data.length > 0) {
+                setNotify({ open: true, title: 'Not Allowed', message: 'Cannot create project directly from quotation. Revisions exist for this quotation. Please create project from the latest approved revision instead.' })
+                return
+              }
+            } catch {}
+            
+            // Get lead data for autofill
+            const leadId = typeof q.lead === 'object' ? q.lead?._id : q.lead
+            let leadData = null
+            if (leadId) {
+              try {
+                const leadRes = await api.get(`/api/leads/${leadId}`)
+                leadData = leadRes.data
+              } catch {}
+            }
+            
+            // Get project engineers
+            let engineers = []
+            try {
+              const engRes = await api.get('/api/projects/project-engineers')
+              engineers = Array.isArray(engRes.data) ? engRes.data : []
+            } catch {}
+            
+            setCreateProjectModal({ 
+              open: true, 
+              quotation: q,
+              engineers,
+              ack: false,
+              form: {
+                name: q.projectTitle || leadData?.projectTitle || leadData?.customerName || 'Project',
+                locationDetails: leadData?.locationDetails || '',
+                workingHours: leadData?.workingHours || '',
+                manpowerCount: leadData?.manpowerCount !== null && leadData?.manpowerCount !== undefined ? leadData?.manpowerCount : '',
+                assignedProjectEngineerIds: []
+              },
+              selectedFiles: [],
+              previewFiles: []
+            })
+          } catch (e) {
+            setNotify({ open: true, title: 'Error', message: 'Failed to prepare project creation. Please try again.' })
+          }
+        }}>Create Project</button>
       )}
       <button className="assign-btn" onClick={() => {
         try {
@@ -2699,7 +3016,7 @@ function QuotationManagement() {
                 const isExpanded = expandedRevisionRows[q._id]
                 const revisions = quotationRevisionsMap[q._id] || []
                 return (
-                  <>
+                  <Fragment key={q._id}>
                     <tr key={q._id}>
                       <td data-label="Project Title">{q.projectTitle || q.lead?.projectTitle || 'Quotation'}</td>
                       <td data-label="Customer">{q.lead?.customerName || 'N/A'}</td>
@@ -2916,7 +3233,7 @@ function QuotationManagement() {
                         </td>
                       </tr>
                     )}
-                  </>
+                  </Fragment>
                 )
               })}
             </tbody>
@@ -3740,6 +4057,416 @@ function QuotationManagement() {
             </div>
           </div>
         </div>
+      )}
+
+      {createProjectModal.open && createProjectModal.quotation && (
+        <>
+          <style>{`
+            .engineers-scroll-container::-webkit-scrollbar {
+              width: 8px;
+            }
+            .engineers-scroll-container::-webkit-scrollbar-track {
+              background: var(--bg);
+              border-radius: 4px;
+            }
+            .engineers-scroll-container::-webkit-scrollbar-thumb {
+              background: var(--border);
+              border-radius: 4px;
+            }
+            .engineers-scroll-container::-webkit-scrollbar-thumb:hover {
+              background: var(--text-secondary);
+            }
+          `}</style>
+          <div className="modal-overlay" onClick={() => setCreateProjectModal({ open: false, quotation: null, form: { name: '', locationDetails: '', workingHours: '', manpowerCount: '', assignedProjectEngineerIds: [] }, engineers: [], ack: false, selectedFiles: [], previewFiles: [] })}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>Create Project</h2>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (createProjectModal.quotation && createProjectModal.quotation._id) {
+                      window.open(`/quotations/${createProjectModal.quotation._id}/create-project`, '_blank')
+                    }
+                  }}
+                  className="link-btn"
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    fontSize: '14px',
+                    padding: '6px 12px',
+                    border: '1px solid var(--border)',
+                    borderRadius: '6px',
+                    background: 'transparent',
+                    color: 'var(--text)',
+                    cursor: 'pointer',
+                    transition: 'all 0.2s'
+                  }}
+                  title="Open in New Tab"
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
+                    <polyline points="15 3 21 3 21 9"></polyline>
+                    <line x1="10" y1="14" x2="21" y2="3"></line>
+                  </svg>
+                  Open in New Tab
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (createProjectModal.quotation && createProjectModal.quotation._id) {
+                      window.location.href = `/quotations/${createProjectModal.quotation._id}/create-project`
+                    }
+                  }}
+                  className="link-btn"
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    fontSize: '14px',
+                    padding: '6px 12px',
+                    border: '1px solid var(--border)',
+                    borderRadius: '6px',
+                    background: 'transparent',
+                    color: 'var(--text)',
+                    cursor: 'pointer',
+                    transition: 'all 0.2s'
+                  }}
+                  title="Open Full Form"
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                    <line x1="9" y1="3" x2="9" y2="21"></line>
+                  </svg>
+                  Open Full Form
+                </button>
+                <button onClick={() => setCreateProjectModal({ open: false, quotation: null, form: { name: '', locationDetails: '', workingHours: '', manpowerCount: '', assignedProjectEngineerIds: [] }, engineers: [], ack: false, selectedFiles: [], previewFiles: [] })} className="close-btn">×</button>
+              </div>
+            </div>
+            <div className="lead-form">
+              {currentUser?.roles?.includes('estimation_engineer') && (
+                <div className="edit-item" style={{ background: '#FEF3C7', border: '1px solid #F59E0B', padding: 14, marginBottom: 14, color: '#7C2D12' }}>
+                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+                    <span aria-hidden="true" style={{ fontSize: 20, lineHeight: '20px', marginTop: 2 }}>⚠️</span>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontWeight: 700, marginBottom: 4 }}>Warning</div>
+                      <div style={{ lineHeight: 1.4 }}>This action cannot be undone. Only managers can delete projects once created.</div>
+                    </div>
+                  </div>
+                </div>
+              )}
+              <div className="form-group">
+                <label>Project Name</label>
+                <input type="text" value={createProjectModal.form?.name || ''} onChange={e => setCreateProjectModal({ ...createProjectModal, form: { ...createProjectModal.form, name: e.target.value } })} />
+              </div>
+              <div className="form-group">
+                <label>Location Details</label>
+                <input type="text" value={createProjectModal.form.locationDetails} onChange={e => setCreateProjectModal({ ...createProjectModal, form: { ...createProjectModal.form, locationDetails: e.target.value } })} />
+              </div>
+              <div className="form-row">
+                <div className="form-group" style={{ flex: 1 }}>
+                  <label>Working Hours</label>
+                  <input type="text" value={createProjectModal.form.workingHours} onChange={e => setCreateProjectModal({ ...createProjectModal, form: { ...createProjectModal.form, workingHours: e.target.value } })} />
+                </div>
+                <div className="form-group" style={{ flex: 1 }}>
+                  <label>Manpower Count</label>
+                  <input 
+                    type="number" 
+                    value={createProjectModal.form.manpowerCount === null || createProjectModal.form.manpowerCount === undefined || createProjectModal.form.manpowerCount === '' ? '' : createProjectModal.form.manpowerCount} 
+                    onChange={e => {
+                      const inputVal = e.target.value
+                      // Allow empty string, otherwise convert to number
+                      const val = inputVal === '' ? '' : (isNaN(Number(inputVal)) ? createProjectModal.form.manpowerCount : Number(inputVal))
+                      setCreateProjectModal({ ...createProjectModal, form: { ...createProjectModal.form, manpowerCount: val } })
+                    }} 
+                  />
+                </div>
+              </div>
+              <div className="form-group">
+                <label>Assign Project Engineers</label>
+                <div 
+                  className="engineers-scroll-container"
+                  style={{ 
+                    border: '1px solid var(--border)', 
+                    borderRadius: '8px', 
+                    padding: '8px', 
+                    maxHeight: '180px', 
+                    minHeight: '80px',
+                    overflowY: 'auto',
+                    overflowX: 'hidden',
+                    background: 'var(--bg)',
+                    position: 'relative',
+                    scrollBehavior: 'smooth',
+                    WebkitOverflowScrolling: 'touch'
+                  }}
+                >
+                  {Array.isArray(createProjectModal.engineers) && createProjectModal.engineers.length > 0 ? (
+                    createProjectModal.engineers.map((u, index) => {
+                      const isSelected = Array.isArray(createProjectModal.form.assignedProjectEngineerIds) && 
+                        createProjectModal.form.assignedProjectEngineerIds.includes(u._id);
+                      const isLast = index === createProjectModal.engineers.length - 1;
+                      return (
+                        <div key={u._id} style={{ 
+                          display: 'flex', 
+                          alignItems: 'center', 
+                          gap: '12px', 
+                          padding: '10px 8px',
+                          borderBottom: isLast ? 'none' : '1px solid var(--border)',
+                          minHeight: '40px'
+                        }}>
+                          <input
+                            type="checkbox"
+                            id={`engineer-${u._id}`}
+                            checked={isSelected}
+                            onChange={(e) => {
+                              const currentIds = Array.isArray(createProjectModal.form.assignedProjectEngineerIds) 
+                                ? createProjectModal.form.assignedProjectEngineerIds 
+                                : [];
+                              const newIds = e.target.checked
+                                ? [...currentIds, u._id]
+                                : currentIds.filter(id => id !== u._id);
+                              setCreateProjectModal({ 
+                                ...createProjectModal, 
+                                form: { 
+                                  ...createProjectModal.form, 
+                                  assignedProjectEngineerIds: newIds 
+                                } 
+                              });
+                            }}
+                            style={{ 
+                              cursor: 'pointer',
+                              width: '18px',
+                              height: '18px',
+                              flexShrink: 0,
+                              margin: 0
+                            }}
+                          />
+                          <label 
+                            htmlFor={`engineer-${u._id}`} 
+                            style={{ 
+                              flex: 1, 
+                              cursor: 'pointer', 
+                              color: 'var(--text)',
+                              margin: 0,
+                              fontSize: '14px',
+                              lineHeight: '1.5',
+                              display: 'flex',
+                              alignItems: 'center',
+                              minHeight: '18px'
+                            }}
+                          >
+                            {u.name} ({u.email})
+                          </label>
+                          {isSelected && (
+                            <button 
+                              type="button" 
+                              className="link-btn" 
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                if (u) setProfileUser(u);
+                              }}
+                              style={{ 
+                                fontSize: '12px', 
+                                padding: '6px 12px',
+                                flexShrink: 0,
+                                whiteSpace: 'nowrap'
+                              }}
+                            >
+                              View Profile
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })
+                  ) : (
+                    <p style={{ 
+                      color: 'var(--text-secondary)', 
+                      margin: 0, 
+                      padding: '12px 8px',
+                      fontSize: '14px'
+                    }}>
+                      No project engineers available
+                    </p>
+                  )}
+                </div>
+                {Array.isArray(createProjectModal.form.assignedProjectEngineerIds) && 
+                 createProjectModal.form.assignedProjectEngineerIds.length > 0 && (
+                  <p style={{ 
+                    marginTop: '8px', 
+                    fontSize: '13px', 
+                    color: 'var(--text-secondary)',
+                    marginBottom: 0
+                  }}>
+                    {createProjectModal.form.assignedProjectEngineerIds.length} engineer(s) selected
+                  </p>
+                )}
+              </div>
+              <div className="form-group">
+                <label>Attachments (Documents, Images & Videos)</label>
+                <input
+                  type="file"
+                  multiple
+                  accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,video/*"
+                  onChange={handleProjectFileChange}
+                  className="file-input"
+                />
+                <small style={{ display: 'block', marginTop: '5px', color: 'var(--text-secondary)', fontSize: '12px' }}>
+                  Accepted: Images (JPEG, PNG, GIF, WebP), Documents (PDF, DOC, DOCX, XLS, XLSX), Videos (MP4, MOV, AVI, WMV, WebM, etc.). Max 10MB per file.
+                </small>
+                
+                {/* Display selected files */}
+                {createProjectModal.previewFiles && createProjectModal.previewFiles.length > 0 && (
+                  <div style={{ marginTop: '15px', display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
+                    {createProjectModal.previewFiles.map((preview, index) => (
+                      <div key={index} style={{ 
+                        position: 'relative', 
+                        border: '1px solid var(--border)', 
+                        borderRadius: '8px', 
+                        padding: '8px',
+                        background: 'var(--bg)',
+                        maxWidth: '200px'
+                      }}>
+                        {preview.type === 'image' && preview.preview && (
+                          <img src={preview.preview} alt={preview.file.name} style={{ width: '100%', height: 'auto', borderRadius: '4px', marginBottom: '8px' }} />
+                        )}
+                        {preview.type === 'video' && preview.preview && (
+                          <video src={preview.preview} style={{ width: '100%', height: 'auto', borderRadius: '4px', marginBottom: '8px' }} controls />
+                        )}
+                        <div style={{ fontSize: '12px', color: 'var(--text)', wordBreak: 'break-word' }}>
+                          {preview.file.name}
+                        </div>
+                        <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: '4px' }}>
+                          {formatFileSize(preview.file.size)}
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => removeProjectFile(index)}
+                          style={{
+                            position: 'absolute',
+                            top: '4px',
+                            right: '4px',
+                            background: 'rgba(0, 0, 0, 0.6)',
+                            color: 'white',
+                            border: 'none',
+                            borderRadius: '50%',
+                            width: '24px',
+                            height: '24px',
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            fontSize: '16px',
+                            lineHeight: '1'
+                          }}
+                        >
+                          ×
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+              {currentUser?.roles?.includes('estimation_engineer') && (
+                <div className="form-group">
+                  <div style={{ 
+                    display: 'flex', 
+                    gap: '12px', 
+                    alignItems: 'flex-start', 
+                    padding: '14px 16px', 
+                    border: '1px solid var(--border)', 
+                    borderRadius: '8px', 
+                    background: 'var(--bg)'
+                  }}>
+                    <input 
+                      id="ack-project-create" 
+                      type="checkbox" 
+                      checked={createProjectModal.ack} 
+                      onChange={e => setCreateProjectModal({ ...createProjectModal, ack: e.target.checked })} 
+                      style={{ 
+                        marginTop: '2px',
+                        width: '18px',
+                        height: '18px',
+                        cursor: 'pointer',
+                        flexShrink: 0
+                      }} 
+                    />
+                    <label 
+                      htmlFor="ack-project-create" 
+                      style={{ 
+                        color: 'var(--text)', 
+                        cursor: 'pointer',
+                        margin: 0,
+                        fontSize: '14px',
+                        lineHeight: '1.5',
+                        flex: 1
+                      }}
+                    >
+                      I understand this action cannot be undone and requires management involvement to reverse.
+                    </label>
+                  </div>
+                </div>
+              )}
+              <div className="form-actions">
+                <button type="button" className="cancel-btn" onClick={() => setCreateProjectModal({ open: false, quotation: null, form: { name: '', locationDetails: '', workingHours: '', manpowerCount: '', assignedProjectEngineerIds: [] }, engineers: [], ack: false, selectedFiles: [], previewFiles: [] })}>Cancel</button>
+                <button 
+                  type="button" 
+                  className="save-btn" 
+                  disabled={(currentUser?.roles?.includes('estimation_engineer') && !createProjectModal.ack) || isSubmitting} 
+                  onClick={async () => {
+                    if (isSubmitting) return
+                    setLoadingAction('create-project')
+                    setIsSubmitting(true)
+                    try {
+                      const formDataToSend = new FormData()
+                      
+                      // Append form fields
+                      formDataToSend.append('name', createProjectModal.form.name || '')
+                      formDataToSend.append('locationDetails', createProjectModal.form.locationDetails || '')
+                      formDataToSend.append('workingHours', createProjectModal.form.workingHours || '')
+                      // Only append manpowerCount if it has a value (not empty string)
+                      if (createProjectModal.form.manpowerCount !== '' && createProjectModal.form.manpowerCount !== null && createProjectModal.form.manpowerCount !== undefined) {
+                        formDataToSend.append('manpowerCount', createProjectModal.form.manpowerCount)
+                      }
+                      
+                      // Handle array field - append each ID separately
+                      const ids = Array.isArray(createProjectModal.form.assignedProjectEngineerIds) 
+                        ? createProjectModal.form.assignedProjectEngineerIds 
+                        : []
+                      ids.forEach(id => {
+                        formDataToSend.append('assignedProjectEngineerIds', id)
+                      })
+                      
+                      // Append files
+                      if (createProjectModal.selectedFiles && createProjectModal.selectedFiles.length > 0) {
+                        createProjectModal.selectedFiles.forEach(file => {
+                          formDataToSend.append('attachments', file)
+                        })
+                      }
+                      
+                      await api.post(`/api/projects/from-quotation/${createProjectModal.quotation._id}`, formDataToSend)
+                      setCreateProjectModal({ open: false, quotation: null, form: { name: '', locationDetails: '', workingHours: '', manpowerCount: '', assignedProjectEngineerIds: [] }, engineers: [], ack: false, selectedFiles: [], previewFiles: [] })
+                      setNotify({ open: true, title: 'Project Created', message: 'Project created from approved quotation. Redirecting to Projects...' })
+                      setHasProjectFor({ ...hasProjectFor, [createProjectModal.quotation._id]: true })
+                      await fetchQuotations()
+                      setTimeout(() => {
+                        window.location.href = '/projects'
+                      }, 1500)
+                    } catch (e) {
+                      setNotify({ open: true, title: 'Create Failed', message: e.response?.data?.message || 'We could not create the project. Please try again.' })
+                    } finally {
+                      setIsSubmitting(false)
+                      setLoadingAction(null)
+                    }
+                  }}
+                >
+                  {isSubmitting && loadingAction === 'create-project' ? 'Creating...' : 'Create Project'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+        </>
       )}
 
       {profileUser && (

@@ -7,6 +7,7 @@ const User = require('../models/User');
 const jwt = require('jsonwebtoken');
 const Revision = require('../models/Revision');
 const Lead = require('../models/Lead');
+const Quotation = require('../models/Quotation');
 const AuditLog = require('../models/AuditLog');
 const router = express.Router();
 
@@ -420,6 +421,134 @@ router.post('/from-revision/:revisionId', auth, (req, res, next) => {
 router.get('/by-revision/:revisionId', auth, async (req, res) => {
   try {
     const project = await Project.findOne({ sourceRevision: req.params.revisionId }).select('_id name createdAt');
+    if (!project) return res.status(404).json({ message: 'Not found' });
+    return res.json(project);
+  } catch (error) {
+    return res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Create a project directly from an approved Quotation (without revision)
+router.post('/from-quotation/:quotationId', auth, (req, res, next) => {
+  upload.array('attachments', 10)(req, res, (err) => {
+    if (err) {
+      // Handle multer errors
+      if (err.code === 'LIMIT_FILE_SIZE') {
+        return res.status(400).json({ message: 'File size exceeds 10MB limit' });
+      }
+      if (err.code === 'LIMIT_FILE_COUNT') {
+        return res.status(400).json({ message: 'Too many files. Maximum 10 files allowed' });
+      }
+      if (err.message && err.message.includes('Invalid file type')) {
+        return res.status(400).json({ message: err.message });
+      }
+      return res.status(400).json({ message: err.message || 'File upload error' });
+    }
+    next();
+  });
+}, async (req, res) => {
+  try {
+    const { quotationId } = req.params;
+    const quotation = await Quotation.findById(quotationId)
+      .populate('lead');
+    if (!quotation) return res.status(404).json({ message: 'Quotation not found' });
+
+    if (quotation?.managementApproval?.status !== 'approved') {
+      return res.status(400).json({ message: 'Only approved quotations can be converted to a project' });
+    }
+
+    // Check if a project already exists for this quotation (without revision)
+    const existingProject = await Project.findOne({ 
+      sourceQuotation: quotation._id,
+      sourceRevision: null
+    });
+    if (existingProject) {
+      return res.status(400).json({ message: 'A project already exists for this quotation' });
+    }
+
+    // Check if any revision exists for this quotation (if so, project should be created from revision instead)
+    const hasRevision = await Revision.countDocuments({ parentQuotation: quotation._id });
+    if (hasRevision > 0) {
+      return res.status(400).json({ message: 'Cannot create project directly from quotation. Revisions exist for this quotation. Please create project from the latest approved revision instead.' });
+    }
+
+    const leadId = quotation.lead ? (quotation.lead._id || quotation.lead) : null;
+    const lead = leadId ? await Lead.findById(leadId) : null;
+
+    const { name, locationDetails, workingHours, manpowerCount } = req.body || {};
+    // Handle assignedProjectEngineerIds - FormData may send as array or repeated keys
+    let engineerIds = [];
+    if (req.body.assignedProjectEngineerIds) {
+      // FormData with repeated keys creates an array, or it might be a single value
+      const ids = Array.isArray(req.body.assignedProjectEngineerIds) 
+        ? req.body.assignedProjectEngineerIds 
+        : [req.body.assignedProjectEngineerIds];
+      engineerIds = ids.filter(id => id && id !== '');
+    }
+    
+    // Process uploaded files
+    const attachments = [];
+    if (req.files && req.files.length > 0) {
+      req.files.forEach(file => {
+        attachments.push({
+          filename: file.filename,
+          originalName: file.originalname,
+          path: `/uploads/projects/${file.filename}`,
+          mimetype: file.mimetype,
+          size: file.size
+        });
+      });
+    }
+    
+    // Parse manpowerCount from FormData (which sends strings)
+    let parsedManpowerCount = lead?.manpowerCount; // Default to lead's value
+    if (manpowerCount !== undefined && manpowerCount !== null && manpowerCount !== '') {
+      const num = Number(manpowerCount);
+      if (!isNaN(num)) {
+        parsedManpowerCount = num;
+      }
+    }
+    
+    const project = new Project({
+      name: name || quotation.projectTitle || lead?.projectTitle || 'Project',
+      budget: lead?.budget,
+      locationDetails: (locationDetails ?? lead?.locationDetails ?? ''),
+      workingHours: (workingHours ?? lead?.workingHours ?? ''),
+      manpowerCount: parsedManpowerCount,
+      leadId: leadId,
+      createdBy: req.user.userId,
+      assignedProjectEngineer: engineerIds.length > 0 ? engineerIds : undefined,
+      sourceRevision: null, // No revision - created directly from quotation
+      sourceQuotation: quotation._id,
+      attachments: attachments.length > 0 ? attachments : undefined
+    });
+
+    await project.save();
+
+    const populated = await Project.findById(project._id)
+      .populate('assignedSiteEngineer', 'name email')
+      .populate('assignedProjectEngineer', 'name email')
+      .populate('createdBy', 'name email')
+      .populate('sourceRevision')
+      .populate('sourceQuotation')
+      .populate('leadId')
+      .populate('revisions.createdBy', 'name')
+      .populate('revisions.approvedBy', 'name');
+
+    return res.status(201).json(populated);
+  } catch (error) {
+    console.error('Error creating project from quotation:', error);
+    return res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Check if a project exists for a given quotation (without revision)
+router.get('/by-quotation/:quotationId', auth, async (req, res) => {
+  try {
+    const project = await Project.findOne({ 
+      sourceQuotation: req.params.quotationId,
+      sourceRevision: null
+    }).select('_id name createdAt');
     if (!project) return res.status(404).json({ message: 'Not found' });
     return res.json(project);
   } catch (error) {

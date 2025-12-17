@@ -2489,6 +2489,9 @@ function ProjectManagement() {
               }</p>
               {project.sourceQuotation && (<p><strong>Quotation:</strong> {project.sourceQuotation.offerReference || project.sourceQuotation._id}</p>)}
               {project.sourceRevision && (<p><strong>Source Revision:</strong> #{project.sourceRevision.revisionNumber}</p>)}
+              {project.sourceQuotation && !project.sourceRevision && (
+                <p><strong>Revisions:</strong> <span className="status-badge" style={{ backgroundColor: '#6b7280', color: 'white', padding: '4px 8px', borderRadius: '4px', fontSize: '12px' }}>No Revisions</span></p>
+              )}
             </div>
 
             {project.revisions?.length > 0 && (

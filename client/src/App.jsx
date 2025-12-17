@@ -321,6 +321,11 @@ function App() {
             <ProjectFormPage />
           </ProtectedRoute>
         } />
+        <Route path="/quotations/:quotationId/create-project" element={
+          <ProtectedRoute>
+            <ProjectFormPage />
+          </ProtectedRoute>
+        } />
         <Route path="/projects/edit/:projectId" element={
           <ProtectedRoute>
             <ProjectFormPage />

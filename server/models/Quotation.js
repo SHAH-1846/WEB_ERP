@@ -20,37 +20,15 @@ const QuotationSchema = new mongoose.Schema({
   projectTitle: { type: String },
   introductionText: { type: String },
 
-  scopeOfWork: [{
-    description: String,
-    quantity: Number,
-    unit: String,
-    locationRemarks: String
-  }],
+  // Rich text editor outputs (store full HTML strings)
+  scopeOfWork: { type: String }, // full HTML string
 
-  priceSchedule: {
-    items: [{
-      description: String,
-      quantity: Number,
-      unit: String,
-      unitRate: Number,
-      totalAmount: Number
-    }],
-    subTotal: Number,
-    grandTotal: Number,
-    currency: { type: String, default: 'AED' },
-    taxDetails: {
-      vatRate: Number,
-      vatAmount: Number
-    }
-  },
+  priceSchedule: { type: String }, // full HTML string for price schedule content
 
   ourViewpoints: { type: String },
-  exclusions: [{ type: String }],
+  exclusions: { type: String }, // full HTML string (list/body)
 
-  paymentTerms: [{
-    milestoneDescription: String,
-    amountPercent: Number
-  }],
+  paymentTerms: { type: String }, // full HTML string
 
   deliveryCompletionWarrantyValidity: {
     deliveryTimeline: String,

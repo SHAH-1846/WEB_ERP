@@ -54,6 +54,40 @@ router.get('/:id', auth, async (req, res) => {
   }
 });
 
+// Helper: ensure rich text fields are stored as single HTML strings
+const toRichString = (val, fieldName) => {
+  if (typeof val === 'string') return val
+
+  // Price schedule: prefer concatenated item descriptions
+  if (fieldName === 'priceSchedule') {
+    if (val && typeof val === 'object' && Array.isArray(val.items)) {
+      const joined = val.items
+        .map(it => (it && typeof it.description === 'string' ? it.description : ''))
+        .filter(Boolean)
+        .join('<br>')
+      if (joined) return joined
+    }
+  }
+
+  if (Array.isArray(val)) {
+    return val.map(item => {
+      if (item && typeof item === 'object') {
+        if (typeof item.description === 'string') return item.description
+        if (typeof item.milestoneDescription === 'string') return item.milestoneDescription
+        return JSON.stringify(item)
+      }
+      return item != null ? String(item) : ''
+    }).join('\n')
+  }
+  if (val && typeof val === 'object') {
+    if (typeof val.description === 'string') return val.description
+    if (typeof val.milestoneDescription === 'string') return val.milestoneDescription
+    // fallback to JSON
+    return JSON.stringify(val)
+  }
+  return val != null ? String(val) : ''
+}
+
 // Create quotation (estimation engineers only)
 router.post('/', auth, async (req, res) => {
   try {
@@ -67,10 +101,16 @@ router.post('/', auth, async (req, res) => {
     const lead = await Lead.findById(leadId);
     if (!lead) return res.status(404).json({ message: 'Lead not found' });
 
-    const quotation = await Quotation.create({
+    const payload = {
       ...req.body,
+      scopeOfWork: toRichString(req.body.scopeOfWork, 'scopeOfWork'),
+      priceSchedule: toRichString(req.body.priceSchedule, 'priceSchedule'),
+      exclusions: toRichString(req.body.exclusions, 'exclusions'),
+      paymentTerms: toRichString(req.body.paymentTerms, 'paymentTerms'),
       createdBy: req.user.userId
-    });
+    }
+
+    const quotation = await Quotation.create(payload);
     
     // Create audit log for quotation creation
     try {
@@ -150,7 +190,7 @@ router.put('/:id', auth, async (req, res) => {
     }
     if (typeof req.body.scopeOfWork !== 'undefined') {
       const from = q.scopeOfWork;
-      const to = req.body.scopeOfWork;
+      const to = toRichString(req.body.scopeOfWork, 'scopeOfWork');
       if (JSON.stringify(from) !== JSON.stringify(to)) {
         changes.push({ field: 'scopeOfWork', from, to });
         q.scopeOfWork = to;
@@ -158,7 +198,7 @@ router.put('/:id', auth, async (req, res) => {
     }
     if (typeof req.body.priceSchedule !== 'undefined') {
       const from = q.priceSchedule;
-      const to = req.body.priceSchedule;
+      const to = toRichString(req.body.priceSchedule, 'priceSchedule');
       if (JSON.stringify(from) !== JSON.stringify(to)) {
         changes.push({ field: 'priceSchedule', from, to });
         q.priceSchedule = to;
@@ -166,7 +206,7 @@ router.put('/:id', auth, async (req, res) => {
     }
     if (typeof req.body.exclusions !== 'undefined') {
       const from = q.exclusions;
-      const to = req.body.exclusions;
+      const to = toRichString(req.body.exclusions, 'exclusions');
       if (JSON.stringify(from) !== JSON.stringify(to)) {
         changes.push({ field: 'exclusions', from, to });
         q.exclusions = to;
@@ -174,7 +214,7 @@ router.put('/:id', auth, async (req, res) => {
     }
     if (typeof req.body.paymentTerms !== 'undefined') {
       const from = q.paymentTerms;
-      const to = req.body.paymentTerms;
+      const to = toRichString(req.body.paymentTerms, 'paymentTerms');
       if (JSON.stringify(from) !== JSON.stringify(to)) {
         changes.push({ field: 'paymentTerms', from, to });
         q.paymentTerms = to;

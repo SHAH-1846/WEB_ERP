@@ -1670,6 +1670,9 @@ function ProjectDetail() {
           {project.sourceRevision?._id && (
             <button className="link-btn" onClick={() => { try { localStorage.setItem('revisionId', project.sourceRevision._id) } catch {}; window.location.href = '/revision-detail' }}>View Source Revision</button>
           )}
+          {project.sourceQuotation?._id && !project.sourceRevision?._id && (
+            <span className="status-badge" style={{ backgroundColor: '#6b7280', color: 'white', padding: '6px 12px', borderRadius: '4px' }}>No Revisions</span>
+          )}
           {(currentUser?.roles?.includes('manager') || currentUser?.roles?.includes('admin')) && (
             <button className="reject-btn" onClick={() => setDeleteModal({ open: true })}>Delete Project</button>
           )}

@@ -8,13 +8,15 @@ import { ButtonLoader } from './LoadingComponents'
 function ProjectFormPage() {
   const navigate = useNavigate()
   const location = useLocation()
-  const { revisionId, projectId } = useParams()
+  const { revisionId, projectId, quotationId } = useParams()
   const [currentUser, setCurrentUser] = useState(null)
   const [revision, setRevision] = useState(null)
+  const [quotation, setQuotation] = useState(null)
   const [editingProject, setEditingProject] = useState(null)
   const [projectEngineers, setProjectEngineers] = useState([])
   const [notify, setNotify] = useState({ open: false, title: '', message: '' })
   const [isSaving, setIsSaving] = useState(false)
+  const [isLoading, setIsLoading] = useState(true)
   const [selectedFiles, setSelectedFiles] = useState([])
   const [previewFiles, setPreviewFiles] = useState([])
   const [attachmentsToRemove, setAttachmentsToRemove] = useState([])
@@ -28,16 +30,6 @@ function ProjectFormPage() {
     status: 'active',
     assignedProjectEngineerIds: []
   })
-
-  useEffect(() => {
-    setCurrentUser(JSON.parse(localStorage.getItem('user')) || null)
-    void fetchProjectEngineers()
-    if (projectId) {
-      void fetchProject()
-    } else if (revisionId) {
-      void fetchRevision()
-    }
-  }, [projectId, revisionId])
 
   const fetchProjectEngineers = async () => {
     try {
@@ -63,6 +55,8 @@ function ProjectFormPage() {
       })
     } catch (error) {
       setNotify({ open: true, title: 'Error', message: 'Failed to load project data.' })
+    } finally {
+      setIsLoading(false)
     }
   }
 
@@ -81,8 +75,98 @@ function ProjectFormPage() {
       })
     } catch (error) {
       setNotify({ open: true, title: 'Error', message: 'Failed to load revision data.' })
+    } finally {
+      setIsLoading(false)
     }
   }
+
+  const fetchQuotation = async () => {
+    try {
+      if (!quotationId) {
+        console.error('quotationId is missing')
+        setNotify({ open: true, title: 'Error', message: 'Quotation ID is missing.' })
+        setForm({
+          name: 'Project',
+          locationDetails: '',
+          workingHours: '',
+          manpowerCount: '',
+          status: 'active',
+          assignedProjectEngineerIds: []
+        })
+        setIsLoading(false)
+        return
+      }
+      
+      const res = await api.get(`/api/quotations/${quotationId}`)
+      const quot = res.data
+      setQuotation(quot)
+      // Get lead data for autofill
+      let leadData = null
+      if (quot.lead) {
+        try {
+          const leadId = typeof quot.lead === 'object' ? quot.lead._id : quot.lead
+          const leadRes = await api.get(`/api/leads/${leadId}`)
+          leadData = leadRes.data
+        } catch (err) {
+          console.warn('Failed to fetch lead data:', err)
+        }
+      }
+      setForm({
+        name: quot.projectTitle || leadData?.projectTitle || leadData?.customerName || 'Project',
+        locationDetails: leadData?.locationDetails || '',
+        workingHours: leadData?.workingHours || '',
+        manpowerCount: leadData?.manpowerCount ?? '',
+        status: 'active',
+        assignedProjectEngineerIds: []
+      })
+    } catch (error) {
+      console.error('Error fetching quotation:', error)
+      setNotify({ open: true, title: 'Error', message: error.response?.data?.message || 'Failed to load quotation data.' })
+      // Set form with default values even on error
+      setForm({
+        name: 'Project',
+        locationDetails: '',
+        workingHours: '',
+        manpowerCount: '',
+        status: 'active',
+        assignedProjectEngineerIds: []
+      })
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    try {
+      setCurrentUser(JSON.parse(localStorage.getItem('user')) || null)
+      setIsLoading(true)
+      const loadData = async () => {
+        try {
+          await fetchProjectEngineers()
+          if (projectId) {
+            await fetchProject()
+            // fetchProject sets isLoading to false in finally block
+          } else if (revisionId) {
+            await fetchRevision()
+            // fetchRevision sets isLoading to false in finally block
+          } else if (quotationId) {
+            await fetchQuotation()
+            // fetchQuotation sets isLoading to false in finally block
+          } else {
+            setIsLoading(false)
+          }
+        } catch (error) {
+          console.error('Error in loadData:', error)
+          setNotify({ open: true, title: 'Error', message: 'Failed to load data. Please try again.' })
+          setIsLoading(false)
+        }
+      }
+      void loadData()
+    } catch (error) {
+      console.error('Error in useEffect:', error)
+      setIsLoading(false)
+    }
+  }, [projectId, revisionId, quotationId])
 
   const formatFileSize = (bytes) => {
     if (bytes === 0) return '0 Bytes'
@@ -165,7 +249,7 @@ function ProjectFormPage() {
       }
 
       // Check acknowledgment for estimation engineers creating projects
-      if (revisionId && currentUser?.roles?.includes('estimation_engineer') && !ack) {
+      if ((revisionId || quotationId) && currentUser?.roles?.includes('estimation_engineer') && !ack) {
         setNotify({ open: true, title: 'Acknowledgment Required', message: 'Please acknowledge that this action cannot be undone.' })
         setIsSaving(false)
         return
@@ -205,6 +289,9 @@ function ProjectFormPage() {
       if (editingProject) {
         await api.patch(`/api/projects/${projectId}`, formData)
         setNotify({ open: true, title: 'Success', message: 'Project updated successfully.' })
+      } else if (quotationId) {
+        await api.post(`/api/projects/from-quotation/${quotationId}`, formData)
+        setNotify({ open: true, title: 'Success', message: 'Project created successfully.' })
       } else {
         await api.post(`/api/projects/from-revision/${revisionId}`, formData)
         setNotify({ open: true, title: 'Success', message: 'Project created successfully.' })
@@ -214,6 +301,8 @@ function ProjectFormPage() {
       setTimeout(() => {
         if (editingProject) {
           navigate('/projects')
+        } else if (quotationId) {
+          navigate('/quotations')
         } else {
           navigate('/revisions')
         }
@@ -228,9 +317,41 @@ function ProjectFormPage() {
   const handleCancel = () => {
     if (editingProject) {
       navigate('/projects')
+    } else if (quotationId) {
+      navigate('/quotations')
     } else {
       navigate('/revisions')
     }
+  }
+
+  // Debug: Log the params
+  useEffect(() => {
+    console.log('ProjectFormPage mounted with params:', { projectId, revisionId, quotationId })
+    console.log('ProjectFormPage isLoading:', isLoading)
+    console.log('ProjectFormPage location:', location.pathname)
+  }, [projectId, revisionId, quotationId, isLoading, location.pathname])
+
+  // Always render something - even if there's an error
+  if (isLoading) {
+    return (
+      <div style={{ 
+        minHeight: '100vh', 
+        background: 'var(--bg)', 
+        padding: '24px',
+        maxWidth: '1200px',
+        margin: '0 auto',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center'
+      }}>
+        <div style={{ textAlign: 'center' }}>
+          <div style={{ fontSize: '18px', color: 'var(--text)', marginBottom: '12px' }}>Loading project form...</div>
+          <div style={{ fontSize: '14px', color: 'var(--text-secondary)' }}>
+            {quotationId ? `Quotation ID: ${quotationId}` : revisionId ? `Revision ID: ${revisionId}` : projectId ? `Project ID: ${projectId}` : 'No ID provided'}
+          </div>
+        </div>
+      </div>
+    )
   }
 
   return (
@@ -261,7 +382,7 @@ function ProjectFormPage() {
             color: 'var(--text)',
             margin: 0
           }}>
-            {editingProject ? 'Edit Project' : 'Create Project'}
+            {editingProject ? 'Edit Project' : quotationId ? 'Create Project from Quotation' : 'Create Project'}
           </h1>
           <button
             type="button"
@@ -299,7 +420,7 @@ function ProjectFormPage() {
           </div>
         )}
 
-        {currentUser?.roles?.includes('estimation_engineer') && revisionId && (
+        {currentUser?.roles?.includes('estimation_engineer') && (revisionId || quotationId) && (
           <div className="edit-item" style={{ background: '#FEF3C7', border: '1px solid #F59E0B', padding: 14, marginBottom: 14, color: '#7C2D12' }}>
             <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
               <span aria-hidden="true" style={{ fontSize: 20, lineHeight: '20px', marginTop: 2 }}>⚠️</span>
@@ -631,7 +752,7 @@ function ProjectFormPage() {
             )}
           </div>
 
-          {currentUser?.roles?.includes('estimation_engineer') && revisionId && (
+          {currentUser?.roles?.includes('estimation_engineer') && (revisionId || quotationId) && (
             <div className="form-group">
               <div style={{ 
                 display: 'flex', 
