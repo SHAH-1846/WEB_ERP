@@ -1912,165 +1912,18 @@ function RevisionManagement() {
           View Project
         </button>
       )}
-      <button className="save-btn" onClick={() => generatePDFPreview(r)}>Print Preview</button>
-      {(currentUser?.roles?.includes('estimation_engineer') || currentUser?.roles?.includes('manager') || currentUser?.roles?.includes('admin') || r.createdBy?._id === currentUser?.id) && (
-        <button className="assign-btn" onClick={() => {
-          if (r.managementApproval?.status === 'approved') {
-            setApprovedEditBlockModal({ open: true })
-            return
-          }
-          setEditModal({ 
-            open: true, 
-            revision: r, 
-            mode: 'edit', 
-            form: {
-          companyInfo: r.companyInfo || {},
-          submittedTo: r.submittedTo || '',
-          attention: r.attention || '',
-          offerReference: r.offerReference || '',
-          enquiryNumber: r.enquiryNumber || '',
-          offerDate: r.offerDate ? String(r.offerDate).slice(0,10) : '',
-          enquiryDate: r.enquiryDate ? String(r.enquiryDate).slice(0,10) : '',
-          projectTitle: r.projectTitle || r.lead?.projectTitle || '',
-          introductionText: r.introductionText || '',
-              scopeOfWork: typeof r.scopeOfWork === 'string'
-                ? r.scopeOfWork
-                : (r.scopeOfWork?.length
-                    ? r.scopeOfWork.map(item => item.description || '').join('<br>')
-                    : ''),
-              priceSchedule: typeof r.priceSchedule === 'string'
-                ? r.priceSchedule
-                : (r.priceSchedule?.items?.length
-                    ? r.priceSchedule.items.map(item => 
-                        `${item.description || ''}${item.quantity ? ` - Qty: ${item.quantity}` : ''}${item.unit ? ` ${item.unit}` : ''}${item.unitRate ? ` @ ${item.unitRate}` : ''}${item.totalAmount ? ` = ${item.totalAmount}` : ''}`
-                      ).join('<br>')
-                    : ''),
-          ourViewpoints: r.ourViewpoints || '',
-              exclusions: typeof r.exclusions === 'string'
-                ? r.exclusions
-                : (r.exclusions?.length
-                    ? r.exclusions.join('<br>')
-                    : ''),
-              paymentTerms: typeof r.paymentTerms === 'string'
-                ? r.paymentTerms
-                : (r.paymentTerms?.length
-                    ? r.paymentTerms.map(term => 
-                        `${term.milestoneDescription || ''}${term.amountPercent ? ` - ${term.amountPercent}%` : ''}`
-                      ).join('<br>')
-                    : ''),
-          deliveryCompletionWarrantyValidity: r.deliveryCompletionWarrantyValidity || { deliveryTimeline: '', warrantyPeriod: '', offerValidity: 30, authorizedSignatory: currentUser?.name || '' }
-            }
-          })
-        }}>Edit</button>
-      )}
       <button className="assign-btn" onClick={() => {
         localStorage.setItem('revisionId', r._id)
         window.location.href = '/revision-detail'
       }}>View Details</button>
-      {r.managementApproval?.status === 'pending' ? (
+      {r.managementApproval?.status === 'pending' && (
         <span className="status-badge blue">Approval Pending</span>
-      ) : (
-        <>
-          {(r.managementApproval?.status !== 'approved' && (currentUser?.roles?.includes('estimation_engineer') || r.createdBy?._id === currentUser?.id)) && (
-            <button className="save-btn" onClick={() => setSendApprovalConfirmModal({ open: true, revision: r })}>Send for Approval</button>
-          )}
-          {r.managementApproval?.status === 'approved' && (
-            <>
-              <button className="save-btn" onClick={async () => {
-                try {
-                  await api.get(`/api/projects/by-revision/${r._id}`)
-                  setNotify({ open: true, title: 'Not Allowed', message: 'A project already exists for this revision.' })
-                  return
-                } catch {}
-                const hasChild = revisions.some(x => (x.parentRevision?._id || x.parentRevision) === r._id)
-                if (hasChild) {
-                  setNotify({ open: true, title: 'Not Allowed', message: 'A child revision already exists for this revision.' })
-                  return
-                }
-                setEditModal({ open: true, revision: r, mode: 'create', form: {
-                  companyInfo: r.companyInfo || {},
-                  submittedTo: r.submittedTo || '',
-                  attention: r.attention || '',
-                  offerReference: r.offerReference || '',
-                  enquiryNumber: r.enquiryNumber || '',
-                  offerDate: r.offerDate ? String(r.offerDate).slice(0,10) : '',
-                  enquiryDate: r.enquiryDate ? String(r.enquiryDate).slice(0,10) : '',
-                  projectTitle: r.projectTitle || r.lead?.projectTitle || '',
-                  introductionText: r.introductionText || '',
-                  scopeOfWork: r.scopeOfWork || [],
-                  priceSchedule: r.priceSchedule || { items: [], subTotal: 0, grandTotal: 0, currency: r.priceSchedule?.currency || 'AED', taxDetails: { vatRate: 5, vatAmount: 0 } },
-                  ourViewpoints: r.ourViewpoints || '',
-                  exclusions: r.exclusions || [],
-                  paymentTerms: r.paymentTerms || [],
-                  deliveryCompletionWarrantyValidity: r.deliveryCompletionWarrantyValidity || { deliveryTimeline: '', warrantyPeriod: '', offerValidity: 30, authorizedSignatory: currentUser?.name || '' }
-                } })
-              }}>Create Another Revision</button>
-              <button className="assign-btn" onClick={async () => {
-                try {
-                  if (!r || !r._id) {
-                    setNotify({ open: true, title: 'Error', message: 'Invalid revision data. Please refresh the page and try again.' })
-                    return
-                  }
-                try {
-                  await api.get(`/api/projects/by-revision/${r._id}`)
-                  setNotify({ open: true, title: 'Not Allowed', message: 'A project already exists for this revision.' })
-                  return
-                } catch {}
-                const hasChild = revisions.some(x => (x.parentRevision?._id || x.parentRevision) === r._id)
-                if (hasChild) {
-                  setNotify({ open: true, title: 'Not Allowed', message: 'Project can only be created from the last approved child revision.' })
-                  return
-                }
-                const parentId = typeof r.parentQuotation === 'object' ? r.parentQuotation?._id : r.parentQuotation
-                const groupItems = revisions.filter(x => {
-                  const xParentId = typeof x.parentQuotation === 'object' ? x.parentQuotation?._id : x.parentQuotation
-                  return xParentId === parentId
-                })
-                const approved = groupItems.filter(x => x.managementApproval?.status === 'approved')
-                  const latest = approved.slice().sort((a,b) => {
-                    // Extract numeric part from revisionNumber (e.g., "PROJ-REV-001" -> 1)
-                    const getRevisionNum = (revNum) => {
-                      if (!revNum) return 0;
-                      if (typeof revNum === 'number') return revNum;
-                      const match = String(revNum).match(/-REV-(\d+)$/);
-                      return match ? parseInt(match[1], 10) : 0;
-                    };
-                    return getRevisionNum(b.revisionNumber) - getRevisionNum(a.revisionNumber);
-                  })[0]
-                if (latest && latest._id !== r._id) {
-                  setNotify({ open: true, title: 'Not Allowed', message: `Only the latest approved revision (#${latest.revisionNumber}) can be used to create a project.` })
-                  return
-                }
-                let engineers = []
-                try {
-                  const resEng = await api.get('/api/projects/project-engineers')
-                  engineers = Array.isArray(resEng.data) ? resEng.data : []
-                } catch {}
-                setCreateProjectModal({ open: true, revision: r, engineers, ack: false, form: {
-                  name: r.projectTitle || r.lead?.projectTitle || 'Project',
-                  locationDetails: r.lead?.locationDetails || '',
-                  workingHours: r.lead?.workingHours || '',
-                  manpowerCount: r.lead?.manpowerCount ?? '',
-                    assignedProjectEngineerIds: []
-                  }, selectedFiles: [], previewFiles: [] })
-                } catch (error) {
-                  console.error('Error opening create project modal:', error)
-                  setNotify({ open: true, title: 'Error', message: 'An error occurred while opening the create project form. Please try again.' })
-                }
-              }}>Create Project</button>
-            </>
-          )}
-        </>
       )}
-      <button className="link-btn" onClick={() => setApprovalsView(r)}>View Approvals/Rejections</button>
       {(currentUser?.roles?.includes('manager') || currentUser?.roles?.includes('admin')) && r.managementApproval?.status === 'pending' && (
         <>
           <button className="approve-btn" onClick={() => setApprovalModal({ open: true, revision: r, action: 'approved', note: '' })}>Approve</button>
           <button className="reject-btn" onClick={() => setApprovalModal({ open: true, revision: r, action: 'rejected', note: '' })}>Reject</button>
         </>
-      )}
-      {currentUser?.roles?.includes('estimation_engineer') && r.managementApproval?.status !== 'approved' && (
-        <button className="reject-btn" onClick={() => setConfirmDelete({ open: true, revision: r })}>Delete Revision</button>
       )}
     </div>
   )
@@ -2483,8 +2336,6 @@ function RevisionManagement() {
               <tr>
                 <th>Revision #</th>
                 <th>Project</th>
-                <th>Customer</th>
-                <th>Offer Ref</th>
                 <th>Parent Quotation</th>
                 <th>Grand Total</th>
                 <th>Status</th>
@@ -2523,8 +2374,6 @@ function RevisionManagement() {
                       )}
                     </td>
                     <td data-label="Project">{r.projectTitle || r.lead?.projectTitle || 'Revision'}</td>
-                    <td data-label="Customer">{r.lead?.customerName || 'N/A'}</td>
-                    <td data-label="Offer Ref">{r.offerReference || 'N/A'}</td>
                     <td data-label="Parent Quotation">
                       {typeof r.parentQuotation === 'object' && r.parentQuotation?._id && (
                         <button className="link-btn" onClick={() => {
@@ -3815,54 +3664,87 @@ function RevisionManagement() {
                       }
                       const fieldName = fieldNameMap[diff.field] || diff.field.replace(/([A-Z])/g, ' $1').replace(/^./, str => str.toUpperCase())
                       
+                      // Check if this is a rich text field
+                      const isRichText = ['scopeOfWork', 'priceSchedule', 'exclusions', 'paymentTerms', 'ourViewpoints'].includes(diff.field)
+                      
                       // Format the values for display
                       const fromVal = diff.from !== undefined ? diff.from : (diff.fromValue !== undefined ? diff.fromValue : null)
                       const toVal = diff.to !== undefined ? diff.to : (diff.toValue !== undefined ? diff.toValue : null)
-                      const fromValue = formatHistoryValue(diff.field, fromVal)
-                      const toValue = formatHistoryValue(diff.field, toVal)
+                      const fromValue = isRichText ? (fromVal || '') : formatHistoryValue(diff.field, fromVal)
+                      const toValue = isRichText ? (toVal || '') : formatHistoryValue(diff.field, toVal)
                       
                       return (
                         <tr key={idx}>
                           <td data-label="Field"><strong>{fieldName}</strong></td>
                           <td data-label="Previous Value">
-                            <pre style={{ 
-                              margin: 0, 
-                              padding: '10px 12px', 
-                              background: '#FEF2F2', 
-                              border: '1px solid #FECACA', 
-                              borderRadius: '6px',
-                              whiteSpace: 'pre-wrap',
-                              wordBreak: 'break-word',
-                              fontSize: '13px',
-                              lineHeight: '1.5',
-                              maxHeight: '200px',
-                              overflow: 'auto',
-                              color: '#991B1B',
-                              fontFamily: 'inherit',
-                              fontWeight: 400
-                            }}>
-                              {fromValue || '(empty)'}
-                            </pre>
+                            {isRichText ? (
+                              <div style={{ 
+                                margin: 0, 
+                                padding: '10px 12px', 
+                                background: '#FEF2F2', 
+                                border: '1px solid #FECACA', 
+                                borderRadius: '6px',
+                                maxHeight: '200px',
+                                overflow: 'auto',
+                                color: '#991B1B',
+                                fontSize: '13px',
+                                lineHeight: '1.5'
+                              }} dangerouslySetInnerHTML={{ __html: fromValue || '(empty)' }} />
+                            ) : (
+                              <pre style={{ 
+                                margin: 0, 
+                                padding: '10px 12px', 
+                                background: '#FEF2F2', 
+                                border: '1px solid #FECACA', 
+                                borderRadius: '6px',
+                                whiteSpace: 'pre-wrap',
+                                wordBreak: 'break-word',
+                                fontSize: '13px',
+                                lineHeight: '1.5',
+                                maxHeight: '200px',
+                                overflow: 'auto',
+                                color: '#991B1B',
+                                fontFamily: 'inherit',
+                                fontWeight: 400
+                              }}>
+                                {fromValue || '(empty)'}
+                              </pre>
+                            )}
                           </td>
                           <td data-label="New Value">
-                            <pre style={{ 
-                              margin: 0, 
-                              padding: '10px 12px', 
-                              background: '#F0FDF4', 
-                              border: '1px solid #BBF7D0', 
-                              borderRadius: '6px',
-                              whiteSpace: 'pre-wrap',
-                              wordBreak: 'break-word',
-                              fontSize: '13px',
-                              lineHeight: '1.5',
-                              maxHeight: '200px',
-                              overflow: 'auto',
-                              color: '#166534',
-                              fontFamily: 'inherit',
+                            {isRichText ? (
+                              <div style={{ 
+                                margin: 0, 
+                                padding: '10px 12px', 
+                                background: '#F0FDF4', 
+                                border: '1px solid #BBF7D0', 
+                                borderRadius: '6px',
+                                maxHeight: '200px',
+                                overflow: 'auto',
+                                color: '#166534',
+                                fontSize: '13px',
+                                lineHeight: '1.5'
+                              }} dangerouslySetInnerHTML={{ __html: toValue || '(empty)' }} />
+                            ) : (
+                              <pre style={{ 
+                                margin: 0, 
+                                padding: '10px 12px', 
+                                background: '#F0FDF4', 
+                                border: '1px solid #BBF7D0', 
+                                borderRadius: '6px',
+                                whiteSpace: 'pre-wrap',
+                                wordBreak: 'break-word',
+                                fontSize: '13px',
+                                lineHeight: '1.5',
+                                maxHeight: '200px',
+                                overflow: 'auto',
+                                color: '#166534',
+                                fontFamily: 'inherit',
                               fontWeight: 400
                             }}>
                               {toValue || '(empty)'}
-                            </pre>
+                              </pre>
+                            )}
                           </td>
                         </tr>
                       )

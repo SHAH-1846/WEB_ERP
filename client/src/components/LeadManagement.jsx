@@ -541,39 +541,9 @@ function LeadManagement() {
   // Helper function to render lead actions (used in both card and table views)
   const renderLeadActions = (lead, isTableView = false) => (
     <div className="lead-actions">
-      {lead.status === 'draft' && (
-        <>
-          {(currentUser?.roles?.includes('sales_engineer') || currentUser?.roles?.includes('estimation_engineer') || lead.createdBy?._id === currentUser?.id) && (
-            <button 
-              onClick={() => handleEditLead(lead)} 
-              className="save-btn"
-              disabled={isSubmitting}
-            >
-              Edit
-            </button>
-          )}
-          {currentUser?.roles?.includes('project_engineer') && (
-            <button onClick={() => { setEditingLead(lead); setShowVisitModal(true); }} className="assign-btn">
-              New Site Visit
-            </button>
-          )}
-          {(lead.createdBy?._id === currentUser?.id || currentUser?.roles?.includes('manager') || currentUser?.roles?.includes('admin')) && (
-            <button 
-              onClick={() => setDeleteLeadModal({ open: true, leadId: lead._id })} 
-              className="cancel-btn"
-              disabled={isSubmitting && loadingAction === `delete-${lead._id}`}
-            >
-              <ButtonLoader loading={loadingAction === `delete-${lead._id}`}>
-                {isSubmitting && loadingAction === `delete-${lead._id}` ? 'Deleting...' : 'Delete'}
-              </ButtonLoader>
-            </button>
-          )}
-        </>
-      )}
       <button
         className="assign-btn"
         onClick={async () => {
-          const token = localStorage.getItem('token')
           try {
             const res = await api.get(`/api/leads/${lead._id}`)
             const data = res.data
@@ -590,17 +560,6 @@ function LeadManagement() {
       >
         View
       </button>
-      {currentUser?.roles?.includes('estimation_engineer') && (
-        <button
-          className="save-btn"
-          onClick={() => {
-            setSelectedLeadForQuotation(lead._id)
-            setShowQuotationModal(true)
-          }}
-        >
-          Create Quotation
-        </button>
-      )}
       <button
         className="link-btn"
         onClick={async () => {
@@ -1136,14 +1095,7 @@ function LeadManagement() {
                 Your lead
               </div>
             )}
-            {lead.edits?.length > 0 && (
-              <button className="link-btn" onClick={() => setHistoryLead(lead)}>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-                  <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
-                </svg>
-                View Edit History
-              </button>
-            )}
+
           </div>
         ))}
         </div>
@@ -1151,17 +1103,11 @@ function LeadManagement() {
         <div className="table" style={{ marginTop: '24px' }}>
           <table>
             <thead>
-              <tr>
                 <th>Project Title</th>
                 <th>Customer</th>
-                <th>Enquiry #</th>
                 <th>Enquiry Date</th>
-                <th>Submission Due</th>
-                <th>Status</th>
-                <th>Quotations</th>
                 <th>Created By</th>
                 <th>Actions</th>
-              </tr>
             </thead>
             <tbody>
               {paginatedLeads.map(lead => (
@@ -1169,15 +1115,7 @@ function LeadManagement() {
                     <tr key={lead._id}>
                       <td data-label="Project Title">{lead.projectTitle || lead.name || 'N/A'}</td>
                       <td data-label="Customer">{lead.customerName || 'N/A'}</td>
-                      <td data-label="Enquiry #">{lead.enquiryNumber || 'N/A'}</td>
                       <td data-label="Enquiry Date">{lead.enquiryDate ? new Date(lead.enquiryDate).toLocaleDateString() : 'N/A'}</td>
-                      <td data-label="Submission Due">{lead.submissionDueDate ? new Date(lead.submissionDueDate).toLocaleDateString() : 'N/A'}</td>
-                      <td data-label="Status">
-                        <span className={`status-badge ${getStatusColor(lead.status)}`}>
-                          {lead.status}
-                        </span>
-                      </td>
-                      <td data-label="Quotations">{quotationCounts[lead._id] || 0}</td>
                       <td data-label="Created By">
                         {lead.createdBy?._id === currentUser?.id ? 'You' : (lead.createdBy?.name || 'N/A')}
                         {lead.createdBy?._id !== currentUser?.id && lead.createdBy && (
@@ -1188,14 +1126,7 @@ function LeadManagement() {
                       </td>
                       <td data-label="Actions">
                         {renderLeadActions(lead, true)}
-                        {lead.edits?.length > 0 && (
-                          <button className="link-btn" onClick={() => setHistoryLead(lead)} style={{ marginTop: '4px', display: 'inline-flex' }}>
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-                              <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
-                            </svg>
-                            View Edit History
-                          </button>
-                        )}
+
                       </td>
                     </tr>
                     {expandedQuotationRows[lead._id] && (

@@ -302,6 +302,9 @@ router.post('/', auth, async (req, res) => {
           if (isNaN(d)) return null;
           return d.toISOString().slice(0,10);
         }
+        if (['exclusions', 'paymentTerms'].includes(f) && typeof v === 'string') {
+          return v.replace(/<br\s*\/?>/gi, '\n').replace(/\r\n/g, '\n').trim();
+        }
         return v;
       };
       const fromValRaw = base[field];

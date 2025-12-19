@@ -1595,20 +1595,27 @@ function ProjectDetail() {
               
               // Get site visit attachments
               try {
-                const siteVisitsRes = await api.get(`/api/site-visits?project=${project._id}`)
+                console.log('Fetching site visits for project:', project._id)
+                const siteVisitsRes = await api.get(`/api/site-visits/project/${project._id}`)
+                console.log('Site visits response:', siteVisitsRes.data)
                 if (Array.isArray(siteVisitsRes.data)) {
                   siteVisitsRes.data.forEach(visit => {
+                    console.log('Processing visit:', visit._id, 'Attachments count:', visit.attachments?.length || 0)
                     if (visit.attachments && Array.isArray(visit.attachments) && visit.attachments.length > 0) {
                       const visitAttachments = visit.attachments.map(att => ({
                         ...att,
                         source: 'siteVisit',
                         sourceName: `Site Visit - ${new Date(visit.visitAt).toLocaleDateString()} - ${visit.siteLocation}`
                       }))
+                      console.log('Adding site visit attachments:', visitAttachments.length)
                       attachmentsData.siteVisits.push(...visitAttachments)
                     }
                   })
                 }
-              } catch {}
+                console.log('Total site visit attachments:', attachmentsData.siteVisits.length)
+              } catch (error) {
+                console.error('Error fetching site visits:', error)
+              }
               
               // Get variation attachments
               try {
@@ -1628,6 +1635,13 @@ function ProjectDetail() {
               } catch {}
               
               setProjectAttachmentsData(attachmentsData)
+              console.log('Final attachments data structure:', {
+                project: attachmentsData.project.length,
+                leads: attachmentsData.leads.length,
+                siteVisits: attachmentsData.siteVisits.length,
+                variations: attachmentsData.variations.length,
+                totalAttachments: attachmentsData.project.length + attachmentsData.leads.length + attachmentsData.siteVisits.length + attachmentsData.variations.length
+              })
             } catch (e) {
               setNotify({ open: true, title: 'Error', message: 'Failed to load attachments. Please try again.' })
             } finally {
@@ -1684,65 +1698,12 @@ function ProjectDetail() {
                 return
               }
               
-              // Get source data from project's source revision or quotation
-              let sourceData = null
-              if (project?.sourceRevision) {
-                try {
-                  const revRes = await api.get(`/api/revisions/${typeof project.sourceRevision === 'object' ? project.sourceRevision._id : project.sourceRevision}`)
-                  sourceData = revRes.data
-                } catch {}
-              } else if (project?.sourceQuotation) {
-                try {
-                  const qRes = await api.get(`/api/quotations/${typeof project.sourceQuotation === 'object' ? project.sourceQuotation._id : project.sourceQuotation}`)
-                  sourceData = qRes.data
-                } catch {}
+              // Navigate to variation form page with project context
+              try {
+                window.location.href = `/projects/${project._id}/create-variation`
+              } catch (error) {
+                setNotify({ open: true, title: 'Error', message: 'Failed to navigate to variation form. Please try again.' })
               }
-              
-              if (!sourceData) {
-                setNotify({ open: true, title: 'Error', message: 'Project has no source quotation or revision to base variation on.' })
-                return
-              }
-              
-              // Convert source data to form format
-              const scopeOfWorkValue = typeof sourceData.scopeOfWork === 'string' 
-                ? sourceData.scopeOfWork 
-                : (Array.isArray(sourceData.scopeOfWork) && sourceData.scopeOfWork.length
-                    ? sourceData.scopeOfWork.map(item => item.description || '').join('<br>')
-                    : '')
-              
-              const exclusionsValue = typeof sourceData.exclusions === 'string'
-                ? sourceData.exclusions
-                : (Array.isArray(sourceData.exclusions) && sourceData.exclusions.length
-                    ? sourceData.exclusions.join('<br>')
-                    : '')
-              
-              const paymentTermsValue = typeof sourceData.paymentTerms === 'string'
-                ? sourceData.paymentTerms
-                : (Array.isArray(sourceData.paymentTerms) && sourceData.paymentTerms.length
-                    ? sourceData.paymentTerms.map(term => `${term.milestoneDescription || ''}${term.amountPercent ? ` - ${term.amountPercent}%` : ''}`).join('<br>')
-                    : '')
-              
-              // Reset variation file states
-              setVariationSelectedFiles([])
-              setVariationPreviewFiles([])
-              
-              setVariationModal({ open: true, form: {
-                companyInfo: sourceData.companyInfo || defaultCompany,
-                submittedTo: sourceData.submittedTo || '',
-                attention: sourceData.attention || '',
-                offerReference: sourceData.offerReference || '',
-                enquiryNumber: sourceData.enquiryNumber || '',
-                offerDate: sourceData.offerDate ? sourceData.offerDate.substring(0,10) : '',
-                enquiryDate: sourceData.enquiryDate ? sourceData.enquiryDate.substring(0,10) : '',
-                projectTitle: sourceData.projectTitle || project?.name || '',
-                introductionText: sourceData.introductionText || '',
-                scopeOfWork: scopeOfWorkValue,
-                priceSchedule: sourceData.priceSchedule || { items: [], subTotal: 0, grandTotal: 0, currency: 'AED', taxDetails: { vatRate: 5, vatAmount: 0 } },
-                ourViewpoints: sourceData.ourViewpoints || '',
-                exclusions: exclusionsValue,
-                paymentTerms: paymentTermsValue,
-                deliveryCompletionWarrantyValidity: sourceData.deliveryCompletionWarrantyValidity || { deliveryTimeline: '', warrantyPeriod: '', offerValidity: 30, authorizedSignatory: currentUser?.name || '' }
-              } })
             }}>Create Variation Quotation</button>
           )}
         </div>
@@ -3826,6 +3787,174 @@ function ProjectDetail() {
                   </ButtonLoader>
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* View All Attachments Modal */}
+      {showAttachmentsModal && (
+        <div className="modal-overlay" onClick={() => setShowAttachmentsModal(false)}>
+          <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: '90%', width: '1200px', maxHeight: '90vh', display: 'flex', flexDirection: 'column' }}>
+            <div className="modal-header">
+              <h2>All Attachments - {project.name}</h2>
+              <button onClick={() => setShowAttachmentsModal(false)} className="close-btn">×</button>
+            </div>
+            <div className="lead-form" style={{ flex: 1, overflow: 'auto' }}>
+              {loadingAttachments ? (
+                <div style={{ textAlign: 'center', padding: '40px' }}>
+                  <Spinner />
+                  <p>Loading attachments...</p>
+                </div>
+              ) : (
+                <>
+                  {/* Project Attachments */}
+                  {projectAttachmentsData.project.length > 0 && (
+                    <div style={{ marginBottom: '24px' }}>
+                      <h3 style={{ marginBottom: '12px', color: 'var(--text)' }}>Project Attachments ({projectAttachmentsData.project.length})</h3>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '16px' }}>
+                        {projectAttachmentsData.project.map((att, idx) => {
+                          const isImage = att.mimetype && att.mimetype.startsWith('image/')
+                          const isVideo = att.mimetype && att.mimetype.startsWith('video/')
+                          const apiBase = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'
+                          const fileUrl = att.path.startsWith('http') ? att.path : `${apiBase}${att.path}`
+                          
+                          return (
+                            <div key={idx} style={{ border: '1px solid var(--border)', borderRadius: '8px', padding: '12px', background: 'var(--card)' }}>
+                              {isImage && (
+                                <img src={fileUrl} alt={att.originalName} style={{ width: '100%', height: '120px', objectFit: 'cover', borderRadius: '4px', marginBottom: '8px' }} />
+                              )}
+                              {isVideo && (
+                                <video src={fileUrl} style={{ width: '100%', height: '120px', objectFit: 'cover', borderRadius: '4px', marginBottom: '8px' }} controls />
+                              )}
+                              {!isImage && !isVideo && (
+                                <div style={{ width: '100%', height: '120px', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--bg)', borderRadius: '4px', marginBottom: '8px' }}>
+                                  <span style={{ fontSize: '48px' }}>📄</span>
+                                </div>
+                              )}
+                              <div style={{ fontSize: '12px', wordBreak: 'break-word', marginBottom: '4px' }}>{att.originalName}</div>
+                              <div style={{ fontSize: '10px', color: 'var(--text-muted)' }}>{att.sourceName}</div>
+                              <a href={fileUrl} target="_blank" rel="noopener noreferrer" style={{ fontSize: '11px', color: 'var(--primary)', textDecoration: 'none', display: 'block', marginTop: '8px' }}>Open</a>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Lead Attachments */}
+                  {projectAttachmentsData.leads.length > 0 && (
+                    <div style={{ marginBottom: '24px' }}>
+                      <h3 style={{ marginBottom: '12px', color: 'var(--text)' }}>Lead Attachments ({projectAttachmentsData.leads.length})</h3>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '16px' }}>
+                        {projectAttachmentsData.leads.map((att, idx) => {
+                          const isImage = att.mimetype && att.mimetype.startsWith('image/')
+                          const isVideo = att.mimetype && att.mimetype.startsWith('video/')
+                          const apiBase = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'
+                          const fileUrl = att.path.startsWith('http') ? att.path : `${apiBase}${att.path}`
+                          
+                          return (
+                            <div key={idx} style={{ border: '1px solid var(--border)', borderRadius: '8px', padding: '12px', background: 'var(--card)' }}>
+                              {isImage && (
+                                <img src={fileUrl} alt={att.originalName} style={{ width: '100%', height: '120px', objectFit: 'cover', borderRadius: '4px', marginBottom: '8px' }} />
+                              )}
+                              {isVideo && (
+                                <video src={fileUrl} style={{ width: '100%', height: '120px', objectFit: 'cover', borderRadius: '4px', marginBottom: '8px' }} controls />
+                              )}
+                              {!isImage && !isVideo && (
+                                <div style={{ width: '100%', height: '120px', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--bg)', borderRadius: '4px', marginBottom: '8px' }}>
+                                  <span style={{ fontSize: '48px' }}>📄</span>
+                                </div>
+                              )}
+                              <div style={{ fontSize: '12px', wordBreak: 'break-word', marginBottom: '4px' }}>{att.originalName}</div>
+                              <div style={{ fontSize: '10px', color: 'var(--text-muted)' }}>{att.sourceName}</div>
+                              <a href={fileUrl} target="_blank" rel="noopener noreferrer" style={{ fontSize: '11px', color: 'var(--primary)', textDecoration: 'none', display: 'block', marginTop: '8px' }}>Open</a>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Site Visit Attachments */}
+                  {projectAttachmentsData.siteVisits.length > 0 && (
+                    <div style={{ marginBottom: '24px' }}>
+                      <h3 style={{ marginBottom: '12px', color: 'var(--text)' }}>Site Visit Attachments ({projectAttachmentsData.siteVisits.length})</h3>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '16px' }}>
+                        {projectAttachmentsData.siteVisits.map((att, idx) => {
+                          const isImage = att.mimetype && att.mimetype.startsWith('image/')
+                          const isVideo = att.mimetype && att.mimetype.startsWith('video/')
+                          const apiBase = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'
+                          const fileUrl = att.path.startsWith('http') ? att.path : `${apiBase}${att.path}`
+                          
+                          return (
+                            <div key={idx} style={{ border: '1px solid var(--border)', borderRadius: '8px', padding: '12px', background: 'var(--card)' }}>
+                              {isImage && (
+                                <img src={fileUrl} alt={att.originalName} style={{ width: '100%', height: '120px', objectFit: 'cover', borderRadius: '4px', marginBottom: '8px' }} />
+                              )}
+                              {isVideo && (
+                                <video src={fileUrl} style={{ width: '100%', height: '120px', objectFit: 'cover', borderRadius: '4px', marginBottom: '8px' }} controls />
+                              )}
+                              {!isImage && !isVideo && (
+                                <div style={{ width: '100%', height: '120px', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--bg)', borderRadius: '4px', marginBottom: '8px' }}>
+                                  <span style={{ fontSize: '48px' }}>📄</span>
+                                </div>
+                              )}
+                              <div style={{ fontSize: '12px', wordBreak: 'break-word', marginBottom: '4px' }}>{att.originalName}</div>
+                              <div style={{ fontSize: '10px', color: 'var(--text-muted)' }}>{att.sourceName}</div>
+                              <a href={fileUrl} target="_blank" rel="noopener noreferrer" style={{ fontSize: '11px', color: 'var(--primary)', textDecoration: 'none', display: 'block', marginTop: '8px' }}>Open</a>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Variation Attachments */}
+                  {projectAttachmentsData.variations.length > 0 && (
+                    <div style={{ marginBottom: '24px' }}>
+                      <h3 style={{ marginBottom: '12px', color: 'var(--text)' }}>Variation Attachments ({projectAttachmentsData.variations.length})</h3>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '16px' }}>
+                        {projectAttachmentsData.variations.map((att, idx) => {
+                          const isImage = att.mimetype && att.mimetype.startsWith('image/')
+                          const isVideo = att.mimetype && att.mimetype.startsWith('video/')
+                          const apiBase = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'
+                          const fileUrl = att.path.startsWith('http') ? att.path : `${apiBase}${att.path}`
+                          
+                          return (
+                            <div key={idx} style={{ border: '1px solid var(--border)', borderRadius: '8px', padding: '12px', background: 'var(--card)' }}>
+                              {isImage && (
+                                <img src={fileUrl} alt={att.originalName} style={{ width: '100%', height: '120px', objectFit: 'cover', borderRadius: '4px', marginBottom: '8px' }} />
+                              )}
+                              {isVideo && (
+                                <video src={fileUrl} style={{ width: '100%', height: '120px', objectFit: 'cover', borderRadius: '4px', marginBottom: '8px' }} controls />
+                              )}
+                              {!isImage && !isVideo && (
+                                <div style={{ width: '100%', height: '120px', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--bg)', borderRadius: '4px', marginBottom: '8px' }}>
+                                  <span style={{ fontSize: '48px' }}>📄</span>
+                                </div>
+                              )}
+                              <div style={{ fontSize: '12px', wordBreak: 'break-word', marginBottom: '4px' }}>{att.originalName}</div>
+                              <div style={{ fontSize: '10px', color: 'var(--text-muted)' }}>{att.sourceName}</div>
+                              <a href={fileUrl} target="_blank" rel="noopener noreferrer" style={{ fontSize: '11px', color: 'var(--primary)', textDecoration: 'none', display: 'block', marginTop: '8px' }}>Open</a>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Empty state */}
+                  {projectAttachmentsData.project.length === 0 && 
+                   projectAttachmentsData.leads.length === 0 && 
+                   projectAttachmentsData.siteVisits.length === 0 && 
+                   projectAttachmentsData.variations.length === 0 && (
+                    <div style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>
+                      <p>No attachments found for this project.</p>
+                    </div>
+                  )}
+                </>
+              )}
             </div>
           </div>
         </div>

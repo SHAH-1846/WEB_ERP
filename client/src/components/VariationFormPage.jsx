@@ -898,7 +898,13 @@ function VariationFormPage() {
         projectTitle: source.projectTitle || proj.name || '',
         introductionText: source.introductionText || '',
         scopeOfWork: scopeOfWorkValue,
-        priceSchedule: source.priceSchedule || { items: [], subTotal: 0, grandTotal: 0, currency: 'AED', taxDetails: { vatRate: 5, vatAmount: 0 } },
+        priceSchedule: source.priceSchedule ? {
+          items: source.priceSchedule.items || [],
+          subTotal: source.priceSchedule.subTotal || 0,
+          grandTotal: source.priceSchedule.grandTotal || 0,
+          currency: source.priceSchedule.currency || 'AED',
+          taxDetails: source.priceSchedule.taxDetails || { vatRate: 5, vatAmount: 0 }
+        } : { items: [], subTotal: 0, grandTotal: 0, currency: 'AED', taxDetails: { vatRate: 5, vatAmount: 0 } },
         ourViewpoints: source.ourViewpoints || '',
         exclusions: exclusionsValue,
         paymentTerms: paymentTermsValue,

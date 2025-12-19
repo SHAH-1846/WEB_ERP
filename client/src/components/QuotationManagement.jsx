@@ -3794,18 +3794,6 @@ function QuotationManagement() {
       currentUser?.roles?.includes("admin");
     return (
       <div className="lead-actions">
-        <button
-          className="assign-btn"
-          onClick={() => {
-            setEditing(q);
-            setShowModal(true);
-          }}
-        >
-          Edit
-        </button>
-        <button className="save-btn" onClick={() => generatePDFPreview(q)}>
-          Print Preview
-        </button>
         {canDelete && (
           <button
             className="reject-btn"
@@ -3814,163 +3802,7 @@ function QuotationManagement() {
             Delete
           </button>
         )}
-        {q.managementApproval?.status === "approved" &&
-          !hasRevisionFor[q._id] && (
-            <button
-              className="assign-btn"
-              onClick={() => {
-                const formData = {
-                  companyInfo: q.companyInfo || defaultCompany,
-                  submittedTo: q.submittedTo || "",
-                  attention: q.attention || "",
-                  offerReference: q.offerReference || "",
-                  enquiryNumber: q.enquiryNumber || "",
-                  offerDate: q.offerDate ? q.offerDate.substring(0, 10) : "",
-                  enquiryDate: q.enquiryDate
-                    ? q.enquiryDate.substring(0, 10)
-                    : "",
-                  projectTitle: q.projectTitle || q.lead?.projectTitle || "",
-                  introductionText: q.introductionText || "",
-                  scopeOfWork: q.scopeOfWork?.length
-                    ? q.scopeOfWork
-                        .map((item) => item.description || "")
-                        .join("<br>")
-                    : "",
-                  priceSchedule: q.priceSchedule?.items?.length
-                    ? q.priceSchedule.items
-                        .map(
-                          (item) =>
-                            `${item.description || ""}${
-                              item.quantity ? ` - Qty: ${item.quantity}` : ""
-                            }${item.unit ? ` ${item.unit}` : ""}${
-                              item.unitRate ? ` @ ${item.unitRate}` : ""
-                            }${
-                              item.totalAmount ? ` = ${item.totalAmount}` : ""
-                            }`
-                        )
-                        .join("<br>")
-                    : "",
-                  ourViewpoints: q.ourViewpoints || "",
-                  exclusions: q.exclusions?.length
-                    ? q.exclusions.join("<br>")
-                    : "",
-                  paymentTerms: q.paymentTerms?.length
-                    ? q.paymentTerms
-                        .map(
-                          (term) =>
-                            `${term.milestoneDescription || ""}${
-                              term.amountPercent
-                                ? ` - ${term.amountPercent}%`
-                                : ""
-                            }`
-                        )
-                        .join("<br>")
-                    : "",
-                  deliveryCompletionWarrantyValidity:
-                    q.deliveryCompletionWarrantyValidity || {
-                      deliveryTimeline: "",
-                      warrantyPeriod: "",
-                      offerValidity: 30,
-                      authorizedSignatory: currentUser?.name || "",
-                    },
-                };
-                setOriginalRevisionForm({ ...formData });
-                setRevisionModal({ open: true, quote: q, form: formData });
-              }}
-            >
-              Create Revision
-            </button>
-          )}
-        {q.managementApproval?.status === "approved" &&
-          !hasRevisionFor[q._id] &&
-          !hasProjectFor[q._id] && (
-            <button
-              className="assign-btn"
-              onClick={async () => {
-                try {
-                  // Check if project already exists
-                  try {
-                    await api.get(`/api/projects/by-quotation/${q._id}`);
-                    setNotify({
-                      open: true,
-                      title: "Not Allowed",
-                      message: "A project already exists for this quotation.",
-                    });
-                    return;
-                  } catch {}
 
-                  // Check if revisions exist
-                  try {
-                    const revRes = await api.get(
-                      `/api/revisions?parentQuotation=${q._id}`
-                    );
-                    if (Array.isArray(revRes.data) && revRes.data.length > 0) {
-                      setNotify({
-                        open: true,
-                        title: "Not Allowed",
-                        message:
-                          "Cannot create project directly from quotation. Revisions exist for this quotation. Please create project from the latest approved revision instead.",
-                      });
-                      return;
-                    }
-                  } catch {}
-
-                  // Get lead data for autofill
-                  const leadId =
-                    typeof q.lead === "object" ? q.lead?._id : q.lead;
-                  let leadData = null;
-                  if (leadId) {
-                    try {
-                      const leadRes = await api.get(`/api/leads/${leadId}`);
-                      leadData = leadRes.data;
-                    } catch {}
-                  }
-
-                  // Get project engineers
-                  let engineers = [];
-                  try {
-                    const engRes = await api.get(
-                      "/api/projects/project-engineers"
-                    );
-                    engineers = Array.isArray(engRes.data) ? engRes.data : [];
-                  } catch {}
-
-                  setCreateProjectModal({
-                    open: true,
-                    quotation: q,
-                    engineers,
-                    ack: false,
-                    form: {
-                      name:
-                        q.projectTitle ||
-                        leadData?.projectTitle ||
-                        leadData?.customerName ||
-                        "Project",
-                      locationDetails: leadData?.locationDetails || "",
-                      workingHours: leadData?.workingHours || "",
-                      manpowerCount:
-                        leadData?.manpowerCount !== null &&
-                        leadData?.manpowerCount !== undefined
-                          ? leadData?.manpowerCount
-                          : "",
-                      assignedProjectEngineerIds: [],
-                    },
-                    selectedFiles: [],
-                    previewFiles: [],
-                  });
-                } catch (e) {
-                  setNotify({
-                    open: true,
-                    title: "Error",
-                    message:
-                      "Failed to prepare project creation. Please try again.",
-                  });
-                }
-              }}
-            >
-              Create Project
-            </button>
-          )}
         <button
           className="assign-btn"
           onClick={() => {
@@ -4006,9 +3838,7 @@ function QuotationManagement() {
             </button>
           )
         )}
-        <button className="link-btn" onClick={() => setApprovalsView(q)}>
-          View Approvals/Rejections
-        </button>
+
         {(currentUser?.roles?.includes("manager") ||
           currentUser?.roles?.includes("admin")) &&
           q.managementApproval?.status === "pending" && (
@@ -4041,37 +3871,6 @@ function QuotationManagement() {
               </button>
             </>
           )}
-        {q.lead?._id && (
-          <button
-            className="link-btn"
-            onClick={async () => {
-              try {
-                const res = await api.get(`/api/leads/${q.lead._id}`);
-                const visitsRes = await api.get(
-                  `/api/leads/${q.lead._id}/site-visits`
-                );
-                const detail = { ...res.data, siteVisits: visitsRes.data };
-                localStorage.setItem("leadDetail", JSON.stringify(detail));
-                localStorage.setItem("leadId", q.lead._id);
-                window.location.href = "/lead-detail";
-              } catch {
-                setNotify({
-                  open: true,
-                  title: "Open Lead Failed",
-                  message:
-                    "We could not open the linked lead. Please try again.",
-                });
-              }
-            }}
-          >
-            View Lead
-          </button>
-        )}
-        {q.edits?.length > 0 && (
-          <button className="link-btn" onClick={() => setHistoryQuote(q)}>
-            View Edit History
-          </button>
-        )}
         <button
           className="link-btn"
           onClick={async () => {
@@ -4779,13 +4578,9 @@ function QuotationManagement() {
             <thead>
               <tr>
                 <th>Project Title</th>
-                <th>Customer</th>
-                <th>Enquiry #</th>
-                <th>Offer Ref</th>
                 <th>Offer Date</th>
                 <th>Grand Total</th>
                 <th>Status</th>
-                <th>Revisions</th>
                 <th>Created By</th>
                 <th>Actions</th>
               </tr>
@@ -4799,15 +4594,6 @@ function QuotationManagement() {
                     <tr key={q._id}>
                       <td data-label="Project Title">
                         {q.projectTitle || q.lead?.projectTitle || "Quotation"}
-                      </td>
-                      <td data-label="Customer">
-                        {q.lead?.customerName || "N/A"}
-                      </td>
-                      <td data-label="Enquiry #">
-                        {q.enquiryNumber || q.lead?.enquiryNumber || "N/A"}
-                      </td>
-                      <td data-label="Offer Ref">
-                        {q.offerReference || "N/A"}
                       </td>
                       <td data-label="Offer Date">
                         {q.offerDate
@@ -4832,9 +4618,6 @@ function QuotationManagement() {
                             ? "Approval Pending"
                             : q.managementApproval?.status || "N/A"}
                         </span>
-                      </td>
-                      <td data-label="Revisions">
-                        {revisionCounts[q._id] || 0}
                       </td>
                       <td data-label="Created By">
                         {q.createdBy?._id === currentUser?.id

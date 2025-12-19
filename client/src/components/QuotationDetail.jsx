@@ -1961,11 +1961,19 @@ function QuotationDetail() {
         enquiryDate: original.enquiryDate ? original.enquiryDate.substring(0,10) : '',
         projectTitle: original.projectTitle || original.lead?.projectTitle || '',
         introductionText: original.introductionText || '',
-        scopeOfWork: original.scopeOfWork?.length ? original.scopeOfWork.map(item => item.description || '').join('<br>') : '',
-        priceSchedule: original.priceSchedule?.items?.length ? original.priceSchedule.items.map(item => `${item.description || ''}${item.quantity ? ` - Qty: ${item.quantity}` : ''}${item.unit ? ` ${item.unit}` : ''}${item.unitRate ? ` @ ${item.unitRate}` : ''}${item.totalAmount ? ` = ${item.totalAmount}` : ''}`).join('<br>') : '',
+        scopeOfWork: Array.isArray(original.scopeOfWork)
+          ? original.scopeOfWork.map(item => item.description || '').join('<br>')
+          : original.scopeOfWork || '',
+        priceSchedule: Array.isArray(original.priceSchedule?.items)
+          ? original.priceSchedule.items.map(item => `${item.description || ''}${item.quantity ? ` - Qty: ${item.quantity}` : ''}${item.unit ? ` ${item.unit}` : ''}${item.unitRate ? ` @ ${item.unitRate}` : ''}${item.totalAmount ? ` = ${item.totalAmount}` : ''}`).join('<br>')
+          : '',
         ourViewpoints: original.ourViewpoints || '',
-        exclusions: original.exclusions?.length ? original.exclusions.join('<br>') : '',
-        paymentTerms: original.paymentTerms?.length ? original.paymentTerms.map(term => `${term.milestoneDescription || ''}${term.amountPercent ? ` - ${term.amountPercent}%` : ''}`).join('<br>') : '',
+        exclusions: Array.isArray(original.exclusions)
+          ? original.exclusions.join('<br>')
+          : original.exclusions || '',
+        paymentTerms: Array.isArray(original.paymentTerms)
+          ? original.paymentTerms.map(term => `${term.milestoneDescription || ''}${term.amountPercent ? ` - ${term.amountPercent}%` : ''}`).join('<br>')
+          : original.paymentTerms || '',
         deliveryCompletionWarrantyValidity: original.deliveryCompletionWarrantyValidity || { deliveryTimeline: '', warrantyPeriod: '', offerValidity: 30, authorizedSignatory: currentUser?.name || '' }
       }
       
@@ -2009,48 +2017,8 @@ function QuotationDetail() {
       // Now convert to backend format
       const payload = { ...form }
       
-      // Convert scopeOfWork string to array format for backend compatibility
-      if (typeof payload.scopeOfWork === 'string') {
-        payload.scopeOfWork = payload.scopeOfWork ? [{ description: payload.scopeOfWork, quantity: '', unit: '', locationRemarks: '' }] : []
-      }
-      
-      // Convert priceSchedule string to object format for backend compatibility
-      if (typeof payload.priceSchedule === 'string') {
-        payload.priceSchedule = payload.priceSchedule ? {
-          items: [{ description: payload.priceSchedule, quantity: 0, unit: '', unitRate: 0, totalAmount: 0 }],
-          subTotal: 0,
-          grandTotal: 0,
-          currency: original.priceSchedule?.currency || 'AED',
-          taxDetails: original.priceSchedule?.taxDetails || { vatRate: 5, vatAmount: 0 }
-        } : {
-          items: [],
-          subTotal: 0,
-          grandTotal: 0,
-          currency: original.priceSchedule?.currency || 'AED',
-          taxDetails: original.priceSchedule?.taxDetails || { vatRate: 5, vatAmount: 0 }
-        }
-      }
-      
-      // Convert exclusions string to array format for backend compatibility
-      if (typeof payload.exclusions === 'string') {
-        payload.exclusions = payload.exclusions 
-          ? payload.exclusions.split('<br>').filter(ex => ex.trim())
-          : []
-      }
-      
-      // Convert paymentTerms string to array format for backend compatibility
-      if (typeof payload.paymentTerms === 'string') {
-        payload.paymentTerms = payload.paymentTerms 
-          ? payload.paymentTerms.split('<br>').map(term => {
-              // Try to parse "Milestone - X%" format
-              const match = term.match(/^(.+?)(?:\s*-\s*(\d+(?:\.\d+)?)%)?$/)
-              return {
-                milestoneDescription: match ? match[1].trim() : term.trim(),
-                amountPercent: match && match[2] ? parseFloat(match[2]) : 0
-              }
-            }).filter(term => term.milestoneDescription)
-          : []
-      }
+      // No conversion needed: backend now accepts strings for scopeOfWork, priceSchedule, exclusions, paymentTerms
+      // Payload already has the correct format from form
       await apiFetch('/api/revisions', {
         method: 'POST',
         body: JSON.stringify({ sourceQuotationId: quotation._id, data: payload })
@@ -2329,11 +2297,19 @@ function QuotationDetail() {
                 enquiryDate: quotation.enquiryDate ? quotation.enquiryDate.substring(0,10) : '',
                 projectTitle: quotation.projectTitle || quotation.lead?.projectTitle || '',
                 introductionText: quotation.introductionText || '',
-                scopeOfWork: quotation.scopeOfWork?.length ? quotation.scopeOfWork.map(item => item.description || '').join('<br>') : '',
-                priceSchedule: quotation.priceSchedule?.items?.length ? quotation.priceSchedule.items.map(item => `${item.description || ''}${item.quantity ? ` - Qty: ${item.quantity}` : ''}${item.unit ? ` ${item.unit}` : ''}${item.unitRate ? ` @ ${item.unitRate}` : ''}${item.totalAmount ? ` = ${item.totalAmount}` : ''}`).join('<br>') : '',
+                scopeOfWork: Array.isArray(quotation.scopeOfWork)
+                  ? quotation.scopeOfWork.map(item => item.description || '').join('<br>')
+                  : quotation.scopeOfWork || '',
+                priceSchedule: Array.isArray(quotation.priceSchedule?.items)
+                  ? quotation.priceSchedule.items.map(item => `${item.description || ''}${item.quantity ? ` - Qty: ${item.quantity}` : ''}${item.unit ? ` ${item.unit}` : ''}${item.unitRate ? ` @ ${item.unitRate}` : ''}${item.totalAmount ? ` = ${item.totalAmount}` : ''}`).join('<br>')
+                  : '',
                 ourViewpoints: quotation.ourViewpoints || '',
-                exclusions: quotation.exclusions?.length ? quotation.exclusions.join('<br>') : '',
-                paymentTerms: quotation.paymentTerms?.length ? quotation.paymentTerms.map(term => `${term.milestoneDescription || ''}${term.amountPercent ? ` - ${term.amountPercent}%` : ''}`).join('<br>') : '',
+                exclusions: Array.isArray(quotation.exclusions)
+                  ? quotation.exclusions.join('<br>')
+                  : quotation.exclusions || '',
+                paymentTerms: Array.isArray(quotation.paymentTerms)
+                  ? quotation.paymentTerms.map(term => `${term.milestoneDescription || ''}${term.amountPercent ? ` - ${term.amountPercent}%` : ''}`).join('<br>')
+                  : quotation.paymentTerms || '',
                 deliveryCompletionWarrantyValidity: quotation.deliveryCompletionWarrantyValidity || { deliveryTimeline: '', warrantyPeriod: '', offerValidity: 30, authorizedSignatory: currentUser?.name || '' }
               }
               setOriginalRevisionForm({ ...formData })

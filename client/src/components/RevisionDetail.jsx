@@ -887,6 +887,7 @@ function RevisionDetail() {
   const [sourceRevisionId, setSourceRevisionId] = useState(null)
   const [isSaving, setIsSaving] = useState(false)
   const [childRevisions, setChildRevisions] = useState([])
+
   
   const defaultCompany = {
     logo,
@@ -946,31 +947,11 @@ function RevisionDetail() {
                 enquiryDate: formData.enquiryDate || '',
                 projectTitle: formData.projectTitle || '',
                 introductionText: formData.introductionText || '',
-                scopeOfWork: typeof formData.scopeOfWork === 'string' 
-                  ? formData.scopeOfWork 
-                  : (formData.scopeOfWork?.length 
-                      ? formData.scopeOfWork.map(item => item.description || '').join('<br>') 
-                      : ''),
-                priceSchedule: typeof formData.priceSchedule === 'string'
-                  ? formData.priceSchedule
-                  : (formData.priceSchedule?.items?.length
-                      ? formData.priceSchedule.items.map(item => 
-                          `${item.description || ''}${item.quantity ? ` - Qty: ${item.quantity}` : ''}${item.unit ? ` ${item.unit}` : ''}${item.unitRate ? ` @ ${item.unitRate}` : ''}${item.totalAmount ? ` = ${item.totalAmount}` : ''}`
-                        ).join('<br>')
-                      : ''),
+                scopeOfWork: formData.scopeOfWork || '',
+                priceSchedule: formData.priceSchedule || '',
                 ourViewpoints: formData.ourViewpoints || '',
-                exclusions: typeof formData.exclusions === 'string'
-                  ? formData.exclusions
-                  : (formData.exclusions?.length
-                      ? formData.exclusions.join('<br>')
-                      : ''),
-                paymentTerms: typeof formData.paymentTerms === 'string'
-                  ? formData.paymentTerms
-                  : (formData.paymentTerms?.length
-                      ? formData.paymentTerms.map(term => 
-                          `${term.milestoneDescription || ''}${term.amountPercent ? ` - ${term.amountPercent}%` : ''}`
-                        ).join('<br>')
-                      : ''),
+                exclusions: formData.exclusions || '',
+                paymentTerms: formData.paymentTerms || '',
                 deliveryCompletionWarrantyValidity: formData.deliveryCompletionWarrantyValidity || {
                   deliveryTimeline: '',
                   warrantyPeriod: '',
@@ -1023,31 +1004,11 @@ function RevisionDetail() {
               enquiryDate: rev.enquiryDate ? String(rev.enquiryDate).slice(0,10) : '',
               projectTitle: rev.projectTitle || rev.lead?.projectTitle || '',
               introductionText: rev.introductionText || '',
-              scopeOfWork: typeof rev.scopeOfWork === 'string'
-                ? rev.scopeOfWork
-                : (rev.scopeOfWork?.length
-                    ? rev.scopeOfWork.map(item => item.description || '').join('<br>')
-                    : ''),
-              priceSchedule: typeof rev.priceSchedule === 'string'
-                ? rev.priceSchedule
-                : (rev.priceSchedule?.items?.length
-                    ? rev.priceSchedule.items.map(item => 
-                        `${item.description || ''}${item.quantity ? ` - Qty: ${item.quantity}` : ''}${item.unit ? ` ${item.unit}` : ''}${item.unitRate ? ` @ ${item.unitRate}` : ''}${item.totalAmount ? ` = ${item.totalAmount}` : ''}`
-                      ).join('<br>')
-                    : ''),
+              scopeOfWork: rev.scopeOfWork || '',
+              priceSchedule: rev.priceSchedule || '',
               ourViewpoints: rev.ourViewpoints || '',
-              exclusions: typeof rev.exclusions === 'string'
-                ? rev.exclusions
-                : (rev.exclusions?.length
-                    ? rev.exclusions.join('<br>')
-                    : ''),
-              paymentTerms: typeof rev.paymentTerms === 'string'
-                ? rev.paymentTerms
-                : (rev.paymentTerms?.length
-                    ? rev.paymentTerms.map(term => 
-                        `${term.milestoneDescription || ''}${term.amountPercent ? ` - ${term.amountPercent}%` : ''}`
-                      ).join('<br>')
-                    : ''),
+              exclusions: rev.exclusions || '',
+              paymentTerms: rev.paymentTerms || '',
               deliveryCompletionWarrantyValidity: rev.deliveryCompletionWarrantyValidity || {
                 deliveryTimeline: '',
                 warrantyPeriod: '',
@@ -1365,6 +1326,142 @@ function RevisionDetail() {
     }
   }
 
+  // Convert rich text HTML to pdfMake-friendly fragments (preserve inline styles)
+  const htmlToPdfFragments = (html) => {
+    if (!html) return [{ text: "" }];
+
+    const fallback = (raw) => {
+      const withBreaks = raw
+        .replace(/\<\s*br\s*\/?\>/gi, "\n")
+        .replace(/\<\/\s*li\s*\>/gi, "\n")
+        .replace(/\<\s*li\s*\>/gi, "• ");
+      const stripped = withBreaks.replace(/\<[^\>]+\>/g, "");
+      return [{ text: stripped.trim() }];
+    };
+
+    const applyInlineStyles = (node, base = {}) => {
+      const next = { ...base };
+      const style = (node.getAttribute && node.getAttribute("style")) || "";
+      if (style) {
+        const colorMatch = style.match(/color\s*:\s*([^;]+)/i);
+        if (colorMatch) next.color = colorMatch[1].trim();
+        const bgMatch = style.match(/background(?:-color)?\s*:\s*([^;]+)/i);
+        if (bgMatch) next.background = bgMatch[1].trim();
+        const ffMatch = style.match(/font-family\s*:\s*([^;]+)/i);
+        if (ffMatch) next.font = ffMatch[1].trim().replace(/['"]/g, "");
+        const fsMatch = style.match(/font-size\s*:\s*([^;]+)/i);
+        if (fsMatch) {
+          const raw = fsMatch[1].trim();
+          const num = parseFloat(raw);
+          if (!Number.isNaN(num)) next.fontSize = num;
+        }
+      }
+      if (node.tagName?.toLowerCase() === "font" && node.getAttribute) {
+        const c = node.getAttribute("color");
+        if (c) next.color = c;
+      }
+      return next;
+    };
+
+    if (typeof DOMParser === "undefined" || typeof Node === "undefined") {
+      return fallback(html);
+    }
+
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(`<div>${html}</div>`, "text/html");
+
+    const walk = (node, inherited = {}) => {
+      const results = [];
+      const pushText = (text, style = inherited) => {
+        if (text === undefined || text === null) return;
+        const val = String(text);
+        if (val.length === 0) return;
+        results.push({ text: val, ...style });
+      };
+
+      switch (node.nodeType) {
+        case Node.TEXT_NODE: {
+          const t = node.textContent || "";
+          if (t.trim().length === 0 && /\s+/.test(t)) break;
+          pushText(t, inherited);
+          break;
+        }
+        case Node.ELEMENT_NODE: {
+          const tag = node.tagName.toLowerCase();
+          const next = applyInlineStyles(node, inherited);
+          if (["strong", "b"].includes(tag)) next.bold = true;
+          if (["em", "i"].includes(tag)) next.italics = true;
+          if (tag === "u") next.decoration = "underline";
+          if (["h1", "h2", "h3", "h4"].includes(tag)) next.fontSize = 12;
+
+          if (tag === "br") {
+            results.push({ text: "\n", ...next });
+            break;
+          }
+
+          if (tag === "ul" || tag === "ol") {
+            const isOrdered = tag === "ol";
+            const items = [];
+            node.childNodes.forEach((child, idx) => {
+              if (child.tagName?.toLowerCase() === "li") {
+                const liParts = walk(child, next);
+                const combined = liParts
+                  .map((p) => p.text || "")
+                  .join("")
+                  .trim();
+                if (combined.length) {
+                  items.push({
+                    text: isOrdered ? `${idx + 1}. ${combined}` : `• ${combined}`,
+                    ...next,
+                  });
+                }
+              }
+            });
+            if (items.length) {
+              results.push({ stack: items, margin: [0, 0, 0, 2] });
+            }
+            break;
+          }
+
+          if (tag === "li") {
+            node.childNodes.forEach((child) => {
+              results.push(...walk(child, next));
+            });
+            break;
+          }
+
+          const blockLike = ["p", "div", "h1", "h2", "h3", "h4"].includes(tag);
+          const children = [];
+          node.childNodes.forEach((child) => {
+            children.push(...walk(child, next));
+          });
+          if (children.length) {
+            if (blockLike) {
+              results.push({ stack: children, margin: [0, 0, 0, 4] });
+            } else {
+              results.push(...children);
+            }
+          }
+          break;
+        }
+        default:
+          break;
+      }
+
+      return results;
+    };
+
+    const output = [];
+    doc.body.childNodes.forEach((n) => output.push(...walk(n)));
+    if (!output.length) return fallback(html);
+    return output;
+  };
+
+  const richTextCell = (val) => {
+    const frags = htmlToPdfFragments(val);
+    return { stack: frags, preserveLeadingSpaces: true, margin: [0, 0, 0, 2] };
+  };
+
   const generatePDFPreview = async () => {
     try {
       if (!revision) return
@@ -1397,29 +1494,21 @@ function RevisionDetail() {
       ]
       const coverFields = coverFieldsRaw.filter(([, v]) => v && String(v).trim().length > 0)
 
-      const scopeRows = (revision.scopeOfWork || [])
-        .filter(s => (s?.description || '').trim().length > 0)
-        .map((s, i) => [
-          String(i + 1),
-          s.description,
-          String(s.quantity || ''),
-          s.unit || '',
-          s.locationRemarks || ''
-        ])
+      // Handle scopeOfWork - stored as HTML string
+      const scopeOfWorkHtml = typeof revision.scopeOfWork === 'string' ? revision.scopeOfWork : ''
+      const hasScope = scopeOfWorkHtml && scopeOfWorkHtml.trim().length > 0
 
-      const priceItems = (revision.priceSchedule?.items || [])
-        .filter(it => (it?.description || '').trim().length > 0 || Number(it.quantity) > 0 || Number(it.unitRate) > 0)
-      const priceRows = priceItems.map((it, i) => [
-        String(i + 1),
-        it.description || '',
-        String(it.quantity || 0),
-        it.unit || '',
-        `${currency} ${Number(it.unitRate || 0).toFixed(2)}`,
-        `${currency} ${Number((it.quantity || 0) * (it.unitRate || 0)).toFixed(2)}`
-      ])
-
-      const exclusions = (revision.exclusions || []).map(x => String(x || '').trim()).filter(Boolean)
-      const paymentTerms = (revision.paymentTerms || []).filter(p => (p?.milestoneDescription || '').trim().length > 0 || String(p?.amountPercent || '').trim().length > 0)
+      // Handle priceSchedule - stored as HTML string
+      const priceScheduleHtml = typeof revision.priceSchedule === 'string' ? revision.priceSchedule : ''
+      const hasPrice = priceScheduleHtml && priceScheduleHtml.trim().length > 0
+      
+      // Handle exclusions - stored as HTML string
+      const exclusionsHtml = typeof revision.exclusions === 'string' ? revision.exclusions : ''
+      const hasExclusions = exclusionsHtml && exclusionsHtml.trim().length > 0
+      
+      // Handle paymentTerms - stored as HTML string
+      const paymentTermsHtml = typeof revision.paymentTerms === 'string' ? revision.paymentTerms : ''
+      const hasPaymentTerms = paymentTermsHtml && paymentTermsHtml.trim().length > 0
 
       const dcwv = revision.deliveryCompletionWarrantyValidity || {}
       const deliveryRowsRaw = [
@@ -1489,18 +1578,10 @@ function RevisionDetail() {
         }
       }
 
-      if (scopeRows.length > 0) {
-        content.push({ text: 'Scope of Work', style: 'h2', margin: [0, 12, 0, 6] })
-        content.push({
-          table: {
-            widths: ['6%', '54%', '10%', '10%', '20%'],
-            body: [
-              [{ text: '#', style: 'th' }, { text: 'Description', style: 'th' }, { text: 'Qty', style: 'th' }, { text: 'Unit', style: 'th' }, { text: 'Location/Remarks', style: 'th' }],
-              ...scopeRows
-            ]
-          },
-          layout: 'lightHorizontalLines'
-        })
+      // Scope of Work section
+      if (hasScope) {
+        content.push({ text: 'Scope of Work', style: 'h2', margin: [0, 10, 0, 6] })
+        content.push(richTextCell(scopeOfWorkHtml))
       }
 
       if (Array.isArray(siteVisits) && siteVisits.length > 0) {
@@ -1530,25 +1611,10 @@ function RevisionDetail() {
         })
       }
 
-      if (priceRows.length > 0) {
+      // Price Schedule section
+      if (hasPrice) {
         content.push({ text: 'Price Schedule', style: 'h2', margin: [0, 12, 0, 6] })
-        content.push({
-          table: {
-            widths: ['6%', '44%', '10%', '10%', '15%', '15%'],
-            body: [
-              [
-                { text: '#', style: 'th' },
-                { text: 'Description', style: 'th' },
-                { text: 'Qty', style: 'th' },
-                { text: 'Unit', style: 'th' },
-                { text: `Unit Rate (${currency})`, style: 'th' },
-                { text: `Amount (${currency})`, style: 'th' }
-              ],
-              ...priceRows
-            ]
-          },
-          layout: 'lightHorizontalLines'
-        })
+        content.push(richTextCell(priceScheduleHtml))
 
         content.push({
           columns: [
@@ -1570,29 +1636,22 @@ function RevisionDetail() {
         })
       }
 
-      if ((revision.ourViewpoints || '').trim().length > 0 || exclusions.length > 0) {
+      // Our Viewpoints / Exclusions section
+      if ((revision.ourViewpoints || '').trim().length > 0 || hasExclusions) {
         content.push({ text: 'Our Viewpoints / Special Terms', style: 'h2', margin: [0, 12, 0, 6] })
         if ((revision.ourViewpoints || '').trim().length > 0) {
-          content.push({ text: revision.ourViewpoints, margin: [0, 0, 0, 6] })
+          content.push(richTextCell(revision.ourViewpoints))
         }
-        if (exclusions.length > 0) {
+        if (hasExclusions) {
           content.push({ text: 'Exclusions', style: 'h3', margin: [0, 6, 0, 4] })
-          content.push({ ul: exclusions })
+          content.push(richTextCell(exclusionsHtml))
         }
       }
 
-      if (paymentTerms.length > 0) {
+      // Payment Terms section
+      if (hasPaymentTerms) {
         content.push({ text: 'Payment Terms', style: 'h2', margin: [0, 12, 0, 6] })
-        content.push({
-          table: {
-            widths: ['10%', '70%', '20%'],
-            body: [
-              [{ text: '#', style: 'th' }, { text: 'Milestone', style: 'th' }, { text: 'Amount %', style: 'th' }],
-              ...paymentTerms.map((p, i) => [String(i + 1), p.milestoneDescription || '', String(p.amountPercent || '')])
-            ]
-          },
-          layout: 'lightHorizontalLines'
-        })
+        content.push(richTextCell(paymentTermsHtml))
       }
 
       if (deliveryRows.length > 0) {
@@ -1649,6 +1708,8 @@ function RevisionDetail() {
       setNotify({ open: true, title: 'Approval Failed', message: 'We could not update approval. Please try again.' })
     }
   }
+
+
 
   const handleProjectFileChange = (e) => {
     const files = Array.from(e.target.files)
@@ -1898,48 +1959,8 @@ function RevisionDetail() {
         // Convert to backend format for edit
         const payload = { ...formData }
         
-        // Convert scopeOfWork string to array format for backend compatibility
-        if (typeof payload.scopeOfWork === 'string') {
-          payload.scopeOfWork = payload.scopeOfWork ? [{ description: payload.scopeOfWork, quantity: '', unit: '', locationRemarks: '' }] : []
-        }
-        
-        // Convert priceSchedule string to object format for backend compatibility
-        if (typeof payload.priceSchedule === 'string') {
-          payload.priceSchedule = payload.priceSchedule ? {
-            items: [{ description: payload.priceSchedule, quantity: 0, unit: '', unitRate: 0, totalAmount: 0 }],
-            subTotal: 0,
-            grandTotal: 0,
-            currency: revision.priceSchedule?.currency || 'AED',
-            taxDetails: revision.priceSchedule?.taxDetails || { vatRate: 5, vatAmount: 0 }
-          } : {
-            items: [],
-            subTotal: 0,
-            grandTotal: 0,
-            currency: revision.priceSchedule?.currency || 'AED',
-            taxDetails: revision.priceSchedule?.taxDetails || { vatRate: 5, vatAmount: 0 }
-          }
-        }
-        
-        // Convert exclusions string to array format for backend compatibility
-        if (typeof payload.exclusions === 'string') {
-          payload.exclusions = payload.exclusions 
-            ? payload.exclusions.split('<br>').filter(ex => ex.trim())
-            : []
-        }
-        
-        // Convert paymentTerms string to array format for backend compatibility
-        if (typeof payload.paymentTerms === 'string') {
-          payload.paymentTerms = payload.paymentTerms 
-            ? payload.paymentTerms.split('<br>').map(term => {
-                // Try to parse "Milestone - X%" format
-                const match = term.match(/^(.+?)(?:\s*-\s*(\d+(?:\.\d+)?)%)?$/)
-                return {
-                  milestoneDescription: match ? match[1].trim() : term.trim(),
-                  amountPercent: match && match[2] ? parseFloat(match[2]) : 0
-                }
-              }).filter(term => term.milestoneDescription)
-            : []
-        }
+        // No conversion needed: backend now accepts strings
+        // Payload already has the correct format from form
         
         await apiFetch(`/api/revisions/${revision._id}`, {
           method: 'PUT',
@@ -1982,11 +2003,19 @@ function RevisionDetail() {
               enquiryDate: original.enquiryDate ? original.enquiryDate.substring(0,10) : '',
               projectTitle: original.projectTitle || original.lead?.projectTitle || '',
               introductionText: original.introductionText || '',
-              scopeOfWork: original.scopeOfWork?.length ? original.scopeOfWork.map(item => item.description || '').join('<br>') : '',
-              priceSchedule: original.priceSchedule?.items?.length ? original.priceSchedule.items.map(item => `${item.description || ''}${item.quantity ? ` - Qty: ${item.quantity}` : ''}${item.unit ? ` ${item.unit}` : ''}${item.unitRate ? ` @ ${item.unitRate}` : ''}${item.totalAmount ? ` = ${item.totalAmount}` : ''}`).join('<br>') : '',
+              scopeOfWork: Array.isArray(original.scopeOfWork)
+                ? original.scopeOfWork.map(item => item.description || '').join('<br>')
+                : original.scopeOfWork || '',
+              priceSchedule: Array.isArray(original.priceSchedule?.items)
+                ? original.priceSchedule.items.map(item => `${item.description || ''}${item.quantity ? ` - Qty: ${item.quantity}` : ''}${item.unit ? ` ${item.unit}` : ''}${item.unitRate ? ` @ ${item.unitRate}` : ''}${item.totalAmount ? ` = ${item.totalAmount}` : ''}`).join('<br>')
+                : '',
               ourViewpoints: original.ourViewpoints || '',
-              exclusions: original.exclusions?.length ? original.exclusions.join('<br>') : '',
-              paymentTerms: original.paymentTerms?.length ? original.paymentTerms.map(term => `${term.milestoneDescription || ''}${term.amountPercent ? ` - ${term.amountPercent}%` : ''}`).join('<br>') : '',
+              exclusions: Array.isArray(original.exclusions)
+                ? original.exclusions.join('<br>')
+                : original.exclusions || '',
+              paymentTerms: Array.isArray(original.paymentTerms)
+                ? original.paymentTerms.map(term => `${term.milestoneDescription || ''}${term.amountPercent ? ` - ${term.amountPercent}%` : ''}`).join('<br>')
+                : original.paymentTerms || '',
               deliveryCompletionWarrantyValidity: original.deliveryCompletionWarrantyValidity || { deliveryTimeline: '', warrantyPeriod: '', offerValidity: 30, authorizedSignatory: currentUser?.name || '' }
             }
             
@@ -2033,60 +2062,8 @@ function RevisionDetail() {
         // Now convert to backend format
         const payload = { ...formData }
         
-        // Convert scopeOfWork string to array format for backend compatibility
-        if (typeof payload.scopeOfWork === 'string') {
-          payload.scopeOfWork = payload.scopeOfWork ? [{ description: payload.scopeOfWork, quantity: '', unit: '', locationRemarks: '' }] : []
-        }
-        
-        // Convert priceSchedule string to object format for backend compatibility
-        if (typeof payload.priceSchedule === 'string') {
-          // Get original quotation/revision to preserve currency and tax details
-          let original = null
-          try {
-            if (sourceQuotationId) {
-              const res = await apiFetch(`/api/quotations/${sourceQuotationId}`)
-              original = await res.json()
-            } else if (sourceRevisionId) {
-              const res = await apiFetch(`/api/revisions/${sourceRevisionId}`)
-              original = await res.json()
-            }
-          } catch {}
-          
-          payload.priceSchedule = payload.priceSchedule ? {
-            items: [{ description: payload.priceSchedule, quantity: 0, unit: '', unitRate: 0, totalAmount: 0 }],
-            subTotal: 0,
-            grandTotal: 0,
-            currency: original?.priceSchedule?.currency || 'AED',
-            taxDetails: original?.priceSchedule?.taxDetails || { vatRate: 5, vatAmount: 0 }
-          } : {
-            items: [],
-            subTotal: 0,
-            grandTotal: 0,
-            currency: original?.priceSchedule?.currency || 'AED',
-            taxDetails: original?.priceSchedule?.taxDetails || { vatRate: 5, vatAmount: 0 }
-          }
-        }
-        
-        // Convert exclusions string to array format for backend compatibility
-        if (typeof payload.exclusions === 'string') {
-          payload.exclusions = payload.exclusions 
-            ? payload.exclusions.split('<br>').filter(ex => ex.trim())
-            : []
-        }
-        
-        // Convert paymentTerms string to array format for backend compatibility
-        if (typeof payload.paymentTerms === 'string') {
-          payload.paymentTerms = payload.paymentTerms 
-            ? payload.paymentTerms.split('<br>').map(term => {
-                // Try to parse "Milestone - X%" format
-                const match = term.match(/^(.+?)(?:\s*-\s*(\d+(?:\.\d+)?)%)?$/)
-                return {
-                  milestoneDescription: match ? match[1].trim() : term.trim(),
-                  amountPercent: match && match[2] ? parseFloat(match[2]) : 0
-                }
-              }).filter(term => term.milestoneDescription)
-            : []
-        }
+        // No conversion needed: backend now accepts strings
+        // Payload already has the correct format from form
         
         const requestBody = sourceQuotationId 
           ? { sourceQuotationId, data: payload }
@@ -2337,6 +2314,8 @@ function RevisionDetail() {
             </div>
           </div>
         )}
+
+
       </div>
     )
   }
@@ -2658,6 +2637,11 @@ function RevisionDetail() {
               <button className="reject-btn" onClick={() => setApprovalModal({ open: true, action: 'rejected', note: '' })}>Reject</button>
             </>
           )}
+          {/* Delete button - Estimation Engineers before approval, Managers/Admins after approval */}
+          {((approvalStatus !== 'approved' && currentUser?.roles?.includes('estimation_engineer')) || 
+            (approvalStatus === 'approved' && (currentUser?.roles?.includes('manager') || currentUser?.roles?.includes('admin')))) && (
+            <button className="reject-btn" onClick={() => setDeleteModal({ open: true })}>Delete Revision</button>
+          )}
           {approvalStatus === 'approved' && (
             <>
               <button className="assign-btn" onClick={async () => {
@@ -2736,31 +2720,11 @@ function RevisionDetail() {
                   enquiryDate: revision.enquiryDate ? String(revision.enquiryDate).slice(0,10) : '',
                   projectTitle: revision.projectTitle || revision.lead?.projectTitle || '',
                   introductionText: revision.introductionText || '',
-                  scopeOfWork: typeof revision.scopeOfWork === 'string'
-                    ? revision.scopeOfWork
-                    : (revision.scopeOfWork?.length
-                        ? revision.scopeOfWork.map(item => item.description || '').join('<br>')
-                        : ''),
-                  priceSchedule: typeof revision.priceSchedule === 'string'
-                    ? revision.priceSchedule
-                    : (revision.priceSchedule?.items?.length
-                        ? revision.priceSchedule.items.map(item => 
-                            `${item.description || ''}${item.quantity ? ` - Qty: ${item.quantity}` : ''}${item.unit ? ` ${item.unit}` : ''}${item.unitRate ? ` @ ${item.unitRate}` : ''}${item.totalAmount ? ` = ${item.totalAmount}` : ''}`
-                          ).join('<br>')
-                        : ''),
+                  scopeOfWork: revision.scopeOfWork || '',
+                  priceSchedule: revision.priceSchedule || '',
                   ourViewpoints: revision.ourViewpoints || '',
-                  exclusions: typeof revision.exclusions === 'string'
-                    ? revision.exclusions
-                    : (revision.exclusions?.length
-                        ? revision.exclusions.join('<br>')
-                        : ''),
-                  paymentTerms: typeof revision.paymentTerms === 'string'
-                    ? revision.paymentTerms
-                    : (revision.paymentTerms?.length
-                        ? revision.paymentTerms.map(term => 
-                            `${term.milestoneDescription || ''}${term.amountPercent ? ` - ${term.amountPercent}%` : ''}`
-                          ).join('<br>')
-                        : ''),
+                  exclusions: revision.exclusions || '',
+                  paymentTerms: revision.paymentTerms || '',
                   deliveryCompletionWarrantyValidity: revision.deliveryCompletionWarrantyValidity || { deliveryTimeline: '', warrantyPeriod: '', offerValidity: 30, authorizedSignatory: currentUser?.name || '' }
                 }, mode: 'create' })
               }}>Create Another Revision</button>
@@ -2818,118 +2782,38 @@ function RevisionDetail() {
           </div>
         </div>
 
-        {Array.isArray(revision.scopeOfWork) && revision.scopeOfWork.length > 0 && (
+        {revision.scopeOfWork && (
           <div className="ld-card ld-section">
             <h3>Scope of Work</h3>
-            <div className="table">
-              <table>
-                <thead>
-                  <tr>
-                    <th>#</th>
-                    <th>Description</th>
-                    <th>Qty</th>
-                    <th>Unit</th>
-                    <th>Location/Remarks</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {revision.scopeOfWork.map((s, i) => (
-                    <tr key={i}>
-                      <td data-label="#">{i + 1}</td>
-                      <td data-label="Description">{s.description || ''}</td>
-                      <td data-label="Qty">{s.quantity || ''}</td>
-                      <td data-label="Unit">{s.unit || ''}</td>
-                      <td data-label="Location/Remarks">{s.locationRemarks || ''}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <div className="rich-text-content" style={{ padding: '8px 12px' }} dangerouslySetInnerHTML={{ __html: revision.scopeOfWork }} />
           </div>
         )}
 
-        {Array.isArray(revision.priceSchedule?.items) && revision.priceSchedule.items.length > 0 && (
+        {revision.priceSchedule && (
           <div className="ld-card ld-section">
             <h3>Price Schedule</h3>
-            <div className="table">
-              <table>
-                <thead>
-                  <tr>
-                    <th>#</th>
-                    <th>Description</th>
-                    <th>Qty</th>
-                    <th>Unit</th>
-                    <th>Unit Rate</th>
-                    <th>Amount</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {revision.priceSchedule.items.map((it, i) => (
-                    <tr key={i}>
-                      <td data-label="#">{i + 1}</td>
-                      <td data-label="Description">{it.description || ''}</td>
-                      <td data-label="Qty">{it.quantity || 0}</td>
-                      <td data-label="Unit">{it.unit || ''}</td>
-                      <td data-label="Unit Rate">{Number(it.unitRate || 0).toFixed(2)}</td>
-                      <td data-label="Amount">{Number(it.totalAmount || 0).toFixed(2)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <div className="rich-text-content" style={{ padding: '8px 12px' }} dangerouslySetInnerHTML={{ __html: revision.priceSchedule }} />
           </div>
         )}
 
-        {(revision.ourViewpoints || (revision.exclusions || []).length > 0) && (
+        {revision.ourViewpoints && (
           <div className="ld-card ld-section">
             <h3>Our Viewpoints / Special Terms</h3>
-            {revision.ourViewpoints && <div style={{ marginBottom: 8 }}>{revision.ourViewpoints}</div>}
-            {(revision.exclusions || []).length > 0 && (
-              <div className="table">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>#</th>
-                      <th>Exclusion</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {(revision.exclusions || []).map((ex, i) => (
-                      <tr key={i}>
-                        <td data-label="#">{i + 1}</td>
-                        <td data-label="Exclusion">{ex}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
+            <div className="rich-text-content" dangerouslySetInnerHTML={{ __html: revision.ourViewpoints }} />
           </div>
         )}
 
-        {Array.isArray(revision.paymentTerms) && revision.paymentTerms.length > 0 && (
+        {revision.exclusions && (
+          <div className="ld-card ld-section">
+            <h3>Exclusions</h3>
+            <div className="rich-text-content" style={{ padding: '8px 12px' }} dangerouslySetInnerHTML={{ __html: revision.exclusions }} />
+          </div>
+        )}
+
+        {revision.paymentTerms && (
           <div className="ld-card ld-section">
             <h3>Payment Terms</h3>
-            <div className="table">
-              <table>
-                <thead>
-                  <tr>
-                    <th>#</th>
-                    <th>Milestone</th>
-                    <th>Amount %</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {revision.paymentTerms.map((p, i) => (
-                    <tr key={i}>
-                      <td data-label="#">{i + 1}</td>
-                      <td data-label="Milestone">{p.milestoneDescription || ''}</td>
-                      <td data-label="Amount %">{p.amountPercent || ''}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <div className="rich-text-content" style={{ padding: '8px 12px' }} dangerouslySetInnerHTML={{ __html: revision.paymentTerms }} />
           </div>
         )}
 
@@ -2976,59 +2860,39 @@ function RevisionDetail() {
                       'priceSchedule': 'Price Schedule',
                       'ourViewpoints': 'Our Viewpoints',
                       'exclusions': 'Exclusions',
-                      'paymentTerms': 'Payment Terms',
-                      'deliveryCompletionWarrantyValidity': 'Delivery & Warranty'
+                      'paymentTerms': 'Payment Terms'
                     }
                     const fieldName = fieldNameMap[diff.field] || diff.field.replace(/([A-Z])/g, ' $1').replace(/^./, str => str.toUpperCase())
                     
+                    const isRichText = ['scopeOfWork', 'priceSchedule', 'exclusions', 'paymentTerms', 'ourViewpoints'].includes(diff.field)
+
                     // Format the values for display - ensure we're accessing the correct properties
                     const fromVal = diff.from !== undefined ? diff.from : (diff.fromValue !== undefined ? diff.fromValue : null)
                     const toVal = diff.to !== undefined ? diff.to : (diff.toValue !== undefined ? diff.toValue : null)
-                    const fromValue = formatHistoryValue(diff.field, fromVal)
-                    const toValue = formatHistoryValue(diff.field, toVal)
+                    
+                    const fromValue = isRichText ? (fromVal || '') : formatHistoryValue(diff.field, fromVal)
+                    const toValue = isRichText ? (toVal || '') : formatHistoryValue(diff.field, toVal)
                     
                     return (
                       <tr key={idx}>
                         <td data-label="Field"><strong>{fieldName}</strong></td>
                         <td data-label="Previous Value">
-                          <pre style={{ 
-                            margin: 0, 
-                            padding: '10px 12px', 
-                            background: '#FEF2F2', 
-                            border: '1px solid #FECACA', 
-                            borderRadius: '6px',
-                            whiteSpace: 'pre-wrap',
-                            wordBreak: 'break-word',
-                            fontSize: '13px',
-                            lineHeight: '1.5',
-                            maxHeight: '200px',
-                            overflow: 'auto',
-                            color: '#991B1B',
-                            fontFamily: 'inherit',
-                            fontWeight: 400
-                          }}>
-                            {fromValue || '(empty)'}
-                          </pre>
+                          {isRichText ? (
+                            <div className="rich-text-content" style={{ padding: '8px', border: '1px solid #FECACA', background: '#FEF2F2', borderRadius: '6px', maxHeight: '300px', overflow: 'auto', color: '#991B1B' }} dangerouslySetInnerHTML={{ __html: fromValue }} />
+                          ) : (
+                            <pre style={{ margin: 0, padding: '10px 12px', background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: '6px', whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontSize: '13px', color: '#991B1B', fontFamily: 'inherit' }}>
+                              {fromValue || '(empty)'}
+                            </pre>
+                          )}
                         </td>
                         <td data-label="New Value">
-                          <pre style={{ 
-                            margin: 0, 
-                            padding: '10px 12px', 
-                            background: '#F0FDF4', 
-                            border: '1px solid #BBF7D0', 
-                            borderRadius: '6px',
-                            whiteSpace: 'pre-wrap',
-                            wordBreak: 'break-word',
-                            fontSize: '13px',
-                            lineHeight: '1.5',
-                            maxHeight: '200px',
-                            overflow: 'auto',
-                            color: '#166534',
-                            fontFamily: 'inherit',
-                            fontWeight: 400
-                          }}>
-                            {toValue || '(empty)'}
-                          </pre>
+                          {isRichText ? (
+                            <div className="rich-text-content" style={{ padding: '8px', border: '1px solid #BBF7D0', background: '#F0FDF4', borderRadius: '6px', maxHeight: '300px', overflow: 'auto', color: '#166534' }} dangerouslySetInnerHTML={{ __html: toValue }} />
+                          ) : (
+                            <pre style={{ margin: 0, padding: '10px 12px', background: '#F0FDF4', border: '1px solid #BBF7D0', borderRadius: '6px', whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontSize: '13px', color: '#166534', fontFamily: 'inherit' }}>
+                              {toValue || '(empty)'}
+                            </pre>
+                          )}
                         </td>
                       </tr>
                     )
@@ -3057,16 +2921,29 @@ function RevisionDetail() {
                     <span>{new Date(edit.editedAt).toLocaleString()}</span>
                   </div>
                   <ul className="changes-list">
-                    {edit.changes.map((c, i) => (
-                      <li key={i}>
-                        <strong>{c.field}:</strong>
-                        <div className="change-diff">
-                          <pre className="change-block" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{formatHistoryValue(c.field, c.from)}</pre>
-                          <span>→</span>
-                          <pre className="change-block" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{formatHistoryValue(c.field, c.to)}</pre>
-                        </div>
-                      </li>
-                    ))}
+                    {edit.changes.map((c, i) => {
+                       const isRichText = ['scopeOfWork', 'priceSchedule', 'exclusions', 'paymentTerms', 'ourViewpoints'].includes(c.field)
+                       return (
+                         <li key={i}>
+                           <strong>{c.field}:</strong>
+                           <div className="change-diff">
+                             {isRichText ? (
+                               <>
+                                 <div className="change-block" style={{ maxHeight: '200px', overflow: 'auto' }} dangerouslySetInnerHTML={{ __html: formatHistoryValue(c.field, c.from, { asHtml: true }) }} />
+                                 <span>→</span>
+                                 <div className="change-block" style={{ maxHeight: '200px', overflow: 'auto' }} dangerouslySetInnerHTML={{ __html: formatHistoryValue(c.field, c.to, { asHtml: true }) }} />
+                               </>
+                             ) : (
+                               <>
+                                 <pre className="change-block" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{formatHistoryValue(c.field, c.from)}</pre>
+                                 <span>→</span>
+                                 <pre className="change-block" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{formatHistoryValue(c.field, c.to)}</pre>
+                               </>
+                             )}
+                           </div>
+                         </li>
+                       )
+                    })}
                   </ul>
                 </div>
               ))}

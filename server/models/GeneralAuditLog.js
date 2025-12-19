@@ -38,7 +38,7 @@ const GeneralAuditLogSchema = new mongoose.Schema({
   entityType: String, // e.g., 'user', 'role', 'lead', 'quotation', etc.
   entityId: mongoose.Schema.Types.ObjectId,
   entityName: String, // Human-readable name for the entity
-  performedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  performedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: false },
   performedAt: { type: Date, default: Date.now },
   description: String, // Human-readable description of the action
   details: mongoose.Schema.Types.Mixed, // Additional context/data

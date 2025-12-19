@@ -24,37 +24,11 @@ const RevisionSchema = new mongoose.Schema({
   projectTitle: { type: String },
   introductionText: { type: String },
 
-  scopeOfWork: [{
-    description: String,
-    quantity: Number,
-    unit: String,
-    locationRemarks: String
-  }],
-
-  priceSchedule: {
-    items: [{
-      description: String,
-      quantity: Number,
-      unit: String,
-      unitRate: Number,
-      totalAmount: Number
-    }],
-    subTotal: Number,
-    grandTotal: Number,
-    currency: { type: String, default: 'AED' },
-    taxDetails: {
-      vatRate: Number,
-      vatAmount: Number
-    }
-  },
-
+  scopeOfWork: { type: String },
+  priceSchedule: { type: String },
   ourViewpoints: { type: String },
-  exclusions: [{ type: String }],
-
-  paymentTerms: [{
-    milestoneDescription: String,
-    amountPercent: Number
-  }],
+  exclusions: { type: String },
+  paymentTerms: { type: String },
 
   deliveryCompletionWarrantyValidity: {
     deliveryTimeline: String,
