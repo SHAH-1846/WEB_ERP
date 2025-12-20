@@ -733,7 +733,7 @@ function VariationFormPage() {
     projectTitle: '',
     introductionText: '',
     scopeOfWork: '',
-    priceSchedule: { items: [], subTotal: 0, grandTotal: 0, currency: 'AED', taxDetails: { vatRate: 5, vatAmount: 0 } },
+    priceSchedule: '',
     ourViewpoints: '',
     exclusions: '',
     paymentTerms: '',
@@ -800,7 +800,7 @@ function VariationFormPage() {
         projectTitle: varData.projectTitle || varData.lead?.projectTitle || project?.name || '',
         introductionText: varData.introductionText || '',
         scopeOfWork: scopeOfWorkValue,
-        priceSchedule: varData.priceSchedule || { items: [], subTotal: 0, grandTotal: 0, currency: 'AED', taxDetails: { vatRate: 5, vatAmount: 0 } },
+        priceSchedule: typeof varData.priceSchedule === 'string' ? varData.priceSchedule : '',
         ourViewpoints: varData.ourViewpoints || '',
         exclusions: exclusionsValue,
         paymentTerms: paymentTermsValue,
@@ -898,13 +898,7 @@ function VariationFormPage() {
         projectTitle: source.projectTitle || proj.name || '',
         introductionText: source.introductionText || '',
         scopeOfWork: scopeOfWorkValue,
-        priceSchedule: source.priceSchedule ? {
-          items: source.priceSchedule.items || [],
-          subTotal: source.priceSchedule.subTotal || 0,
-          grandTotal: source.priceSchedule.grandTotal || 0,
-          currency: source.priceSchedule.currency || 'AED',
-          taxDetails: source.priceSchedule.taxDetails || { vatRate: 5, vatAmount: 0 }
-        } : { items: [], subTotal: 0, grandTotal: 0, currency: 'AED', taxDetails: { vatRate: 5, vatAmount: 0 } },
+        priceSchedule: typeof source.priceSchedule === 'string' ? source.priceSchedule : '',
         ourViewpoints: source.ourViewpoints || '',
         exclusions: exclusionsValue,
         paymentTerms: paymentTermsValue,
@@ -983,42 +977,8 @@ function VariationFormPage() {
         payload = { ...form }
       }
       
-      // Convert HTML strings to backend array format
-      // Convert scopeOfWork string to array format for backend compatibility
-      if (typeof payload.scopeOfWork === 'string') {
-        payload.scopeOfWork = payload.scopeOfWork ? [{ description: payload.scopeOfWork, quantity: '', unit: '', locationRemarks: '' }] : []
-      }
-      
-      // Convert exclusions string to array format for backend compatibility
-      if (typeof payload.exclusions === 'string') {
-        if (payload.exclusions) {
-          // Split by <br> and filter out empty strings
-          const temp = document.createElement('div')
-          temp.innerHTML = payload.exclusions
-          const lines = temp.textContent || temp.innerText || ''
-          payload.exclusions = lines.split(/\n|<br\s*\/?>/i).map(line => line.trim()).filter(line => line)
-        } else {
-          payload.exclusions = []
-        }
-      }
-      
-      // Convert paymentTerms string to array format for backend compatibility
-      if (typeof payload.paymentTerms === 'string') {
-        payload.paymentTerms = payload.paymentTerms 
-          ? payload.paymentTerms.split(/<br\s*\/?>/i).map(term => {
-              // Remove HTML tags and get text content
-              const temp = document.createElement('div')
-              temp.innerHTML = term
-              const text = (temp.textContent || temp.innerText || '').trim()
-              // Try to parse "Milestone - X%" format
-              const match = text.match(/^(.+?)(?:\s*-\s*(\d+(?:\.\d+)?)%)?$/)
-              return {
-                milestoneDescription: match ? match[1].trim() : text,
-                amountPercent: match && match[2] ? parseFloat(match[2]) : 0
-              }
-            }).filter(term => term.milestoneDescription)
-          : []
-      }
+      // Send HTML strings directly - backend will handle conversion if needed
+      // No conversion needed as backend expects HTML strings for rich text fields
       
       if (isEditMode) {
         // Edit mode: Check if variation is approved
@@ -1320,92 +1280,11 @@ function VariationFormPage() {
             <div className="section-header">
               <h3>Price Schedule</h3>
             </div>
-            <div className="form-row">
-              <div className="form-group" style={{ flex: 1 }}>
-                <label>Currency</label>
-                <input type="text" value={form.priceSchedule.currency} onChange={e => setForm({ ...form, priceSchedule: { ...form.priceSchedule, currency: e.target.value } })} />
-              </div>
-              <div className="form-group" style={{ flex: 1 }}>
-                <label>VAT Rate (%)</label>
-                <input type="number" value={form.priceSchedule.taxDetails.vatRate} onChange={e => {
-                  const items = form.priceSchedule.items
-                  const sub = items.reduce((sum, it) => sum + Number(it.totalAmount || 0), 0)
-                  const vat = sub * (Number(e.target.value || 0) / 100)
-                  const grand = sub + vat
-                  setForm({ ...form, priceSchedule: { ...form.priceSchedule, subTotal: Number(sub.toFixed(2)), grandTotal: Number(grand.toFixed(2)), taxDetails: { ...form.priceSchedule.taxDetails, vatRate: e.target.value, vatAmount: Number(vat.toFixed(2)) } } })
-                }} />
-              </div>
-            </div>
-            {form.priceSchedule.items.map((it, i) => (
-              <div key={i} className="item-card">
-                <div className="item-header">
-                  <span>Item {i + 1}</span>
-                  <button type="button" className="cancel-btn" onClick={() => {
-                    const items = form.priceSchedule.items.filter((_, idx) => idx !== i)
-                    const sub = items.reduce((sum, it) => sum + Number(it.totalAmount || 0), 0)
-                    const vat = sub * (Number(form.priceSchedule.taxDetails.vatRate || 0) / 100)
-                    const grand = sub + vat
-                    setForm({ ...form, priceSchedule: { ...form.priceSchedule, items, subTotal: Number(sub.toFixed(2)), grandTotal: Number(grand.toFixed(2)), taxDetails: { ...form.priceSchedule.taxDetails, vatAmount: Number(vat.toFixed(2)) } } })
-                  }}>Remove</button>
-                </div>
-                <div className="form-row">
-                  <div className="form-group" style={{ flex: 2 }}>
-                    <label>Description</label>
-                    <input type="text" value={it.description} onChange={e => {
-                      const items = form.priceSchedule.items.map((x, idx) => idx === i ? { ...x, description: e.target.value } : x)
-                      setForm({ ...form, priceSchedule: { ...form.priceSchedule, items } })
-                    }} />
-                  </div>
-                  <div className="form-group" style={{ flex: 1 }}>
-                    <label>Qty</label>
-                    <input type="number" value={it.quantity} onChange={e => {
-                      const items = form.priceSchedule.items.map((x, idx) => idx === i ? { ...x, quantity: e.target.value, totalAmount: Number((Number(e.target.value || 0) * Number(x.unitRate || 0)).toFixed(2)) } : x)
-                      const sub = items.reduce((sum, it) => sum + Number(it.totalAmount || 0), 0)
-                      const vat = sub * (Number(form.priceSchedule.taxDetails.vatRate || 0) / 100)
-                      const grand = sub + vat
-                      setForm({ ...form, priceSchedule: { ...form.priceSchedule, items, subTotal: Number(sub.toFixed(2)), grandTotal: Number(grand.toFixed(2)), taxDetails: { ...form.priceSchedule.taxDetails, vatAmount: Number(vat.toFixed(2)) } } })
-                    }} />
-                  </div>
-                  <div className="form-group" style={{ flex: 1 }}>
-                    <label>Unit</label>
-                    <input type="text" value={it.unit} onChange={e => {
-                      const items = form.priceSchedule.items.map((x, idx) => idx === i ? { ...x, unit: e.target.value } : x)
-                      setForm({ ...form, priceSchedule: { ...form.priceSchedule, items } })
-                    }} />
-                  </div>
-                  <div className="form-group" style={{ flex: 1 }}>
-                    <label>Unit Rate</label>
-                    <input type="number" value={it.unitRate} onChange={e => {
-                      const items = form.priceSchedule.items.map((x, idx) => idx === i ? { ...x, unitRate: e.target.value, totalAmount: Number((Number(x.quantity || 0) * Number(e.target.value || 0)).toFixed(2)) } : x)
-                      const sub = items.reduce((sum, it) => sum + Number(it.totalAmount || 0), 0)
-                      const vat = sub * (Number(form.priceSchedule.taxDetails.vatRate || 0) / 100)
-                      const grand = sub + vat
-                      setForm({ ...form, priceSchedule: { ...form.priceSchedule, items, subTotal: Number(sub.toFixed(2)), grandTotal: Number(grand.toFixed(2)), taxDetails: { ...form.priceSchedule.taxDetails, vatAmount: Number(vat.toFixed(2)) } } })
-                    }} />
-                  </div>
-                  <div className="form-group" style={{ flex: 1 }}>
-                    <label>Total</label>
-                    <input type="number" readOnly value={Number(it.totalAmount || 0)} />
-                  </div>
-                </div>
-              </div>
-            ))}
-            <div className="section-actions">
-              <button type="button" className="link-btn" onClick={() => setForm({ ...form, priceSchedule: { ...form.priceSchedule, items: [...form.priceSchedule.items, { description: '', quantity: 0, unit: '', unitRate: 0, totalAmount: 0 }] } })}>+ Add Item</button>
-            </div>
-            <div className="form-row" style={{ marginTop: '16px' }}>
-              <div className="form-group" style={{ flex: 1 }}>
-                <label>Sub Total</label>
-                <input type="number" readOnly value={Number(form.priceSchedule.subTotal || 0)} />
-              </div>
-              <div className="form-group" style={{ flex: 1 }}>
-                <label>VAT Amount</label>
-                <input type="number" readOnly value={Number(form.priceSchedule.taxDetails.vatAmount || 0)} />
-              </div>
-              <div className="form-group" style={{ flex: 1 }}>
-                <label>Grand Total</label>
-                <input type="number" readOnly value={Number(form.priceSchedule.grandTotal || 0)} />
-              </div>
+            <div className="form-group">
+              <ScopeOfWorkEditor
+                value={typeof form.priceSchedule === 'string' ? form.priceSchedule : ''}
+                onChange={(html) => setForm({ ...form, priceSchedule: html })}
+              />
             </div>
           </div>
 

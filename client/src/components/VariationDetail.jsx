@@ -698,6 +698,7 @@ function ScopeOfWorkEditor({ value, onChange }) {
 
 function VariationDetail() {
   const [variation, setVariation] = useState(null)
+  const [originalRichTextFields, setOriginalRichTextFields] = useState({ scopeOfWork: null, exclusions: null, paymentTerms: null })
   const [lead, setLead] = useState(null)
   const [project, setProject] = useState(null)
   const [currentUser, setCurrentUser] = useState(() => {
@@ -782,7 +783,15 @@ function VariationDetail() {
         if (!varData || !varData._id) {
           throw new Error('Invalid variation data received')
         }
-        setVariation(varData)
+        // Normalize rich text fields for backward compatibility
+        // Store original string values before normalization
+        setOriginalRichTextFields({
+          scopeOfWork: typeof varData.scopeOfWork === 'string' ? varData.scopeOfWork : null,
+          exclusions: typeof varData.exclusions === 'string' ? varData.exclusions : null,
+          paymentTerms: typeof varData.paymentTerms === 'string' ? varData.paymentTerms : null
+        })
+        const normalizedVariation = normalizeRichTextFields(varData)
+        setVariation(normalizedVariation)
         
         // Load lead if available
         if (varData.lead) {
@@ -848,13 +857,184 @@ function VariationDetail() {
     })
   }
 
+  // Normalize rich text fields from strings to arrays/objects for backward compatibility
+  const normalizeRichTextFields = (v) => {
+    if (!v) return v
+    const clone = { ...v }
+
+    // scopeOfWork: string -> array of one item with description
+    if (typeof clone.scopeOfWork === 'string') {
+      const desc = clone.scopeOfWork
+      clone.scopeOfWork = desc ? [{ description: desc, quantity: '', unit: '', locationRemarks: '' }] : []
+    }
+
+    // priceSchedule: keep as string (rich text HTML content)
+    // No conversion needed - it's already a string
+
+    // exclusions: string -> array (split by <br> or newline); array of strings ok; other -> []
+    if (typeof clone.exclusions === 'string') {
+      clone.exclusions = clone.exclusions
+        ? clone.exclusions.split(/<br\s*\/?>|\n/gi).map(s => s.trim()).filter(Boolean)
+        : []
+    } else if (!Array.isArray(clone.exclusions)) {
+      clone.exclusions = []
+    }
+
+    // paymentTerms: string -> array of objects; array ok; else []
+    if (typeof clone.paymentTerms === 'string') {
+      clone.paymentTerms = clone.paymentTerms
+        ? clone.paymentTerms.split(/<br\s*\/?>|\n/gi).map(term => {
+            const match = term.match(/^(.+?)(?:\s*-\s*(\d+(?:\.\d+)?)%)?$/)
+            return {
+              milestoneDescription: match ? match[1].trim() : term.trim(),
+              amountPercent: match && match[2] ? parseFloat(match[2]) : 0
+            }
+          }).filter(t => t.milestoneDescription)
+        : []
+    } else if (!Array.isArray(clone.paymentTerms)) {
+      clone.paymentTerms = []
+    }
+
+    return clone
+  }
+
+  // Convert rich text HTML to pdfMake-friendly fragments (preserve inline styles)
+  const htmlToPdfFragments = (html) => {
+    if (!html) return [{ text: '' }]
+
+    const fallback = (raw) => {
+      const withBreaks = raw
+        .replace(/<\s*br\s*\/?>/gi, '\n')
+        .replace(/<\/\s*li\s*>/gi, '\n')
+        .replace(/<\s*li\s*>/gi, '• ')
+      const stripped = withBreaks.replace(/<[^>]+>/g, '')
+      return [{ text: stripped.trim() }]
+    }
+
+    const applyInlineStyles = (node, base = {}) => {
+      const next = { ...base }
+      const style = (node.getAttribute && node.getAttribute('style')) || ''
+      if (style) {
+        const colorMatch = style.match(/color\s*:\s*([^;]+)/i)
+        if (colorMatch) next.color = colorMatch[1].trim()
+        const bgMatch = style.match(/background(?:-color)?\s*:\s*([^;]+)/i)
+        if (bgMatch) next.background = bgMatch[1].trim()
+        const ffMatch = style.match(/font-family\s*:\s*([^;]+)/i)
+        if (ffMatch) next.font = ffMatch[1].trim().replace(/['"]/g, '')
+        const fsMatch = style.match(/font-size\s*:\s*([^;]+)/i)
+        if (fsMatch) {
+          const raw = fsMatch[1].trim()
+          const num = parseFloat(raw)
+          if (!Number.isNaN(num)) next.fontSize = num
+        }
+      }
+      if (node.tagName?.toLowerCase() === 'font' && node.getAttribute) {
+        const c = node.getAttribute('color')
+        if (c) next.color = c
+      }
+      return next
+    }
+
+    if (typeof DOMParser === 'undefined' || typeof Node === 'undefined') {
+      return fallback(html)
+    }
+
+    const parser = new DOMParser()
+    const doc = parser.parseFromString(`<div>${html}</div>`, 'text/html')
+
+    const walk = (node, inherited = {}) => {
+      const results = []
+      const pushText = (text, style = inherited) => {
+        if (text === undefined || text === null) return
+        const val = String(text)
+        if (val.length === 0) return
+        results.push({ text: val, ...style })
+      }
+
+      switch (node.nodeType) {
+        case Node.TEXT_NODE: {
+          const t = node.textContent || ''
+          if (t.trim().length === 0 && /\s+/.test(t)) break
+          pushText(t, inherited)
+          break
+        }
+        case Node.ELEMENT_NODE: {
+          const tag = node.tagName.toLowerCase()
+          const next = applyInlineStyles(node, inherited)
+          if (['strong', 'b'].includes(tag)) next.bold = true
+          if (['em', 'i'].includes(tag)) next.italics = true
+          if (tag === 'u') next.decoration = 'underline'
+          if (['h1', 'h2', 'h3', 'h4'].includes(tag)) next.fontSize = 12
+
+          if (tag === 'br') {
+            results.push({ text: '\n', ...next })
+            break
+          }
+
+          if (tag === 'ul' || tag === 'ol') {
+            const isOrdered = tag === 'ol'
+            const items = []
+            node.childNodes.forEach((child, idx) => {
+              if (child.tagName?.toLowerCase() === 'li') {
+                const liParts = walk(child, next)
+                const combined = liParts.map(p => p.text || '').join('').trim()
+                if (combined.length) {
+                  items.push({ text: isOrdered ? `${idx + 1}. ${combined}` : `• ${combined}`, ...next })
+                }
+              }
+            })
+            if (items.length) {
+              results.push({ stack: items, margin: [0, 0, 0, 2] })
+            }
+            break
+          }
+
+          if (tag === 'li') {
+            node.childNodes.forEach(child => {
+              results.push(...walk(child, next))
+            })
+            break
+          }
+
+          const blockLike = ['p', 'div', 'h1', 'h2', 'h3', 'h4'].includes(tag)
+          const children = []
+          node.childNodes.forEach(child => {
+            children.push(...walk(child, next))
+          })
+          if (children.length) {
+            if (blockLike) {
+              results.push({ stack: children, margin: [0, 0, 0, 4] })
+            } else {
+              results.push(...children)
+            }
+          }
+          break
+        }
+        default:
+          break
+      }
+
+      return results
+    }
+
+    const output = []
+    doc.body.childNodes.forEach(n => output.push(...walk(n)))
+    if (!output.length) return fallback(html)
+    return output
+  }
+
+  const richTextCell = (val) => {
+    const frags = htmlToPdfFragments(val)
+    return { stack: frags, preserveLeadingSpaces: true, margin: [0, 0, 0, 2] }
+  }
+
   // Helper function to build PDF content (shared between preview and export)
   const buildVariationPDFContent = async () => {
     try {
       if (!variation) return null
       await ensurePdfMake()
       const logoDataUrl = await toDataURL(variation.companyInfo?.logo || logo)
-      const currency = variation.priceSchedule?.currency || 'AED'
+      const currency = 'AED' // Default currency since priceSchedule is now just HTML
 
       const leadFull = lead || (typeof variation.lead === 'object' ? variation.lead : null)
       const siteVisits = Array.isArray(lead?.siteVisits) ? lead.siteVisits : []
@@ -870,29 +1050,21 @@ function VariationDetail() {
       ]
       const coverFields = coverFieldsRaw.filter(([, v]) => v && String(v).trim().length > 0)
 
-      const scopeRows = (variation.scopeOfWork || [])
-        .filter(s => (s?.description || '').trim().length > 0)
-        .map((s, i) => [
-          String(i + 1),
-          s.description,
-          String(s.quantity || ''),
-          s.unit || '',
-          s.locationRemarks || ''
-        ])
-
-      const priceItems = (variation.priceSchedule?.items || [])
-        .filter(it => (it?.description || '').trim().length > 0 || Number(it.quantity) > 0 || Number(it.unitRate) > 0)
-      const priceRows = priceItems.map((it, i) => [
-        String(i + 1),
-        it.description || '',
-        String(it.quantity || 0),
-        it.unit || '',
-        `${currency} ${Number(it.unitRate || 0).toFixed(2)}`,
-        `${currency} ${Number((it.quantity || 0) * (it.unitRate || 0)).toFixed(2)}`
-      ])
-
-      const exclusions = (variation.exclusions || []).map(x => String(x || '').trim()).filter(Boolean)
-      const paymentTerms = (variation.paymentTerms || []).filter(p => (p?.milestoneDescription || '').trim().length > 0 || String(p?.amountPercent || '').trim().length > 0)
+      // Get original HTML strings for rich text fields (before normalization)
+      const scopeOfWorkHtml = originalRichTextFields.scopeOfWork || (typeof variation.scopeOfWork === 'string' ? variation.scopeOfWork : '')
+      const exclusionsHtml = originalRichTextFields.exclusions || (typeof variation.exclusions === 'string' ? variation.exclusions : '')
+      const paymentTermsHtml = originalRichTextFields.paymentTerms || (typeof variation.paymentTerms === 'string' ? variation.paymentTerms : '')
+      
+      // Convert HTML strings to PDF fragments
+      const scopeOfWorkFragments = scopeOfWorkHtml && scopeOfWorkHtml.trim() ? htmlToPdfFragments(scopeOfWorkHtml) : []
+      const priceScheduleHtml = typeof variation.priceSchedule === 'string' 
+        ? variation.priceSchedule 
+        : (variation.priceSchedule?.items?.length 
+          ? variation.priceSchedule.items.map(item => item.description || '').join('<br>')
+          : '')
+      const priceScheduleFragments = priceScheduleHtml && priceScheduleHtml.trim() ? htmlToPdfFragments(priceScheduleHtml) : []
+      const exclusionsFragments = exclusionsHtml && exclusionsHtml.trim() ? htmlToPdfFragments(exclusionsHtml) : []
+      const paymentTermsFragments = paymentTermsHtml && paymentTermsHtml.trim() ? htmlToPdfFragments(paymentTermsHtml) : []
 
       const dcwv = variation.deliveryCompletionWarrantyValidity || {}
       const deliveryRowsRaw = [
@@ -964,20 +1136,13 @@ function VariationDetail() {
 
       if ((variation.introductionText || '').trim().length > 0) {
         content.push({ text: 'Introduction', style: 'h2', margin: [0, 10, 0, 6] })
-        content.push({ text: variation.introductionText, margin: [0, 0, 0, 6] })
+        content.push({ stack: htmlToPdfFragments(variation.introductionText), margin: [0, 0, 0, 6], preserveLeadingSpaces: true })
       }
 
-      if (scopeRows.length > 0) {
+      if (scopeOfWorkFragments.length > 0) {
         content.push({ text: 'Scope of Work', style: 'h2', margin: [0, 12, 0, 6] })
         content.push({
-          table: {
-            widths: ['6%', '54%', '10%', '10%', '20%'],
-            body: [
-              [{ text: '#', style: 'th' }, { text: 'Description', style: 'th' }, { text: 'Qty', style: 'th' }, { text: 'Unit', style: 'th' }, { text: 'Location/Remarks', style: 'th' }],
-              ...scopeRows
-            ]
-          },
-          layout: 'lightHorizontalLines'
+          stack: scopeOfWorkFragments.map(frag => ({ ...frag, margin: [0, 0, 0, 8] }))
         })
       }
 
@@ -1008,68 +1173,31 @@ function VariationDetail() {
         })
       }
 
-      if (priceRows.length > 0) {
+      // Price Schedule (rich text HTML content)
+      if (priceScheduleFragments.length > 0) {
         content.push({ text: 'Price Schedule', style: 'h2', margin: [0, 12, 0, 6] })
         content.push({
-          table: {
-            widths: ['6%', '44%', '10%', '10%', '15%', '15%'],
-            body: [
-              [
-                { text: '#', style: 'th' },
-                { text: 'Description', style: 'th' },
-                { text: 'Qty', style: 'th' },
-                { text: 'Unit', style: 'th' },
-                { text: `Unit Rate (${currency})`, style: 'th' },
-                { text: `Amount (${currency})`, style: 'th' }
-              ],
-              ...priceRows
-            ]
-          },
-          layout: 'lightHorizontalLines'
-        })
-
-        content.push({
-          columns: [
-            { width: '*', text: '' },
-            {
-              width: '40%',
-              table: {
-                widths: ['55%', '45%'],
-                body: [
-                  [{ text: 'Sub Total', style: 'tdKey' }, { text: `${currency} ${Number(variation.priceSchedule?.subTotal || 0).toFixed(2)}`, alignment: 'right' }],
-                  [{ text: `VAT (${variation.priceSchedule?.taxDetails?.vatRate || 0}%)`, style: 'tdKey' }, { text: `${currency} ${Number(variation.priceSchedule?.taxDetails?.vatAmount || 0).toFixed(2)}`, alignment: 'right' }],
-                  [{ text: 'Grand Total', style: 'th' }, { text: `${currency} ${Number(variation.priceSchedule?.grandTotal || 0).toFixed(2)}`, style: 'th', alignment: 'right' }]
-                ]
-              },
-              layout: 'lightHorizontalLines'
-            }
-          ],
-          margin: [0, 8, 0, 0]
+          stack: priceScheduleFragments.map(frag => ({ ...frag, margin: [0, 0, 0, 8] }))
         })
       }
 
-      if ((variation.ourViewpoints || '').trim().length > 0 || exclusions.length > 0) {
+      if ((variation.ourViewpoints || '').trim().length > 0 || exclusionsFragments.length > 0) {
         content.push({ text: 'Our Viewpoints / Special Terms', style: 'h2', margin: [0, 12, 0, 6] })
         if ((variation.ourViewpoints || '').trim().length > 0) {
-          content.push({ text: variation.ourViewpoints, margin: [0, 0, 0, 6] })
+          content.push({ stack: htmlToPdfFragments(variation.ourViewpoints), margin: [0, 0, 0, 6], preserveLeadingSpaces: true })
         }
-        if (exclusions.length > 0) {
+        if (exclusionsFragments.length > 0) {
           content.push({ text: 'Exclusions', style: 'h3', margin: [0, 6, 0, 4] })
-          content.push({ ul: exclusions })
+          content.push({
+            stack: exclusionsFragments.map(frag => ({ ...frag, margin: [0, 0, 0, 8] }))
+          })
         }
       }
 
-      if (paymentTerms.length > 0) {
+      if (paymentTermsFragments.length > 0) {
         content.push({ text: 'Payment Terms', style: 'h2', margin: [0, 12, 0, 6] })
         content.push({
-          table: {
-            widths: ['10%', '70%', '20%'],
-            body: [
-              [{ text: '#', style: 'th' }, { text: 'Milestone', style: 'th' }, { text: 'Amount %', style: 'th' }],
-              ...paymentTerms.map((p, i) => [String(i + 1), p.milestoneDescription || '', String(p.amountPercent || '')])
-            ]
-          },
-          layout: 'lightHorizontalLines'
+          stack: paymentTermsFragments.map(frag => ({ ...frag, margin: [0, 0, 0, 8] }))
         })
       }
 
@@ -1278,9 +1406,16 @@ function VariationDetail() {
     return false
   }
 
-  const formatHistoryValue = (field, value) => {
+  const formatHistoryValue = (field, value, { asHtml = false } = {}) => {
     // Handle null/undefined
-    if (value === null || value === undefined) return '(empty)'
+    if (value === null || value === undefined) return ''
+    
+    // For rich text fields, return as HTML when asHtml is true
+    if (asHtml && ['scopeOfWork', 'priceSchedule', 'exclusions', 'paymentTerms'].includes(field)) {
+      if (typeof value === 'string') {
+        return value
+      }
+    }
     
     // Handle date strings (from diffFromParent normalization)
     if (['offerDate', 'enquiryDate'].includes(field)) {
@@ -1317,25 +1452,27 @@ function VariationDetail() {
       if (value.length === 0) return '(empty)'
       
       if (field === 'paymentTerms') {
-        return value.map((t, i) => {
+        const terms = value || []
+        return terms.map((t, i) => {
           if (typeof t === 'string') return `${i + 1}. ${t}`
           if (!t || typeof t !== 'object') return `${i + 1}. ${String(t)}`
           return `${i + 1}. ${t?.milestoneDescription || '-'} — ${t?.amountPercent ?? ''}%`
-        }).join('\n')
+        }).join('<br>')
       }
       
       if (field === 'scopeOfWork') {
-        return value.map((s, i) => {
+        const scopes = value || []
+        return scopes.map((s, i) => {
           if (typeof s === 'string') return `${i + 1}. ${s}`
           if (!s || typeof s !== 'object') return `${i + 1}. ${String(s)}`
           const qtyUnit = [s?.quantity ?? '', s?.unit || ''].filter(x => String(x).trim().length > 0).join(' ')
           const remarks = s?.locationRemarks ? ` — ${s.locationRemarks}` : ''
           return `${i + 1}. ${s?.description || '-'}${qtyUnit ? ` — Qty: ${qtyUnit}` : ''}${remarks}`
-        }).join('\n')
+        }).join('<br>')
       }
       
       if (field === 'exclusions') {
-        return value.map((v, i) => `${i + 1}. ${String(v)}`).join('\n')
+        return value.map((v, i) => `${i + 1}. ${String(v)}`).join('<br>')
       }
       
       // Generic array handling
@@ -1348,7 +1485,7 @@ function VariationDetail() {
           return `${i + 1}. ${parts.join(', ')}`
         }
         return `${i + 1}. ${String(v)}`
-      }).join('\n')
+      }).join('<br>')
     }
     
     // Handle objects (before string check)
@@ -1376,7 +1513,7 @@ function VariationDetail() {
           }
         }
         if (ps?.grandTotal !== undefined && ps?.grandTotal !== null) lines.push(`Grand Total: ${ps.grandTotal}`)
-        return lines.length > 0 ? lines.join('\n') : '(empty)'
+        return lines.length > 0 ? lines.join('<br>') : '(empty)'
       }
       
       if (field === 'deliveryCompletionWarrantyValidity') {
@@ -1386,7 +1523,7 @@ function VariationDetail() {
         if (d?.warrantyPeriod) lines.push(`Warranty Period: ${d.warrantyPeriod}`)
         if (d?.offerValidity !== undefined && d?.offerValidity !== null) lines.push(`Offer Validity: ${d.offerValidity} days`)
         if (d?.authorizedSignatory) lines.push(`Authorized Signatory: ${d.authorizedSignatory}`)
-        return lines.length > 0 ? lines.join('\n') : '(empty)'
+        return lines.length > 0 ? lines.join('<br>') : '(empty)'
       }
       
       if (field === 'companyInfo') {
@@ -1396,7 +1533,7 @@ function VariationDetail() {
         if (ci?.address) lines.push(`Address: ${ci.address}`)
         if (ci?.phone) lines.push(`Phone: ${ci.phone}`)
         if (ci?.email) lines.push(`Email: ${ci.email}`)
-        return lines.length > 0 ? lines.join('\n') : '(empty)'
+        return lines.length > 0 ? lines.join('<br>') : '(empty)'
       }
       
       // Generic object handling
@@ -1411,17 +1548,21 @@ function VariationDetail() {
         }
         return `${k}: ${String(v)}`
       })
-      return entries.length > 0 ? entries.join('\n') : '(empty)'
+      return entries.length > 0 ? entries.join('<br>') : '(empty)'
     }
     
     // Handle primitive types
     if (typeof value === 'string') {
+      // For rich text fields, return as-is when asHtml is true
+      if (asHtml && ['scopeOfWork', 'priceSchedule', 'exclusions', 'paymentTerms'].includes(field)) {
+        return value
+      }
       // Try to parse JSON string if value looks like JSON
       if ((value.startsWith('{') || value.startsWith('[')) && value.length > 1) {
         try {
           const parsed = JSON.parse(value)
           // Recursively format the parsed value
-          return formatHistoryValue(field, parsed)
+          return formatHistoryValue(field, parsed, { asHtml })
         } catch {
           // Not valid JSON, return as string
           return value.trim() || '(empty)'
@@ -1457,7 +1598,7 @@ function VariationDetail() {
     </div>
   )
 
-  const currency = variation.priceSchedule?.currency || 'AED'
+  const currency = 'AED' // Default currency since priceSchedule is now just HTML
   const approvalStatus = variation.managementApproval?.status
 
   return (
@@ -1470,15 +1611,6 @@ function VariationDetail() {
           <span className="ld-subtitle">Offer Ref: {variation.offerReference || 'N/A'}</span>
         </div>
         <div className="ld-sticky-actions">
-          {approvalStatus ? (
-            approvalStatus === 'pending' ? (
-              <span className="status-pill pending">Approval Pending</span>
-            ) : approvalStatus === 'approved' ? (
-              <span className="status-pill approved">approved</span>
-            ) : approvalStatus === 'rejected' ? (
-              <span className="status-pill rejected">rejected</span>
-            ) : null
-          ) : null}
           <button className="save-btn" onClick={generatePDFPreview}>Print Preview</button>
           {project && (
             <button className="link-btn" onClick={() => {
@@ -1548,7 +1680,7 @@ function VariationDetail() {
                   projectTitle: variation.projectTitle || variation.lead?.projectTitle || project?.name || '',
                   introductionText: variation.introductionText || '',
                   scopeOfWork: scopeOfWorkValue,
-                  priceSchedule: variation.priceSchedule || { items: [], subTotal: 0, grandTotal: 0, currency: variation.priceSchedule?.currency || 'AED', taxDetails: { vatRate: 5, vatAmount: 0 } },
+                  priceSchedule: typeof variation.priceSchedule === 'string' ? variation.priceSchedule : '',
                   ourViewpoints: variation.ourViewpoints || '',
                   exclusions: exclusionsValue,
                   paymentTerms: paymentTermsValue,
@@ -1561,49 +1693,19 @@ function VariationDetail() {
             <span className="status-badge blue">Approval Pending</span>
           ) : (
             (approvalStatus !== 'approved' && (currentUser?.roles?.includes('estimation_engineer') || variation?.createdBy?._id === currentUser?.id)) && (
-              <button 
-                className="save-btn" 
-                onClick={() => setSendApprovalConfirmModal({ open: true })}
-                disabled={isSubmitting}
-              >
-                <ButtonLoader loading={loadingAction === 'send-approval'}>
-                  Send for Approval
-                </ButtonLoader>
-              </button>
+              <button className="save-btn" onClick={() => setSendApprovalConfirmModal({ open: true })}>Send for Approval</button>
             )
           )}
           {(currentUser?.roles?.includes('manager') || currentUser?.roles?.includes('admin')) && approvalStatus === 'pending' && (
             <>
-              <button 
-                className="approve-btn" 
-                onClick={() => setApprovalModal({ open: true, action: 'approved', note: '' })}
-                disabled={isSubmitting}
-              >
-                <ButtonLoader loading={loadingAction === 'approve-approved'}>
-                  Approve
-                </ButtonLoader>
-              </button>
-              <button 
-                className="reject-btn" 
-                onClick={() => setApprovalModal({ open: true, action: 'rejected', note: '' })}
-                disabled={isSubmitting}
-              >
-                <ButtonLoader loading={loadingAction === 'approve-rejected'}>
-                  Reject
-                </ButtonLoader>
-              </button>
+              <button className="approve-btn" onClick={() => setApprovalModal({ open: true, action: 'approved', note: '' })}>Approve</button>
+              <button className="reject-btn" onClick={() => setApprovalModal({ open: true, action: 'rejected', note: '' })}>Reject</button>
             </>
           )}
-          {(currentUser?.roles?.includes('manager') || currentUser?.roles?.includes('admin')) && (
-            <button 
-              className="reject-btn" 
-              onClick={() => setDeleteModal({ open: true })}
-              disabled={isSubmitting}
-            >
-              <ButtonLoader loading={loadingAction === 'delete-variation'}>
-                Delete
-              </ButtonLoader>
-            </button>
+          {/* Delete button - Estimation Engineers before approval, Managers/Admins after approval */}
+          {((approvalStatus !== 'approved' && currentUser?.roles?.includes('estimation_engineer')) || 
+            (approvalStatus === 'approved' && (currentUser?.roles?.includes('manager') || currentUser?.roles?.includes('admin')))) && (
+            <button className="reject-btn" onClick={() => setDeleteModal({ open: true })}>Delete Variation</button>
           )}
           {approvalStatus === 'approved' && (currentUser?.roles?.includes('estimation_engineer') || variation?.createdBy?._id === currentUser?.id) && (
             <button className="save-btn" onClick={async () => {
@@ -1629,7 +1731,7 @@ function VariationDetail() {
                   projectTitle: variation.projectTitle || variation.lead?.projectTitle || project?.name || '',
                   introductionText: variation.introductionText || '',
                   scopeOfWork: variation.scopeOfWork?.length ? variation.scopeOfWork : [{ description: '', quantity: '', unit: '', locationRemarks: '' }],
-                  priceSchedule: variation.priceSchedule || { items: [], subTotal: 0, grandTotal: 0, currency: 'AED', taxDetails: { vatRate: 5, vatAmount: 0 } },
+                  priceSchedule: typeof variation.priceSchedule === 'string' ? variation.priceSchedule : '',
                   ourViewpoints: variation.ourViewpoints || '',
                   exclusions: variation.exclusions?.length ? variation.exclusions : [''],
                   paymentTerms: variation.paymentTerms?.length ? variation.paymentTerms : [{ milestoneDescription: '', amountPercent: ''}],
@@ -1701,36 +1803,17 @@ function VariationDetail() {
         )}
 
         <div className="ld-card ld-section">
-          <h3>Variation Quotation Overview</h3>
+          <h3>Variation Overview</h3>
           <div className="ld-kv">
             <p><strong>Submitted To:</strong> {variation.submittedTo || 'N/A'}</p>
             <p><strong>Attention:</strong> {variation.attention || 'N/A'}</p>
-            <p><strong>Offer Reference:</strong> {variation.offerReference || 'N/A'}</p>
             <p><strong>Offer Date:</strong> {variation.offerDate ? new Date(variation.offerDate).toLocaleDateString() : 'N/A'}</p>
             <p><strong>Enquiry Date:</strong> {variation.enquiryDate ? new Date(variation.enquiryDate).toLocaleDateString() : 'N/A'}</p>
             <p><strong>Enquiry #:</strong> {variation.enquiryNumber || lead?.enquiryNumber || 'N/A'}</p>
-            <p><strong>Project Title:</strong> {variation.projectTitle || lead?.projectTitle || project?.name || 'N/A'}</p>
-            <p><strong>Currency:</strong> {currency}</p>
-            <p><strong>Sub Total:</strong> {currency} {Number(variation.priceSchedule?.subTotal || 0).toFixed(2)}</p>
-            <p><strong>VAT:</strong> {variation.priceSchedule?.taxDetails?.vatRate || 0}% ({currency} {Number(variation.priceSchedule?.taxDetails?.vatAmount || 0).toFixed(2)})</p>
-            <p><strong>Grand Total:</strong> {currency} {Number(variation.priceSchedule?.grandTotal || 0).toFixed(2)}</p>
-            <p>
-              <strong>Created By:</strong> {variation.createdBy?._id === currentUser?.id ? 'You' : (variation.createdBy?.name || 'N/A')}
-              {variation.createdBy?._id !== currentUser?.id && variation.createdBy && (
-                <button className="link-btn" style={{ marginLeft: 6 }} onClick={() => setProfileUser(variation.createdBy)}>View Profile</button>
-              )}
-            </p>
+            <p><strong>Created By:</strong> {variation.createdBy?._id === currentUser?.id ? 'You' : (variation.createdBy?.name || 'N/A')} {variation.createdBy?._id && variation.createdBy._id !== currentUser?.id && (
+              <button className="link-btn" onClick={() => setProfileUser(variation.createdBy)} style={{ marginLeft: 6 }}>View Profile</button>
+            )}</p>
           </div>
-          {variation.managementApproval?.requestedBy?.name && (
-            <p><strong>Approval sent by:</strong> {variation.managementApproval.requestedBy.name} {variation.managementApproval.requestedBy?._id && (
-              <button className="link-btn" onClick={() => setProfileUser(variation.managementApproval.requestedBy)} style={{ marginLeft: 6 }}>View Profile</button>
-            )}</p>
-          )}
-          {variation.managementApproval?.approvedBy?.name && (
-            <p><strong>Approved by:</strong> {variation.managementApproval.approvedBy.name} {variation.managementApproval.approvedBy?._id && (
-              <button className="link-btn" onClick={() => setProfileUser(variation.managementApproval.approvedBy)} style={{ marginLeft: 6 }}>View Profile</button>
-            )}</p>
-          )}
         </div>
 
         {variation.diffFromParent && Array.isArray(variation.diffFromParent) && variation.diffFromParent.length > 0 && (
@@ -1769,54 +1852,77 @@ function VariationDetail() {
                     }
                     const fieldName = fieldNameMap[diff.field] || diff.field.replace(/([A-Z])/g, ' $1').replace(/^./, str => str.toUpperCase())
                     
+                    // Check if this is a rich text field
+                    const isRichText = ['scopeOfWork', 'priceSchedule', 'exclusions', 'paymentTerms', 'ourViewpoints'].includes(diff.field)
+                    // Check if this field should be rendered as HTML (contains HTML tags)
+                    const isHtmlField = isRichText || diff.field === 'deliveryCompletionWarrantyValidity'
+                    
                     // Format the values for display - ensure we're accessing the correct properties
                     const fromVal = diff.from !== undefined ? diff.from : (diff.fromValue !== undefined ? diff.fromValue : null)
                     const toVal = diff.to !== undefined ? diff.to : (diff.toValue !== undefined ? diff.toValue : null)
-                    const fromValue = formatHistoryValue(diff.field, fromVal)
-                    const toValue = formatHistoryValue(diff.field, toVal)
+                    
+                    // For rich text fields, use raw value directly; for others, format it
+                    const fromValue = isRichText ? (fromVal || '') : formatHistoryValue(diff.field, fromVal)
+                    const toValue = isRichText ? (toVal || '') : formatHistoryValue(diff.field, toVal)
                     
                     return (
                       <tr key={idx}>
                         <td data-label="Field"><strong>{fieldName}</strong></td>
                         <td data-label="Previous Value">
-                          <pre style={{ 
-                            margin: 0, 
-                            padding: '10px 12px', 
-                            background: '#FEF2F2', 
-                            border: '1px solid #FECACA', 
-                            borderRadius: '6px',
-                            whiteSpace: 'pre-wrap',
-                            wordBreak: 'break-word',
-                            fontSize: '13px',
-                            lineHeight: '1.5',
-                            maxHeight: '200px',
-                            overflow: 'auto',
-                            color: '#991B1B',
-                            fontFamily: 'inherit',
-                            fontWeight: 400
-                          }}>
-                            {fromValue || '(empty)'}
-                          </pre>
+                          {isHtmlField ? (
+                            <div className="rich-text-content" style={{ 
+                              padding: '8px', 
+                              border: '1px solid #FECACA', 
+                              background: '#FEF2F2', 
+                              borderRadius: '6px', 
+                              maxHeight: '300px', 
+                              overflow: 'auto', 
+                              color: '#991B1B' 
+                            }} dangerouslySetInnerHTML={{ __html: fromValue }} />
+                          ) : (
+                            <pre style={{ 
+                              margin: 0, 
+                              padding: '10px 12px', 
+                              background: '#FEF2F2', 
+                              border: '1px solid #FECACA', 
+                              borderRadius: '6px',
+                              whiteSpace: 'pre-wrap',
+                              wordBreak: 'break-word',
+                              fontSize: '13px',
+                              color: '#991B1B',
+                              fontFamily: 'inherit'
+                            }}>
+                              {fromValue || '(empty)'}
+                            </pre>
+                          )}
                         </td>
                         <td data-label="New Value">
-                          <pre style={{ 
-                            margin: 0, 
-                            padding: '10px 12px', 
-                            background: '#F0FDF4', 
-                            border: '1px solid #BBF7D0', 
-                            borderRadius: '6px',
-                            whiteSpace: 'pre-wrap',
-                            wordBreak: 'break-word',
-                            fontSize: '13px',
-                            lineHeight: '1.5',
-                            maxHeight: '200px',
-                            overflow: 'auto',
-                            color: '#166534',
-                            fontFamily: 'inherit',
-                            fontWeight: 400
-                          }}>
-                            {toValue || '(empty)'}
-                          </pre>
+                          {isHtmlField ? (
+                            <div className="rich-text-content" style={{ 
+                              padding: '8px', 
+                              border: '1px solid #BBF7D0', 
+                              background: '#F0FDF4', 
+                              borderRadius: '6px', 
+                              maxHeight: '300px', 
+                              overflow: 'auto', 
+                              color: '#166534' 
+                            }} dangerouslySetInnerHTML={{ __html: toValue }} />
+                          ) : (
+                            <pre style={{ 
+                              margin: 0, 
+                              padding: '10px 12px', 
+                              background: '#F0FDF4', 
+                              border: '1px solid #BBF7D0', 
+                              borderRadius: '6px',
+                              whiteSpace: 'pre-wrap',
+                              wordBreak: 'break-word',
+                              fontSize: '13px',
+                              color: '#166534',
+                              fontFamily: 'inherit'
+                            }}>
+                              {toValue || '(empty)'}
+                            </pre>
+                          )}
                         </td>
                       </tr>
                     )
@@ -1834,118 +1940,38 @@ function VariationDetail() {
           </div>
         )}
 
-        {Array.isArray(variation.scopeOfWork) && variation.scopeOfWork.length > 0 && (
+        {((originalRichTextFields.scopeOfWork && originalRichTextFields.scopeOfWork.trim()) || (typeof variation.scopeOfWork === 'string' && variation.scopeOfWork && variation.scopeOfWork.trim())) && (
           <div className="ld-card ld-section">
             <h3>Scope of Work</h3>
-            <div className="table">
-              <table>
-                <thead>
-                  <tr>
-                    <th>#</th>
-                    <th>Description</th>
-                    <th>Qty</th>
-                    <th>Unit</th>
-                    <th>Location/Remarks</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {variation.scopeOfWork.map((s, i) => (
-                    <tr key={i}>
-                      <td data-label="#">{i + 1}</td>
-                      <td data-label="Description">{s.description || ''}</td>
-                      <td data-label="Qty">{s.quantity || ''}</td>
-                      <td data-label="Unit">{s.unit || ''}</td>
-                      <td data-label="Location/Remarks">{s.locationRemarks || ''}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <div className="rich-text-content" style={{ padding: '8px 12px' }} dangerouslySetInnerHTML={{ __html: (originalRichTextFields.scopeOfWork && originalRichTextFields.scopeOfWork.trim()) || (typeof variation.scopeOfWork === 'string' && variation.scopeOfWork ? variation.scopeOfWork : '') }} />
           </div>
         )}
 
-        {Array.isArray(variation.priceSchedule?.items) && variation.priceSchedule.items.length > 0 && (
+        {variation.priceSchedule && (
           <div className="ld-card ld-section">
             <h3>Price Schedule</h3>
-            <div className="table">
-              <table>
-                <thead>
-                  <tr>
-                    <th>#</th>
-                    <th>Description</th>
-                    <th>Qty</th>
-                    <th>Unit</th>
-                    <th>Unit Rate</th>
-                    <th>Amount</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {variation.priceSchedule.items.map((it, i) => (
-                    <tr key={i}>
-                      <td data-label="#">{i + 1}</td>
-                      <td data-label="Description">{it.description || ''}</td>
-                      <td data-label="Qty">{it.quantity || 0}</td>
-                      <td data-label="Unit">{it.unit || ''}</td>
-                      <td data-label="Unit Rate">{Number(it.unitRate || 0).toFixed(2)}</td>
-                      <td data-label="Amount">{Number(it.totalAmount || 0).toFixed(2)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <div className="rich-text-content" style={{ padding: '8px 12px' }} dangerouslySetInnerHTML={{ __html: typeof variation.priceSchedule === 'string' ? variation.priceSchedule : '' }} />
           </div>
         )}
 
-        {(variation.ourViewpoints || (variation.exclusions || []).length > 0) && (
+        {variation.ourViewpoints && (
           <div className="ld-card ld-section">
             <h3>Our Viewpoints / Special Terms</h3>
-            {variation.ourViewpoints && <div style={{ marginBottom: 8 }}>{variation.ourViewpoints}</div>}
-            {(variation.exclusions || []).length > 0 && (
-              <div className="table">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>#</th>
-                      <th>Exclusion</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {(variation.exclusions || []).map((ex, i) => (
-                      <tr key={i}>
-                        <td data-label="#">{i + 1}</td>
-                        <td data-label="Exclusion">{ex}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
+            <div className="rich-text-content" dangerouslySetInnerHTML={{ __html: variation.ourViewpoints }} />
           </div>
         )}
 
-        {Array.isArray(variation.paymentTerms) && variation.paymentTerms.length > 0 && (
+        {((originalRichTextFields.exclusions && originalRichTextFields.exclusions.trim()) || (typeof variation.exclusions === 'string' && variation.exclusions && variation.exclusions.trim())) && (
+          <div className="ld-card ld-section">
+            <h3>Exclusions</h3>
+            <div className="rich-text-content" style={{ padding: '8px 12px' }} dangerouslySetInnerHTML={{ __html: (originalRichTextFields.exclusions && originalRichTextFields.exclusions.trim()) || (typeof variation.exclusions === 'string' && variation.exclusions ? variation.exclusions : '') }} />
+          </div>
+        )}
+
+        {((originalRichTextFields.paymentTerms && originalRichTextFields.paymentTerms.trim()) || (typeof variation.paymentTerms === 'string' && variation.paymentTerms && variation.paymentTerms.trim())) && (
           <div className="ld-card ld-section">
             <h3>Payment Terms</h3>
-            <div className="table">
-              <table>
-                <thead>
-                  <tr>
-                    <th>#</th>
-                    <th>Milestone</th>
-                    <th>Amount %</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {variation.paymentTerms.map((p, i) => (
-                    <tr key={i}>
-                      <td data-label="#">{i + 1}</td>
-                      <td data-label="Milestone">{p.milestoneDescription || ''}</td>
-                      <td data-label="Amount %">{p.amountPercent || ''}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <div className="rich-text-content" style={{ padding: '8px 12px' }} dangerouslySetInnerHTML={{ __html: (originalRichTextFields.paymentTerms && originalRichTextFields.paymentTerms.trim()) || (typeof variation.paymentTerms === 'string' && variation.paymentTerms ? variation.paymentTerms : '') }} />
           </div>
         )}
 
@@ -2196,16 +2222,13 @@ function VariationDetail() {
         </div>
       )}
 
-      {variation.edits?.length > 0 && (
+      {variation && (
         <div className="ld-card ld-section">
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: showHistory ? '16px' : '0' }}>
-            <h3 style={{ margin: 0 }}>Variation Edit History</h3>
-            <button className="link-btn" onClick={() => setShowHistory(!showHistory)}>
-              {showHistory ? 'Hide Variation Edit History' : 'View Variation Edit History'}
-            </button>
-          </div>
-          {showHistory && (
-            <div className="edits-list">
+          <button className="link-btn" onClick={() => setShowHistory(!showHistory)}>
+            {showHistory ? 'Hide Variation Edit History' : 'View Variation Edit History'}
+          </button>
+          {showHistory && Array.isArray(variation.edits) && variation.edits.length > 0 && (
+            <div className="edits-list" style={{ marginTop: 8 }}>
               {variation.edits.slice().reverse().map((edit, idx) => (
                 <div key={idx} className="edit-item">
                   <div className="edit-header">
@@ -2216,16 +2239,29 @@ function VariationDetail() {
                     <span>{new Date(edit.editedAt).toLocaleString()}</span>
                   </div>
                   <ul className="changes-list">
-                    {edit.changes.map((c, i) => (
-                      <li key={i}>
-                        <strong>{c.field}:</strong>
-                        <div className="change-diff">
-                          <pre className="change-block">{formatHistoryValue(c.field, c.from)}</pre>
-                          <span>→</span>
-                          <pre className="change-block">{formatHistoryValue(c.field, c.to)}</pre>
-                        </div>
-                      </li>
-                    ))}
+                    {edit.changes.map((c, i) => {
+                       const isRichText = ['scopeOfWork', 'priceSchedule', 'exclusions', 'paymentTerms', 'ourViewpoints'].includes(c.field)
+                       return (
+                         <li key={i}>
+                           <strong>{c.field}:</strong>
+                           <div className="change-diff">
+                             {isRichText ? (
+                               <>
+                                 <div className="change-block" style={{ maxHeight: '200px', overflow: 'auto' }} dangerouslySetInnerHTML={{ __html: formatHistoryValue(c.field, c.from, { asHtml: true }) }} />
+                                 <span>→</span>
+                                 <div className="change-block" style={{ maxHeight: '200px', overflow: 'auto' }} dangerouslySetInnerHTML={{ __html: formatHistoryValue(c.field, c.to, { asHtml: true }) }} />
+                               </>
+                             ) : (
+                               <>
+                                 <pre className="change-block" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{formatHistoryValue(c.field, c.from)}</pre>
+                                 <span>→</span>
+                                 <pre className="change-block" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{formatHistoryValue(c.field, c.to)}</pre>
+                               </>
+                             )}
+                           </div>
+                         </li>
+                       )
+                    })}
                   </ul>
                 </div>
               ))}
@@ -2234,15 +2270,14 @@ function VariationDetail() {
         </div>
       )}
 
-      <div className="ld-card ld-section">
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: showApprovals ? '16px' : '0' }}>
-          <h3 style={{ margin: 0 }}>Approvals & Rejections</h3>
+      {variation && (
+        <div className="ld-card ld-section">
           <button className="link-btn" onClick={() => setShowApprovals(!showApprovals)}>
             {showApprovals ? 'Hide Approvals/Rejections' : 'View Approvals/Rejections'}
           </button>
-        </div>
-        {showApprovals && (
-          <div>
+          {showApprovals && (
+            <>
+              <h3 style={{ marginTop: '16px' }}>Approvals & Rejections</h3>
           {(() => {
             const varData = variation
             const rawLogs = Array.isArray(varData.managementApproval?.logs) ? varData.managementApproval.logs.slice().sort((a, b) => {
@@ -2322,9 +2357,10 @@ function VariationDetail() {
               </div>
             )
           })()}
-          </div>
-        )}
-      </div>
+            </>
+          )}
+        </div>
+      )}
 
       {editModal.open && (
         <div className="modal-overlay" onClick={() => {
@@ -2495,95 +2531,11 @@ function VariationDetail() {
                   <div className="section-header">
                     <h3>Price Schedule</h3>
                   </div>
-                  <div className="form-row">
-                    <div className="form-group" style={{ flex: 1 }}>
-                      <label>Currency</label>
-                      <input type="text" value={editModal.form.priceSchedule.currency} onChange={e => setEditModal({ ...editModal, form: { ...editModal.form, priceSchedule: { ...editModal.form.priceSchedule, currency: e.target.value } } })} />
-                    </div>
-                    <div className="form-group" style={{ flex: 1 }}>
-                      <label>VAT %</label>
-                      <input type="number" value={editModal.form.priceSchedule.taxDetails.vatRate} onChange={e => {
-                        const items = editModal.form.priceSchedule.items
-                        const sub = items.reduce((sum, it) => sum + (Number(it.quantity || 0) * Number(it.unitRate || 0)), 0)
-                        const vat = sub * (Number(e.target.value || 0) / 100)
-                        const grand = sub + vat
-                        setEditModal({ ...editModal, form: { ...editModal.form, priceSchedule: { ...editModal.form.priceSchedule, subTotal: Number(sub.toFixed(2)), grandTotal: Number(grand.toFixed(2)), taxDetails: { ...editModal.form.priceSchedule.taxDetails, vatRate: e.target.value, vatAmount: Number(vat.toFixed(2)) } } } })
-                      }} />
-                    </div>
-                  </div>
-                  {editModal.form.priceSchedule.items.map((it, i) => (
-                    <div key={i} className="item-card">
-                      <div className="item-header">
-                        <span>Item {i + 1}</span>
-                        <button type="button" className="cancel-btn" onClick={() => {
-                          const items = editModal.form.priceSchedule.items.filter((_, idx) => idx !== i)
-                          const sub = items.reduce((sum, it) => sum + (Number(it.quantity || 0) * Number(it.unitRate || 0)), 0)
-                          const vat = sub * (Number(editModal.form.priceSchedule.taxDetails.vatRate || 0) / 100)
-                          const grand = sub + vat
-                          setEditModal({ ...editModal, form: { ...editModal.form, priceSchedule: { ...editModal.form.priceSchedule, items, subTotal: Number(sub.toFixed(2)), grandTotal: Number(grand.toFixed(2)), taxDetails: { ...editModal.form.priceSchedule.taxDetails, vatAmount: Number(vat.toFixed(2)) } } } })
-                        }}>Remove</button>
-                      </div>
-                      <div className="form-row">
-                        <div className="form-group" style={{ flex: 3 }}>
-                          <label>Description</label>
-                          <input type="text" value={it.description} onChange={e => {
-                            const items = editModal.form.priceSchedule.items.map((x, idx) => idx === i ? { ...x, description: e.target.value } : x)
-                            setEditModal({ ...editModal, form: { ...editModal.form, priceSchedule: { ...editModal.form.priceSchedule, items } } })
-                          }} />
-                        </div>
-                        <div className="form-group" style={{ flex: 1 }}>
-                          <label>Qty</label>
-                          <input type="number" value={it.quantity} onChange={e => {
-                            const items = editModal.form.priceSchedule.items.map((x, idx) => idx === i ? { ...x, quantity: e.target.value, totalAmount: Number((Number(e.target.value || 0) * Number(x.unitRate || 0)).toFixed(2)) } : x)
-                            const sub = items.reduce((sum, it) => sum + (Number(it.quantity || 0) * Number(it.unitRate || 0)), 0)
-                            const vat = sub * (Number(editModal.form.priceSchedule.taxDetails.vatRate || 0) / 100)
-                            const grand = sub + vat
-                            setEditModal({ ...editModal, form: { ...editModal.form, priceSchedule: { ...editModal.form.priceSchedule, items, subTotal: Number(sub.toFixed(2)), grandTotal: Number(grand.toFixed(2)), taxDetails: { ...editModal.form.priceSchedule.taxDetails, vatAmount: Number(vat.toFixed(2)) } } } })
-                          }} />
-                        </div>
-                        <div className="form-group" style={{ flex: 1 }}>
-                          <label>Unit</label>
-                          <input type="text" value={it.unit} onChange={e => {
-                            const items = editModal.form.priceSchedule.items.map((x, idx) => idx === i ? { ...x, unit: e.target.value } : x)
-                            setEditModal({ ...editModal, form: { ...editModal.form, priceSchedule: { ...editModal.form.priceSchedule, items } } })
-                          }} />
-                        </div>
-                        <div className="form-group" style={{ flex: 1 }}>
-                          <label>Unit Rate</label>
-                          <input type="number" value={it.unitRate} onChange={e => {
-                            const items = editModal.form.priceSchedule.items.map((x, idx) => idx === i ? { ...x, unitRate: e.target.value, totalAmount: Number((Number(x.quantity || 0) * Number(e.target.value || 0)).toFixed(2)) } : x)
-                            const sub = items.reduce((sum, it) => sum + (Number(it.quantity || 0) * Number(it.unitRate || 0)), 0)
-                            const vat = sub * (Number(editModal.form.priceSchedule.taxDetails.vatRate || 0) / 100)
-                            const grand = sub + vat
-                            setEditModal({ ...editModal, form: { ...editModal.form, priceSchedule: { ...editModal.form.priceSchedule, items, subTotal: Number(sub.toFixed(2)), grandTotal: Number(grand.toFixed(2)), taxDetails: { ...editModal.form.priceSchedule.taxDetails, vatAmount: Number(vat.toFixed(2)) } } } })
-                          }} />
-                        </div>
-                        <div className="form-group" style={{ flex: 1 }}>
-                          <label>Amount</label>
-                          <input type="number" value={Number(it.totalAmount || 0)} readOnly />
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                  <div className="section-actions">
-                    <button type="button" className="link-btn" onClick={() => setEditModal({ ...editModal, form: { ...editModal.form, priceSchedule: { ...editModal.form.priceSchedule, items: [...editModal.form.priceSchedule.items, { description: '', quantity: 0, unit: '', unitRate: 0, totalAmount: 0 }] } } })}>+ Add Item</button>
-                  </div>
-
-                  <div className="totals-card">
-                    <div className="form-row">
-                      <div className="form-group" style={{ flex: 1 }}>
-                        <label>Sub Total</label>
-                        <input type="number" readOnly value={Number(editModal.form.priceSchedule.subTotal || 0)} />
-                      </div>
-                      <div className="form-group" style={{ flex: 1 }}>
-                        <label>VAT Amount</label>
-                        <input type="number" readOnly value={Number(editModal.form.priceSchedule.taxDetails.vatAmount || 0)} />
-                      </div>
-                      <div className="form-group" style={{ flex: 1 }}>
-                        <label>Grand Total</label>
-                        <input type="number" readOnly value={Number(editModal.form.priceSchedule.grandTotal || 0)} />
-                      </div>
-                    </div>
+                  <div className="form-group">
+                    <ScopeOfWorkEditor
+                      value={typeof editModal.form.priceSchedule === 'string' ? editModal.form.priceSchedule : ''}
+                      onChange={(html) => setEditModal({ ...editModal, form: { ...editModal.form, priceSchedule: html } })}
+                    />
                   </div>
                 </div>
 
@@ -3119,95 +3071,11 @@ function VariationDetail() {
                 <div className="section-header">
                   <h3>Price Schedule</h3>
                 </div>
-                <div className="form-row">
-                  <div className="form-group" style={{ flex: 1 }}>
-                    <label>Currency</label>
-                    <input type="text" value={createVariationModal.form.priceSchedule.currency} onChange={e => setCreateVariationModal({ ...createVariationModal, form: { ...createVariationModal.form, priceSchedule: { ...createVariationModal.form.priceSchedule, currency: e.target.value } } })} />
-                  </div>
-                  <div className="form-group" style={{ flex: 1 }}>
-                    <label>VAT %</label>
-                    <input type="number" value={createVariationModal.form.priceSchedule.taxDetails.vatRate} onChange={e => {
-                      const items = createVariationModal.form.priceSchedule.items
-                      const sub = items.reduce((sum, it) => sum + (Number(it.quantity || 0) * Number(it.unitRate || 0)), 0)
-                      const vat = sub * (Number(e.target.value || 0) / 100)
-                      const grand = sub + vat
-                      setCreateVariationModal({ ...createVariationModal, form: { ...createVariationModal.form, priceSchedule: { ...createVariationModal.form.priceSchedule, subTotal: Number(sub.toFixed(2)), grandTotal: Number(grand.toFixed(2)), taxDetails: { ...createVariationModal.form.priceSchedule.taxDetails, vatRate: e.target.value, vatAmount: Number(vat.toFixed(2)) } } } })
-                    }} />
-                  </div>
-                </div>
-                {createVariationModal.form.priceSchedule.items.map((it, i) => (
-                  <div key={i} className="item-card">
-                    <div className="item-header">
-                      <span>Item {i + 1}</span>
-                      <button type="button" className="cancel-btn" onClick={() => {
-                        const items = createVariationModal.form.priceSchedule.items.filter((_, idx) => idx !== i)
-                        const sub = items.reduce((sum, it) => sum + (Number(it.quantity || 0) * Number(it.unitRate || 0)), 0)
-                        const vat = sub * (Number(createVariationModal.form.priceSchedule.taxDetails.vatRate || 0) / 100)
-                        const grand = sub + vat
-                        setCreateVariationModal({ ...createVariationModal, form: { ...createVariationModal.form, priceSchedule: { ...createVariationModal.form.priceSchedule, items, subTotal: Number(sub.toFixed(2)), grandTotal: Number(grand.toFixed(2)), taxDetails: { ...createVariationModal.form.priceSchedule.taxDetails, vatAmount: Number(vat.toFixed(2)) } } } })
-                      }}>Remove</button>
-                    </div>
-                    <div className="form-row">
-                      <div className="form-group" style={{ flex: 3 }}>
-                        <label>Description</label>
-                        <input type="text" value={it.description} onChange={e => {
-                          const items = createVariationModal.form.priceSchedule.items.map((x, idx) => idx === i ? { ...x, description: e.target.value } : x)
-                          setCreateVariationModal({ ...createVariationModal, form: { ...createVariationModal.form, priceSchedule: { ...createVariationModal.form.priceSchedule, items } } })
-                        }} />
-                      </div>
-                      <div className="form-group" style={{ flex: 1 }}>
-                        <label>Qty</label>
-                        <input type="number" value={it.quantity} onChange={e => {
-                          const items = createVariationModal.form.priceSchedule.items.map((x, idx) => idx === i ? { ...x, quantity: e.target.value, totalAmount: Number((Number(e.target.value || 0) * Number(x.unitRate || 0)).toFixed(2)) } : x)
-                          const sub = items.reduce((sum, it) => sum + (Number(it.quantity || 0) * Number(it.unitRate || 0)), 0)
-                          const vat = sub * (Number(createVariationModal.form.priceSchedule.taxDetails.vatRate || 0) / 100)
-                          const grand = sub + vat
-                          setCreateVariationModal({ ...createVariationModal, form: { ...createVariationModal.form, priceSchedule: { ...createVariationModal.form.priceSchedule, items, subTotal: Number(sub.toFixed(2)), grandTotal: Number(grand.toFixed(2)), taxDetails: { ...createVariationModal.form.priceSchedule.taxDetails, vatAmount: Number(vat.toFixed(2)) } } } })
-                        }} />
-                      </div>
-                      <div className="form-group" style={{ flex: 1 }}>
-                        <label>Unit</label>
-                        <input type="text" value={it.unit} onChange={e => {
-                          const items = createVariationModal.form.priceSchedule.items.map((x, idx) => idx === i ? { ...x, unit: e.target.value } : x)
-                          setCreateVariationModal({ ...createVariationModal, form: { ...createVariationModal.form, priceSchedule: { ...createVariationModal.form.priceSchedule, items } } })
-                        }} />
-                      </div>
-                      <div className="form-group" style={{ flex: 1 }}>
-                        <label>Unit Rate</label>
-                        <input type="number" value={it.unitRate} onChange={e => {
-                          const items = createVariationModal.form.priceSchedule.items.map((x, idx) => idx === i ? { ...x, unitRate: e.target.value, totalAmount: Number((Number(x.quantity || 0) * Number(e.target.value || 0)).toFixed(2)) } : x)
-                          const sub = items.reduce((sum, it) => sum + (Number(it.quantity || 0) * Number(it.unitRate || 0)), 0)
-                          const vat = sub * (Number(createVariationModal.form.priceSchedule.taxDetails.vatRate || 0) / 100)
-                          const grand = sub + vat
-                          setCreateVariationModal({ ...createVariationModal, form: { ...createVariationModal.form, priceSchedule: { ...createVariationModal.form.priceSchedule, items, subTotal: Number(sub.toFixed(2)), grandTotal: Number(grand.toFixed(2)), taxDetails: { ...createVariationModal.form.priceSchedule.taxDetails, vatAmount: Number(vat.toFixed(2)) } } } })
-                        }} />
-                      </div>
-                      <div className="form-group" style={{ flex: 1 }}>
-                        <label>Amount</label>
-                        <input type="number" value={Number(it.totalAmount || 0)} readOnly />
-                      </div>
-                    </div>
-                  </div>
-                ))}
-                <div className="section-actions">
-                  <button type="button" className="link-btn" onClick={() => setCreateVariationModal({ ...createVariationModal, form: { ...createVariationModal.form, priceSchedule: { ...createVariationModal.form.priceSchedule, items: [...createVariationModal.form.priceSchedule.items, { description: '', quantity: 0, unit: '', unitRate: 0, totalAmount: 0 }] } } })}>+ Add Item</button>
-                </div>
-
-                <div className="totals-card">
-                  <div className="form-row">
-                    <div className="form-group" style={{ flex: 1 }}>
-                      <label>Sub Total</label>
-                      <input type="number" readOnly value={Number(createVariationModal.form.priceSchedule.subTotal || 0)} />
-                    </div>
-                    <div className="form-group" style={{ flex: 1 }}>
-                      <label>VAT Amount</label>
-                      <input type="number" readOnly value={Number(createVariationModal.form.priceSchedule.taxDetails.vatAmount || 0)} />
-                    </div>
-                    <div className="form-group" style={{ flex: 1 }}>
-                      <label>Grand Total</label>
-                      <input type="number" readOnly value={Number(createVariationModal.form.priceSchedule.grandTotal || 0)} />
-                    </div>
-                  </div>
+                <div className="form-group">
+                  <ScopeOfWorkEditor
+                    value={typeof createVariationModal.form.priceSchedule === 'string' ? createVariationModal.form.priceSchedule : ''}
+                    onChange={(html) => setCreateVariationModal({ ...createVariationModal, form: { ...createVariationModal.form, priceSchedule: html } })}
+                  />
                 </div>
               </div>
 

@@ -187,7 +187,7 @@ function ProjectVariationManagement() {
     try {
       await ensurePdfMake()
       const logoDataUrl = await toDataURL(variation.companyInfo?.logo || logo)
-      const currency = variation.priceSchedule?.currency || 'AED'
+      const currency = 'AED' // Default currency since priceSchedule is now just HTML
 
       // Fetch lead data if available
       let leadFull = null
@@ -216,29 +216,21 @@ function ProjectVariationManagement() {
       ]
       const coverFields = coverFieldsRaw.filter(([, v]) => v && String(v).trim().length > 0)
 
-      const scopeRows = (variation.scopeOfWork || [])
-        .filter(s => (s?.description || '').trim().length > 0)
-        .map((s, i) => [
-          String(i + 1),
-          s.description,
-          String(s.quantity || ''),
-          s.unit || '',
-          s.locationRemarks || ''
-        ])
-
-      const priceItems = (variation.priceSchedule?.items || [])
-        .filter(it => (it?.description || '').trim().length > 0 || Number(it.quantity) > 0 || Number(it.unitRate) > 0)
-      const priceRows = priceItems.map((it, i) => [
-        String(i + 1),
-        it.description || '',
-        String(it.quantity || 0),
-        it.unit || '',
-        `${currency} ${Number(it.unitRate || 0).toFixed(2)}`,
-        `${currency} ${Number((it.quantity || 0) * (it.unitRate || 0)).toFixed(2)}`
-      ])
-
-      const exclusions = (variation.exclusions || []).map(x => String(x || '').trim()).filter(Boolean)
-      const paymentTerms = (variation.paymentTerms || []).filter(p => (p?.milestoneDescription || '').trim().length > 0 || String(p?.amountPercent || '').trim().length > 0)
+      // Get original HTML strings for rich text fields
+      const scopeOfWorkHtml = typeof variation.scopeOfWork === 'string' ? variation.scopeOfWork : ''
+      const exclusionsHtml = typeof variation.exclusions === 'string' ? variation.exclusions : ''
+      const paymentTermsHtml = typeof variation.paymentTerms === 'string' ? variation.paymentTerms : ''
+      
+      // Convert HTML strings to PDF fragments
+      const scopeOfWorkFragments = scopeOfWorkHtml && scopeOfWorkHtml.trim() ? htmlToPdfFragments(scopeOfWorkHtml) : []
+      const priceScheduleHtml = typeof variation.priceSchedule === 'string' 
+        ? variation.priceSchedule 
+        : (variation.priceSchedule?.items?.length 
+          ? variation.priceSchedule.items.map(item => item.description || '').join('<br>')
+          : '')
+      const priceScheduleFragments = priceScheduleHtml && priceScheduleHtml.trim() ? htmlToPdfFragments(priceScheduleHtml) : []
+      const exclusionsFragments = exclusionsHtml && exclusionsHtml.trim() ? htmlToPdfFragments(exclusionsHtml) : []
+      const paymentTermsFragments = paymentTermsHtml && paymentTermsHtml.trim() ? htmlToPdfFragments(paymentTermsHtml) : []
 
       const dcwv = variation.deliveryCompletionWarrantyValidity || {}
       const deliveryRowsRaw = [
@@ -310,20 +302,13 @@ function ProjectVariationManagement() {
 
       if ((variation.introductionText || '').trim().length > 0) {
         content.push({ text: 'Introduction', style: 'h2', margin: [0, 10, 0, 6] })
-        content.push({ text: variation.introductionText, margin: [0, 0, 0, 6] })
+        content.push({ stack: htmlToPdfFragments(variation.introductionText), margin: [0, 0, 0, 6], preserveLeadingSpaces: true })
       }
 
-      if (scopeRows.length > 0) {
+      if (scopeOfWorkFragments.length > 0) {
         content.push({ text: 'Scope of Work', style: 'h2', margin: [0, 12, 0, 6] })
         content.push({
-          table: {
-            widths: ['6%', '54%', '10%', '10%', '20%'],
-            body: [
-              [{ text: '#', style: 'th' }, { text: 'Description', style: 'th' }, { text: 'Qty', style: 'th' }, { text: 'Unit', style: 'th' }, { text: 'Location/Remarks', style: 'th' }],
-              ...scopeRows
-            ]
-          },
-          layout: 'lightHorizontalLines'
+          stack: scopeOfWorkFragments.map(frag => ({ ...frag, margin: [0, 0, 0, 8] }))
         })
       }
 
@@ -354,68 +339,31 @@ function ProjectVariationManagement() {
         })
       }
 
-      if (priceRows.length > 0) {
+      // Price Schedule (rich text HTML content)
+      if (priceScheduleFragments.length > 0) {
         content.push({ text: 'Price Schedule', style: 'h2', margin: [0, 12, 0, 6] })
         content.push({
-          table: {
-            widths: ['6%', '44%', '10%', '10%', '15%', '15%'],
-            body: [
-              [
-                { text: '#', style: 'th' },
-                { text: 'Description', style: 'th' },
-                { text: 'Qty', style: 'th' },
-                { text: 'Unit', style: 'th' },
-                { text: `Unit Rate (${currency})`, style: 'th' },
-                { text: `Amount (${currency})`, style: 'th' }
-              ],
-              ...priceRows
-            ]
-          },
-          layout: 'lightHorizontalLines'
-        })
-
-        content.push({
-          columns: [
-            { width: '*', text: '' },
-            {
-              width: '40%',
-              table: {
-                widths: ['55%', '45%'],
-                body: [
-                  [{ text: 'Sub Total', style: 'tdKey' }, { text: `${currency} ${Number(variation.priceSchedule?.subTotal || 0).toFixed(2)}`, alignment: 'right' }],
-                  [{ text: `VAT (${variation.priceSchedule?.taxDetails?.vatRate || 0}%)`, style: 'tdKey' }, { text: `${currency} ${Number(variation.priceSchedule?.taxDetails?.vatAmount || 0).toFixed(2)}`, alignment: 'right' }],
-                  [{ text: 'Grand Total', style: 'th' }, { text: `${currency} ${Number(variation.priceSchedule?.grandTotal || 0).toFixed(2)}`, style: 'th', alignment: 'right' }]
-                ]
-              },
-              layout: 'lightHorizontalLines'
-            }
-          ],
-          margin: [0, 8, 0, 0]
+          stack: priceScheduleFragments.map(frag => ({ ...frag, margin: [0, 0, 0, 8] }))
         })
       }
 
-      if ((variation.ourViewpoints || '').trim().length > 0 || exclusions.length > 0) {
+      if ((variation.ourViewpoints || '').trim().length > 0 || exclusionsFragments.length > 0) {
         content.push({ text: 'Our Viewpoints / Special Terms', style: 'h2', margin: [0, 12, 0, 6] })
         if ((variation.ourViewpoints || '').trim().length > 0) {
-          content.push({ text: variation.ourViewpoints, margin: [0, 0, 0, 6] })
+          content.push({ stack: htmlToPdfFragments(variation.ourViewpoints), margin: [0, 0, 0, 6], preserveLeadingSpaces: true })
         }
-        if (exclusions.length > 0) {
+        if (exclusionsFragments.length > 0) {
           content.push({ text: 'Exclusions', style: 'h3', margin: [0, 6, 0, 4] })
-          content.push({ ul: exclusions })
+          content.push({
+            stack: exclusionsFragments.map(frag => ({ ...frag, margin: [0, 0, 0, 8] }))
+          })
         }
       }
 
-      if (paymentTerms.length > 0) {
+      if (paymentTermsFragments.length > 0) {
         content.push({ text: 'Payment Terms', style: 'h2', margin: [0, 12, 0, 6] })
         content.push({
-          table: {
-            widths: ['10%', '70%', '20%'],
-            body: [
-              [{ text: '#', style: 'th' }, { text: 'Milestone', style: 'th' }, { text: 'Amount %', style: 'th' }],
-              ...paymentTerms.map((p, i) => [String(i + 1), p.milestoneDescription || '', String(p.amountPercent || '')])
-            ]
-          },
-          layout: 'lightHorizontalLines'
+          stack: paymentTermsFragments.map(frag => ({ ...frag, margin: [0, 0, 0, 8] }))
         })
       }
 
@@ -700,9 +648,16 @@ function ProjectVariationManagement() {
   }
 
   // Helper function to format history values (same as VariationDetail)
-  const formatHistoryValue = (field, value) => {
+  const formatHistoryValue = (field, value, { asHtml = false } = {}) => {
     // Handle null/undefined
-    if (value === null || value === undefined) return '(empty)'
+    if (value === null || value === undefined) return ''
+    
+    // For rich text fields, return as HTML when asHtml is true
+    if (asHtml && ['scopeOfWork', 'priceSchedule', 'exclusions', 'paymentTerms'].includes(field)) {
+      if (typeof value === 'string') {
+        return value
+      }
+    }
     
     // Handle date strings (from diffFromParent normalization)
     if (['offerDate', 'enquiryDate'].includes(field)) {
@@ -739,25 +694,27 @@ function ProjectVariationManagement() {
       if (value.length === 0) return '(empty)'
       
       if (field === 'paymentTerms') {
-        return value.map((t, i) => {
+        const terms = value || []
+        return terms.map((t, i) => {
           if (typeof t === 'string') return `${i + 1}. ${t}`
           if (!t || typeof t !== 'object') return `${i + 1}. ${String(t)}`
           return `${i + 1}. ${t?.milestoneDescription || '-'} — ${t?.amountPercent ?? ''}%`
-        }).join('\n')
+        }).join('<br>')
       }
       
       if (field === 'scopeOfWork') {
-        return value.map((s, i) => {
+        const scopes = value || []
+        return scopes.map((s, i) => {
           if (typeof s === 'string') return `${i + 1}. ${s}`
           if (!s || typeof s !== 'object') return `${i + 1}. ${String(s)}`
           const qtyUnit = [s?.quantity ?? '', s?.unit || ''].filter(x => String(x).trim().length > 0).join(' ')
           const remarks = s?.locationRemarks ? ` — ${s.locationRemarks}` : ''
           return `${i + 1}. ${s?.description || '-'}${qtyUnit ? ` — Qty: ${qtyUnit}` : ''}${remarks}`
-        }).join('\n')
+        }).join('<br>')
       }
       
       if (field === 'exclusions') {
-        return value.map((v, i) => `${i + 1}. ${String(v)}`).join('\n')
+        return value.map((v, i) => `${i + 1}. ${String(v)}`).join('<br>')
       }
       
       // Generic array handling
@@ -770,7 +727,7 @@ function ProjectVariationManagement() {
           return `${i + 1}. ${parts.join(', ')}`
         }
         return `${i + 1}. ${String(v)}`
-      }).join('\n')
+      }).join('<br>')
     }
     
     // Handle objects (before string check)
@@ -798,7 +755,7 @@ function ProjectVariationManagement() {
           }
         }
         if (ps?.grandTotal !== undefined && ps?.grandTotal !== null) lines.push(`Grand Total: ${ps.grandTotal}`)
-        return lines.length > 0 ? lines.join('\n') : '(empty)'
+        return lines.length > 0 ? lines.join('<br>') : '(empty)'
       }
       
       if (field === 'deliveryCompletionWarrantyValidity') {
@@ -808,7 +765,7 @@ function ProjectVariationManagement() {
         if (d?.warrantyPeriod) lines.push(`Warranty Period: ${d.warrantyPeriod}`)
         if (d?.offerValidity !== undefined && d?.offerValidity !== null) lines.push(`Offer Validity: ${d.offerValidity} days`)
         if (d?.authorizedSignatory) lines.push(`Authorized Signatory: ${d.authorizedSignatory}`)
-        return lines.length > 0 ? lines.join('\n') : '(empty)'
+        return lines.length > 0 ? lines.join('<br>') : '(empty)'
       }
       
       if (field === 'companyInfo') {
@@ -818,7 +775,7 @@ function ProjectVariationManagement() {
         if (ci?.address) lines.push(`Address: ${ci.address}`)
         if (ci?.phone) lines.push(`Phone: ${ci.phone}`)
         if (ci?.email) lines.push(`Email: ${ci.email}`)
-        return lines.length > 0 ? lines.join('\n') : '(empty)'
+        return lines.length > 0 ? lines.join('<br>') : '(empty)'
       }
       
       // Generic object handling
@@ -833,17 +790,21 @@ function ProjectVariationManagement() {
         }
         return `${k}: ${String(v)}`
       })
-      return entries.length > 0 ? entries.join('\n') : '(empty)'
+      return entries.length > 0 ? entries.join('<br>') : '(empty)'
     }
     
     // Handle primitive types
     if (typeof value === 'string') {
+      // For rich text fields, return as-is when asHtml is true
+      if (asHtml && ['scopeOfWork', 'priceSchedule', 'exclusions', 'paymentTerms'].includes(field)) {
+        return value
+      }
       // Try to parse JSON string if value looks like JSON
       if ((value.startsWith('{') || value.startsWith('[')) && value.length > 1) {
         try {
           const parsed = JSON.parse(value)
           // Recursively format the parsed value
-          return formatHistoryValue(field, parsed)
+          return formatHistoryValue(field, parsed, { asHtml })
         } catch {
           // Not valid JSON, return as string
           return value.trim() || '(empty)'
@@ -862,6 +823,136 @@ function ProjectVariationManagement() {
     } catch {
       return String(value) || '(empty)'
     }
+  }
+
+  // Convert rich text HTML to pdfMake-friendly fragments (preserve inline styles)
+  const htmlToPdfFragments = (html) => {
+    if (!html) return [{ text: '' }]
+
+    const fallback = (raw) => {
+      const withBreaks = raw
+        .replace(/<\s*br\s*\/?>/gi, '\n')
+        .replace(/<\/\s*li\s*>/gi, '\n')
+        .replace(/<\s*li\s*>/gi, '• ')
+      const stripped = withBreaks.replace(/<[^>]+>/g, '')
+      return [{ text: stripped.trim() }]
+    }
+
+    const applyInlineStyles = (node, base = {}) => {
+      const next = { ...base }
+      const style = (node.getAttribute && node.getAttribute('style')) || ''
+      if (style) {
+        const colorMatch = style.match(/color\s*:\s*([^;]+)/i)
+        if (colorMatch) next.color = colorMatch[1].trim()
+        const bgMatch = style.match(/background(?:-color)?\s*:\s*([^;]+)/i)
+        if (bgMatch) next.background = bgMatch[1].trim()
+        const ffMatch = style.match(/font-family\s*:\s*([^;]+)/i)
+        if (ffMatch) next.font = ffMatch[1].trim().replace(/['"]/g, '')
+        const fsMatch = style.match(/font-size\s*:\s*([^;]+)/i)
+        if (fsMatch) {
+          const raw = fsMatch[1].trim()
+          const num = parseFloat(raw)
+          if (!Number.isNaN(num)) next.fontSize = num
+        }
+      }
+      if (node.tagName?.toLowerCase() === 'font' && node.getAttribute) {
+        const c = node.getAttribute('color')
+        if (c) next.color = c
+      }
+      return next
+    }
+
+    if (typeof DOMParser === 'undefined' || typeof Node === 'undefined') {
+      return fallback(html)
+    }
+
+    const parser = new DOMParser()
+    const doc = parser.parseFromString(`<div>${html}</div>`, 'text/html')
+
+    const walk = (node, inherited = {}) => {
+      const results = []
+      const pushText = (text, style = inherited) => {
+        if (text === undefined || text === null) return
+        const val = String(text)
+        if (val.length === 0) return
+        results.push({ text: val, ...style })
+      }
+
+      switch (node.nodeType) {
+        case Node.TEXT_NODE: {
+          const t = node.textContent || ''
+          if (t.trim().length === 0 && /\s+/.test(t)) break
+          pushText(t, inherited)
+          break
+        }
+        case Node.ELEMENT_NODE: {
+          const tag = node.tagName.toLowerCase()
+          const next = applyInlineStyles(node, inherited)
+          if (['strong', 'b'].includes(tag)) next.bold = true
+          if (['em', 'i'].includes(tag)) next.italics = true
+          if (tag === 'u') next.decoration = 'underline'
+          if (['h1', 'h2', 'h3', 'h4'].includes(tag)) next.fontSize = 12
+
+          if (tag === 'br') {
+            results.push({ text: '\n', ...next })
+            break
+          }
+
+          if (tag === 'ul' || tag === 'ol') {
+            const isOrdered = tag === 'ol'
+            const items = []
+            node.childNodes.forEach((child, idx) => {
+              if (child.tagName?.toLowerCase() === 'li') {
+                const liParts = walk(child, next)
+                const combined = liParts.map(p => p.text || '').join('').trim()
+                if (combined.length) {
+                  items.push({ text: isOrdered ? `${idx + 1}. ${combined}` : `• ${combined}`, ...next })
+                }
+              }
+            })
+            if (items.length) {
+              results.push({ stack: items, margin: [0, 0, 0, 2] })
+            }
+            break
+          }
+
+          if (tag === 'li') {
+            node.childNodes.forEach(child => {
+              results.push(...walk(child, next))
+            })
+            break
+          }
+
+          const blockLike = ['p', 'div', 'h1', 'h2', 'h3', 'h4'].includes(tag)
+          const children = []
+          node.childNodes.forEach(child => {
+            children.push(...walk(child, next))
+          })
+          if (children.length) {
+            if (blockLike) {
+              results.push({ stack: children, margin: [0, 0, 0, 4] })
+            } else {
+              results.push(...children)
+            }
+          }
+          break
+        }
+        default:
+          break
+      }
+
+      return results
+    }
+
+    const output = []
+    doc.body.childNodes.forEach(n => output.push(...walk(n)))
+    if (!output.length) return fallback(html)
+    return output
+  }
+
+  const richTextCell = (val) => {
+    const frags = htmlToPdfFragments(val)
+    return { stack: frags, preserveLeadingSpaces: true, margin: [0, 0, 0, 2] }
   }
 
   return (
@@ -1247,7 +1338,6 @@ function ProjectVariationManagement() {
               <div className="lead-details">
                 <p><strong>Project:</strong> {v.parentProject?.name || 'N/A'}</p>
                 <p><strong>Offer Ref:</strong> {v.offerReference || 'N/A'}</p>
-                <p><strong>Grand Total:</strong> {(v.priceSchedule?.currency || 'AED')} {Number(v.priceSchedule?.grandTotal || 0).toFixed(2)}</p>
                 {v.diffFromParent && Array.isArray(v.diffFromParent) && v.diffFromParent.length > 0 && (
                   <p>
                     <strong>Changes:</strong>
@@ -1291,25 +1381,7 @@ function ProjectVariationManagement() {
                 <p><strong>Created At:</strong> {v.createdAt ? new Date(v.createdAt).toLocaleDateString() : 'N/A'}</p>
               </div>
               <div className="lead-actions">
-                <button className="save-btn" onClick={() => generatePDFPreview(v)}>Print Preview</button>
                 <button className="link-btn" onClick={() => { try { localStorage.setItem('variationId', v._id) } catch {}; window.location.href = '/variation-detail' }}>View Details</button>
-                {v.managementApproval?.status === 'pending' ? (
-                  <span className="status-badge blue" style={{ marginLeft: '8px' }}>Approval Pending</span>
-                ) : (
-                  (v.managementApproval?.status !== 'approved' && (currentUser?.roles?.includes('estimation_engineer') || v.createdBy?._id === currentUser?.id)) && (
-                    <button 
-                  className="save-btn" 
-                  onClick={() => setSendApprovalConfirmModal({ open: true, variation: v })} 
-                  style={{ marginLeft: '8px' }}
-                  disabled={isSubmitting}
-                >
-                  <ButtonLoader loading={loadingAction === `approve-${v._id}`}>
-                    Send for Approval
-                  </ButtonLoader>
-                </button>
-                  )
-                )}
-                <button className="link-btn" onClick={() => setApprovalsView(v)} style={{ marginLeft: '8px' }}>View Approvals/Rejections</button>
                 {(currentUser?.roles?.includes('manager') || currentUser?.roles?.includes('admin')) && v.managementApproval?.status === 'pending' && (
                   <>
                     <button 
@@ -1435,7 +1507,7 @@ function ProjectVariationManagement() {
                       {v.managementApproval?.status || 'pending'}
                     </span>
                   </td>
-                  <td data-label="Grand Total">{(v.priceSchedule?.currency || 'AED')} {Number(v.priceSchedule?.grandTotal || 0).toFixed(2)}</td>
+                  <td data-label="Grand Total">N/A</td>
                   <td data-label="Changes">
                     {v.diffFromParent && Array.isArray(v.diffFromParent) && v.diffFromParent.length > 0 ? (
                       <span 
@@ -1481,24 +1553,7 @@ function ProjectVariationManagement() {
                   <td data-label="Created At">{v.createdAt ? new Date(v.createdAt).toLocaleDateString() : 'N/A'}</td>
                   <td data-label="Actions">
                     <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                      <button className="save-btn" onClick={() => generatePDFPreview(v)}>Print Preview</button>
                       <button className="link-btn" onClick={() => { try { localStorage.setItem('variationId', v._id) } catch {}; window.location.href = '/variation-detail' }}>View</button>
-                      {v.managementApproval?.status === 'pending' ? (
-                        <span className="status-badge blue">Approval Pending</span>
-                      ) : (
-                        (v.managementApproval?.status !== 'approved' && (currentUser?.roles?.includes('estimation_engineer') || v.createdBy?._id === currentUser?.id)) && (
-                          <button 
-                            className="save-btn" 
-                            onClick={() => setSendApprovalConfirmModal({ open: true, variation: v })}
-                            disabled={isSubmitting}
-                          >
-                            <ButtonLoader loading={loadingAction === `approve-${v._id}`}>
-                              Send for Approval
-                            </ButtonLoader>
-                          </button>
-                        )
-                      )}
-                      <button className="link-btn" onClick={() => setApprovalsView(v)}>View Approvals/Rejections</button>
                       {(currentUser?.roles?.includes('manager') || currentUser?.roles?.includes('admin')) && v.managementApproval?.status === 'pending' && (
                         <>
                           <button 
@@ -2006,54 +2061,77 @@ function ProjectVariationManagement() {
                       }
                       const fieldName = fieldNameMap[diff.field] || diff.field.replace(/([A-Z])/g, ' $1').replace(/^./, str => str.toUpperCase())
                       
+                      // Check if this is a rich text field
+                      const isRichText = ['scopeOfWork', 'priceSchedule', 'exclusions', 'paymentTerms', 'ourViewpoints'].includes(diff.field)
+                      // Check if this field should be rendered as HTML (contains HTML tags)
+                      const isHtmlField = isRichText || diff.field === 'deliveryCompletionWarrantyValidity'
+                      
                       // Format the values for display
                       const fromVal = diff.from !== undefined ? diff.from : (diff.fromValue !== undefined ? diff.fromValue : null)
                       const toVal = diff.to !== undefined ? diff.to : (diff.toValue !== undefined ? diff.toValue : null)
-                      const fromValue = formatHistoryValue(diff.field, fromVal)
-                      const toValue = formatHistoryValue(diff.field, toVal)
+                      
+                      // For rich text fields, use raw value directly; for others, format it
+                      const fromValue = isRichText ? (fromVal || '') : formatHistoryValue(diff.field, fromVal)
+                      const toValue = isRichText ? (toVal || '') : formatHistoryValue(diff.field, toVal)
                       
                       return (
                         <tr key={idx}>
                           <td data-label="Field"><strong>{fieldName}</strong></td>
                           <td data-label="Previous Value">
-                            <pre style={{ 
-                              margin: 0, 
-                              padding: '10px 12px', 
-                              background: '#FEF2F2', 
-                              border: '1px solid #FECACA', 
-                              borderRadius: '6px',
-                              whiteSpace: 'pre-wrap',
-                              wordBreak: 'break-word',
-                              fontSize: '13px',
-                              lineHeight: '1.5',
-                              maxHeight: '200px',
-                              overflow: 'auto',
-                              color: '#991B1B',
-                              fontFamily: 'inherit',
-                              fontWeight: 400
-                            }}>
-                              {fromValue || '(empty)'}
-                            </pre>
+                            {isHtmlField ? (
+                              <div className="rich-text-content" style={{ 
+                                padding: '8px', 
+                                border: '1px solid #FECACA', 
+                                background: '#FEF2F2', 
+                                borderRadius: '6px', 
+                                maxHeight: '300px', 
+                                overflow: 'auto', 
+                                color: '#991B1B' 
+                              }} dangerouslySetInnerHTML={{ __html: fromValue }} />
+                            ) : (
+                              <pre style={{ 
+                                margin: 0, 
+                                padding: '10px 12px', 
+                                background: '#FEF2F2', 
+                                border: '1px solid #FECACA', 
+                                borderRadius: '6px',
+                                whiteSpace: 'pre-wrap',
+                                wordBreak: 'break-word',
+                                fontSize: '13px',
+                                color: '#991B1B',
+                                fontFamily: 'inherit'
+                              }}>
+                                {fromValue || '(empty)'}
+                              </pre>
+                            )}
                           </td>
                           <td data-label="New Value">
-                            <pre style={{ 
-                              margin: 0, 
-                              padding: '10px 12px', 
-                              background: '#F0FDF4', 
-                              border: '1px solid #BBF7D0', 
-                              borderRadius: '6px',
-                              whiteSpace: 'pre-wrap',
-                              wordBreak: 'break-word',
-                              fontSize: '13px',
-                              lineHeight: '1.5',
-                              maxHeight: '200px',
-                              overflow: 'auto',
-                              color: '#166534',
-                              fontFamily: 'inherit',
-                              fontWeight: 400
-                            }}>
-                              {toValue || '(empty)'}
-                            </pre>
+                            {isHtmlField ? (
+                              <div className="rich-text-content" style={{ 
+                                padding: '8px', 
+                                border: '1px solid #BBF7D0', 
+                                background: '#F0FDF4', 
+                                borderRadius: '6px', 
+                                maxHeight: '300px', 
+                                overflow: 'auto', 
+                                color: '#166534' 
+                              }} dangerouslySetInnerHTML={{ __html: toValue }} />
+                            ) : (
+                              <pre style={{ 
+                                margin: 0, 
+                                padding: '10px 12px', 
+                                background: '#F0FDF4', 
+                                border: '1px solid #BBF7D0', 
+                                borderRadius: '6px',
+                                whiteSpace: 'pre-wrap',
+                                wordBreak: 'break-word',
+                                fontSize: '13px',
+                                color: '#166534',
+                                fontFamily: 'inherit'
+                              }}>
+                                {toValue || '(empty)'}
+                              </pre>
+                            )}
                           </td>
                         </tr>
                       )

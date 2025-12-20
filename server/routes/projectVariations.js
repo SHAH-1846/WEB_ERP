@@ -57,6 +57,98 @@ const auth = (req, res, next) => {
   }
 };
 
+// Helper to convert arrays/objects to rich text HTML strings
+const toRichString = (val, fieldName) => {
+  if (typeof val === 'string') return val;
+
+  // Scope of work: extract description from array of objects
+  if (fieldName === 'scopeOfWork') {
+    if (Array.isArray(val) && val.length > 0) {
+      // If it's an array of objects with description field, extract HTML
+      const descriptions = val
+        .map(item => {
+          if (item && typeof item === 'object' && typeof item.description === 'string') {
+            return item.description;
+          }
+          return null;
+        })
+        .filter(Boolean);
+      if (descriptions.length > 0) {
+        return descriptions.join('');
+      }
+    }
+  }
+
+  // Price schedule: prefer concatenated item descriptions or use as-is if already HTML
+  if (fieldName === 'priceSchedule') {
+    if (val && typeof val === 'object' && Array.isArray(val.items)) {
+      const joined = val.items
+        .map(it => (it && typeof it.description === 'string' ? it.description : ''))
+        .filter(Boolean)
+        .join('<br>');
+      // Return joined HTML or empty string (not JSON)
+      return joined || '';
+    }
+    // If it's an object but not the expected structure, return empty string instead of JSON
+    if (val && typeof val === 'object') {
+      return '';
+    }
+  }
+
+  // Payment terms: extract milestoneDescription from array of objects
+  if (fieldName === 'paymentTerms') {
+    if (Array.isArray(val) && val.length > 0) {
+      const descriptions = val
+        .map(item => {
+          if (item && typeof item === 'object' && typeof item.milestoneDescription === 'string') {
+            return item.milestoneDescription;
+          }
+          return null;
+        })
+        .filter(Boolean);
+      if (descriptions.length > 0) {
+        return descriptions.join('<br>');
+      }
+    }
+  }
+
+  // Exclusions: join array of strings
+  if (fieldName === 'exclusions') {
+    if (Array.isArray(val)) {
+      return val
+        .map(item => {
+          if (typeof item === 'string') return item;
+          if (item && typeof item === 'object' && typeof item.description === 'string') return item.description;
+          return item != null ? String(item) : '';
+        })
+        .filter(Boolean)
+        .join('<br>');
+    }
+  }
+
+  // Generic array handling
+  if (Array.isArray(val)) {
+    return val.map(item => {
+      if (item && typeof item === 'object') {
+        if (typeof item.description === 'string') return item.description;
+        if (typeof item.milestoneDescription === 'string') return item.milestoneDescription;
+        return JSON.stringify(item);
+      }
+      return item != null ? String(item) : '';
+    }).join('\n');
+  }
+  
+  // Generic object handling
+  if (val && typeof val === 'object') {
+    if (typeof val.description === 'string') return val.description;
+    if (typeof val.milestoneDescription === 'string') return val.milestoneDescription;
+    // fallback to JSON
+    return JSON.stringify(val);
+  }
+  
+  return val != null ? String(val) : '';
+};
+
 // Get all project variations
 router.get('/', auth, async (req, res) => {
   try {
@@ -129,17 +221,36 @@ router.post('/', auth, (req, res, next) => {
       // FormData format
       parentProjectId = req.body.parentProjectId;
       parentVariationId = req.body.parentVariationId;
-      data = {};
-      Object.keys(req.body).forEach(key => {
-        if (key.startsWith('data[') && key.endsWith(']')) {
-          const fieldName = key.slice(5, -1);
+      
+      // Check if data is sent as a single JSON string
+      if (req.body.data) {
+        if (typeof req.body.data === 'string') {
           try {
-            data[fieldName] = JSON.parse(req.body[key]);
-          } catch {
-            data[fieldName] = req.body[key];
+            data = JSON.parse(req.body.data);
+          } catch (parseError) {
+            console.error('Error parsing data JSON string:', parseError);
+            data = {};
           }
+        } else if (typeof req.body.data === 'object') {
+          // If data is already an object (shouldn't happen with FormData, but handle it)
+          data = req.body.data;
+        } else {
+          data = {};
         }
-      });
+      } else {
+        // Otherwise, parse individual data[field] keys
+        data = {};
+        Object.keys(req.body).forEach(key => {
+          if (key.startsWith('data[') && key.endsWith(']')) {
+            const fieldName = key.slice(5, -1);
+            try {
+              data[fieldName] = JSON.parse(req.body[key]);
+            } catch {
+              data[fieldName] = req.body[key];
+            }
+          }
+        });
+      }
     } else {
       // JSON format
       parentProjectId = req.body.parentProjectId;
@@ -218,6 +329,13 @@ router.post('/', auth, (req, res, next) => {
     if (base.parentRevision) delete base.parentRevision;
     if (base.revisionNumber) delete base.revisionNumber;
 
+    // Convert base rich text fields to strings if they're in old format (for legacy variations)
+    ['scopeOfWork', 'priceSchedule', 'exclusions', 'paymentTerms'].forEach(field => {
+      if (base[field] !== undefined && typeof base[field] !== 'string') {
+        base[field] = toRichString(base[field], field);
+      }
+    });
+
     const allowedFields = [
       'companyInfo', 'submittedTo', 'attention', 'offerReference', 'enquiryNumber',
       'offerDate', 'enquiryDate', 'projectTitle', 'introductionText',
@@ -228,19 +346,36 @@ router.post('/', auth, (req, res, next) => {
     const nextData = { ...base };
     const diffs = [];
     for (const field of allowedFields) {
-      if (typeof data?.[field] === 'undefined') continue;
+      // Skip if field is not provided in data (undefined), but still compare if it's null or empty string
+      if (!(field in data)) continue;
+      
       const normalizeForDiff = (f, v) => {
-        if (v === '' || typeof v === 'undefined') return null;
+        if (v === '' || v === null || typeof v === 'undefined') return null;
         if (['offerDate', 'enquiryDate'].includes(f)) {
           if (!v) return null;
           const d = new Date(v);
           if (isNaN(d)) return null;
           return d.toISOString().slice(0, 10);
         }
+        // Normalize rich text HTML fields for comparison (similar to revisions)
+        if (['scopeOfWork', 'priceSchedule', 'exclusions', 'paymentTerms', 'ourViewpoints', 'introductionText'].includes(f) && typeof v === 'string') {
+          // Normalize HTML: replace <br> with newlines, normalize whitespace
+          return v.replace(/<br\s*\/?>/gi, '\n').replace(/\r\n/g, '\n').trim();
+        }
+        // Handle objects (like companyInfo, deliveryCompletionWarrantyValidity)
+        if (v && typeof v === 'object' && !Array.isArray(v)) {
+          return JSON.stringify(v);
+        }
         return v;
       };
       const fromValRaw = base[field];
-      const toValRaw = data[field];
+      let toValRaw = data[field];
+      
+      // Convert rich text fields from arrays/objects to strings
+      if (['scopeOfWork', 'priceSchedule', 'exclusions', 'paymentTerms'].includes(field)) {
+        toValRaw = toRichString(toValRaw, field);
+      }
+      
       const fromVal = normalizeForDiff(field, fromValRaw);
       const toVal = normalizeForDiff(field, toValRaw);
       if (JSON.stringify(fromVal) !== JSON.stringify(toVal)) {
@@ -450,7 +585,12 @@ router.put('/:id', auth, (req, res, next) => {
     allowedFields.forEach(key => {
       if (updateData[key] !== undefined) {
         const oldVal = oldData[key];
-        const newVal = updateData[key];
+        let newVal = updateData[key];
+        
+        // Convert rich text fields from arrays/objects to strings
+        if (['scopeOfWork', 'priceSchedule', 'exclusions', 'paymentTerms'].includes(key)) {
+          newVal = toRichString(newVal, key);
+        }
         
         // Handle date fields
         if (['offerDate', 'enquiryDate'].includes(key) && newVal) {

@@ -2129,12 +2129,43 @@ function QuotationDetail() {
         if (stored) initial = JSON.parse(stored)
         await fetchLeads()
         if (qid) {
-          // Check if project exists for this quotation
+          // Check if project exists for this quotation (directly from quotation or from revisions)
           try {
             await apiFetch(`/api/projects/by-quotation/${qid}`)
             setHasProject(true)
           } catch {
-            setHasProject(false)
+            // Check if project exists from revisions
+            try {
+              const revRes = await apiFetch(`/api/revisions?parentQuotation=${qid}`)
+              const revs = await revRes.json()
+              const approved = (Array.isArray(revs) ? revs : []).filter(r => r.managementApproval?.status === 'approved')
+              if (approved.length > 0) {
+                // Check if latest approved revision has a project
+                const latest = approved.slice().sort((a,b) => {
+                  const getRevisionNum = (revNum) => {
+                    if (!revNum) return 0;
+                    if (typeof revNum === 'number') return revNum;
+                    const match = String(revNum).match(/-REV-(\d+)$/);
+                    return match ? parseInt(match[1], 10) : 0;
+                  };
+                  return getRevisionNum(b.revisionNumber) - getRevisionNum(a.revisionNumber);
+                })[0]
+                if (latest) {
+                  try {
+                    await apiFetch(`/api/projects/by-revision/${latest._id}`)
+                    setHasProject(true)
+                  } catch {
+                    setHasProject(false)
+                  }
+                } else {
+                  setHasProject(false)
+                }
+              } else {
+                setHasProject(false)
+              }
+            } catch {
+              setHasProject(false)
+            }
           }
           const res = await apiFetch(`/api/quotations/${qid}`)
           const q = await res.json()
@@ -2257,34 +2288,50 @@ function QuotationDetail() {
             }
           }}>Edit</button>
           <button className="save-btn" onClick={() => generatePDFPreview(quotation)}>Print Preview</button>
-          <button className="link-btn" onClick={async () => {
-            try {
-              const token = localStorage.getItem('token')
-              // find latest approved revision for this quotation
-              const revRes = await apiFetch(`/api/revisions?parentQuotation=${quotation._id}`)
-              const revs = await revRes.json()
-              const approved = (Array.isArray(revs) ? revs : []).filter(r => r.managementApproval?.status === 'approved')
-              const latest = approved.slice().sort((a,b) => {
-                // Extract numeric part from revisionNumber (e.g., "PROJ-REV-001" -> 1)
-                const getRevisionNum = (revNum) => {
-                  if (!revNum) return 0;
-                  if (typeof revNum === 'number') return revNum;
-                  const match = revNum.match(/-REV-(\d+)$/);
-                  return match ? parseInt(match[1], 10) : 0;
-                };
-                return getRevisionNum(b.revisionNumber) - getRevisionNum(a.revisionNumber);
-              })[0]
-              if (!latest) { setNotify({ open: true, title: 'No Project', message: 'No approved revision found for project linking.' }); return }
-              const pjRes = await apiFetch(`/api/projects/by-revision/${latest._id}`)
-              if (!pjRes.ok) { setNotify({ open: true, title: 'No Project', message: 'No project exists for the latest approved revision.' }); return }
-              const pj = await pjRes.json()
-              try { 
-                localStorage.setItem('projectsFocusId', pj._id)
-                localStorage.setItem('projectId', pj._id)
-              } catch {}
-              window.location.href = '/project-detail'
-            } catch { setNotify({ open: true, title: 'Open Project Failed', message: 'We could not open the linked project.' }) }
-          }}>View Project</button>
+          {hasProject && (
+            <button className="link-btn" onClick={async () => {
+              try {
+                const token = localStorage.getItem('token')
+                // First check for project created directly from quotation (without revision)
+                try {
+                  const pjRes = await apiFetch(`/api/projects/by-quotation/${quotation._id}`)
+                  if (pjRes.ok) {
+                    const pj = await pjRes.json()
+                    try { 
+                      localStorage.setItem('projectsFocusId', pj._id)
+                      localStorage.setItem('projectId', pj._id)
+                    } catch {}
+                    window.location.href = '/project-detail'
+                    return
+                  }
+                } catch {}
+                
+                // If no direct project, check for project from latest approved revision
+                const revRes = await apiFetch(`/api/revisions?parentQuotation=${quotation._id}`)
+                const revs = await revRes.json()
+                const approved = (Array.isArray(revs) ? revs : []).filter(r => r.managementApproval?.status === 'approved')
+                const latest = approved.slice().sort((a,b) => {
+                  // Extract numeric part from revisionNumber (e.g., "PROJ-REV-001" -> 1)
+                  const getRevisionNum = (revNum) => {
+                    if (!revNum) return 0;
+                    if (typeof revNum === 'number') return revNum;
+                    const match = revNum.match(/-REV-(\d+)$/);
+                    return match ? parseInt(match[1], 10) : 0;
+                  };
+                  return getRevisionNum(b.revisionNumber) - getRevisionNum(a.revisionNumber);
+                })[0]
+                if (!latest) { setNotify({ open: true, title: 'No Project', message: 'No approved revision found for project linking.' }); return }
+                const pjRes = await apiFetch(`/api/projects/by-revision/${latest._id}`)
+                if (!pjRes.ok) { setNotify({ open: true, title: 'No Project', message: 'No project exists for the latest approved revision.' }); return }
+                const pj = await pjRes.json()
+                try { 
+                  localStorage.setItem('projectsFocusId', pj._id)
+                  localStorage.setItem('projectId', pj._id)
+                } catch {}
+                window.location.href = '/project-detail'
+              } catch { setNotify({ open: true, title: 'Open Project Failed', message: 'We could not open the linked project.' }) }
+            }}>View Project</button>
+          )}
           {approvalStatus === 'approved' && !hasRevisions && (
             <button className="assign-btn" onClick={() => {
               const formData = {

@@ -3819,6 +3819,26 @@ function QuotationManagement() {
         >
           Detailed View
         </button>
+        {hasProjectFor[q._id] && (
+          <button
+            className="link-btn"
+            onClick={async () => {
+              try {
+                const pjRes = await api.get(`/api/projects/by-quotation/${q._id}`)
+                const pj = pjRes.data
+                try {
+                  localStorage.setItem('projectsFocusId', pj._id)
+                  localStorage.setItem('projectId', pj._id)
+                } catch {}
+                window.location.href = '/project-detail'
+              } catch {
+                setNotify({ open: true, title: 'Open Project Failed', message: 'We could not open the linked project.' })
+              }
+            }}
+          >
+            View Project
+          </button>
+        )}
         {q.managementApproval?.status === "pending" ? (
           <span className="status-badge blue">Approval Pending</span>
         ) : (

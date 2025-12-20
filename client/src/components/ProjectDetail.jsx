@@ -746,42 +746,8 @@ function ProjectDetail() {
     try {
       const payload = { ...variationModal.form }
       
-      // Convert HTML strings to backend array format
-      // Convert scopeOfWork string to array format for backend compatibility
-      if (typeof payload.scopeOfWork === 'string') {
-        payload.scopeOfWork = payload.scopeOfWork ? [{ description: payload.scopeOfWork, quantity: '', unit: '', locationRemarks: '' }] : []
-      }
-      
-      // Convert exclusions string to array format for backend compatibility
-      if (typeof payload.exclusions === 'string') {
-        if (payload.exclusions) {
-          // Split by <br> and filter out empty strings
-          const temp = document.createElement('div')
-          temp.innerHTML = payload.exclusions
-          const lines = temp.textContent || temp.innerText || ''
-          payload.exclusions = lines.split(/\n|<br\s*\/?>/i).map(line => line.trim()).filter(line => line)
-        } else {
-          payload.exclusions = []
-        }
-      }
-      
-      // Convert paymentTerms string to array format for backend compatibility
-      if (typeof payload.paymentTerms === 'string') {
-        payload.paymentTerms = payload.paymentTerms 
-          ? payload.paymentTerms.split(/<br\s*\/?>/i).map(term => {
-              // Remove HTML tags and get text content
-              const temp = document.createElement('div')
-              temp.innerHTML = term
-              const text = (temp.textContent || temp.innerText || '').trim()
-              // Try to parse "Milestone - X%" format
-              const match = text.match(/^(.+?)(?:\s*-\s*(\d+(?:\.\d+)?)%)?$/)
-              return {
-                milestoneDescription: match ? match[1].trim() : text,
-                amountPercent: match && match[2] ? parseFloat(match[2]) : 0
-              }
-            }).filter(term => term.milestoneDescription)
-          : []
-      }
+      // Send HTML strings directly - backend will handle conversion if needed
+      // No conversion needed as backend expects HTML strings for rich text fields
       
       // Get source data from project's source revision or quotation
       let sourceData = null
