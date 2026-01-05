@@ -10,6 +10,7 @@ import ProjectVariationManagement from './ProjectVariationManagement'
 import UnifiedAuditLogs from './UnifiedAuditLogs'
 import QuotationModal from './QuotationModal'
 import EstimationsDashboard from './EstimationsDashboard'
+import InventoryManagement from './InventoryManagement'
 import { initTheme, setTheme } from '../utils/theme'
 import { api } from '../lib/api'
 
@@ -58,7 +59,7 @@ function Dashboard() {
     if (isModalRoute && backgroundLocation) {
       const pathSegments = backgroundLocation.pathname.split('/').filter(Boolean)
       const basePath = pathSegments[0] || 'dashboard'
-      if (['dashboard','users','estimations-dashboard','leads','projects','quotations','revisions','project-variations','audit-logs'].includes(basePath)) {
+      if (['dashboard','users','estimations-dashboard','leads','projects','quotations','revisions','project-variations','audit-logs','inventory'].includes(basePath)) {
         setActiveTab(basePath)
       }
     } else if (isModalRoute && !backgroundLocation) {
@@ -77,7 +78,7 @@ function Dashboard() {
       // Normal navigation - use current pathname
       const pathSegments = location.pathname.split('/').filter(Boolean)
       const basePath = pathSegments[0] || 'dashboard'
-      if (['dashboard','users','estimations-dashboard','leads','projects','quotations','revisions','project-variations','audit-logs'].includes(basePath)) {
+      if (['dashboard','users','estimations-dashboard','leads','projects','quotations','revisions','project-variations','audit-logs','inventory'].includes(basePath)) {
         setActiveTab(basePath)
       }
     }
@@ -272,6 +273,15 @@ function Dashboard() {
               <span className="label">Audit Logs</span>
             </NavLink>
           )}
+          {/* Inventory Management - for inventory_manager and store_keeper roles */}
+          {(user?.roles?.includes('inventory_manager') || user?.roles?.includes('store_keeper')) && (
+            <NavLink to="/inventory" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
+              <svg viewBox="0 0 24 24" fill="currentColor">
+                <path d="M20 2H4c-1.1 0-2 .9-2 2v3.01c0 .72.43 1.34 1 1.69V20c0 1.1 1.1 2 2 2h14c.9 0 2-.9 2-2V8.7c.57-.35 1-.97 1-1.69V4c0-1.1-.9-2-2-2zm-5 12H9v-2h6v2zm5-7H4V4h16v3z"/>
+              </svg>
+              <span className="label">Inventory</span>
+            </NavLink>
+          )}
         </nav>
         
         <div className="sidebar-footer">
@@ -319,6 +329,7 @@ function Dashboard() {
               {activeTab === 'revisions' && 'Revisions Management'}
               {activeTab === 'audit-logs' && 'Audit Logs'}
               {activeTab === 'project-variations' && 'Project Variations'}
+              {activeTab === 'inventory' && 'Inventory Management'}
             </h1>
               <p>Welcome back, {user?.name}!</p>
             </div>
@@ -449,6 +460,7 @@ function Dashboard() {
           {activeTab === 'revisions' && <RevisionManagement />}
           {activeTab === 'project-variations' && <ProjectVariationManagement />}
           {activeTab === 'audit-logs' && <UnifiedAuditLogs />}
+          {activeTab === 'inventory' && <InventoryManagement />}
         </div>
       </div>
       

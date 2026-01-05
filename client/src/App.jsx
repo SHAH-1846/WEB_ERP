@@ -236,6 +236,11 @@ function App() {
             <Dashboard />
           </ProtectedRoute>
         } />
+        <Route path="/inventory" element={
+          <ProtectedRoute>
+            <Dashboard />
+          </ProtectedRoute>
+        } />
         <Route path="/lead-detail" element={
           <ProtectedRoute>
             <LeadDetail />

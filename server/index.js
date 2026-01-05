@@ -15,6 +15,8 @@ const projectVariationRoutes = require('./routes/projectVariations');
 const auditLogRoutes = require('./routes/auditLogs');
 const generalAuditLogRoutes = require('./routes/generalAuditLogs');
 const unifiedAuditLogRoutes = require('./routes/unifiedAuditLogs');
+const storeRoutes = require('./routes/stores');
+const materialRoutes = require('./routes/materials');
 
 const app = express();
 const path = require('path');
@@ -43,6 +45,8 @@ app.use('/api/project-variations', projectVariationRoutes);
 app.use('/api/audit-logs', auditLogRoutes);
 app.use('/api/general-audit-logs', generalAuditLogRoutes);
 app.use('/api/unified-audit-logs', unifiedAuditLogRoutes);
+app.use('/api/stores', storeRoutes);
+app.use('/api/materials', materialRoutes);
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
