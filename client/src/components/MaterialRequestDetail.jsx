@@ -13,13 +13,29 @@ function MaterialRequestDetail() {
   const [saving, setSaving] = useState(false)
   const [notify, setNotify] = useState({ open: false, title: '', message: '' })
   const [reviewModal, setReviewModal] = useState({ open: false, status: '', notes: '' })
+  const [fulfillModal, setFulfillModal] = useState({ open: false, assignedItems: [], notes: '', materialQuantities: {} })
+  const [receiveModal, setReceiveModal] = useState({ 
+    open: false, 
+    deliveryDate: '', 
+    deliveryPersonName: '', 
+    deliveryPersonContact: '', 
+    vehicleNumber: '',
+    materialCondition: 'good',
+    conditionNotes: '',
+    receivedItems: [],
+    receiverSignatureName: '',
+    acknowledgmentNotes: ''
+  })
   const [currentUser, setCurrentUser] = useState(null)
 
   const isAdmin = currentUser?.roles?.includes('admin')
   const isManager = currentUser?.roles?.includes('manager')
   const isInventoryManager = currentUser?.roles?.includes('inventory_manager')
   const canReview = isAdmin || isManager || isInventoryManager
-  const canFulfill = isAdmin || isManager || isInventoryManager || currentUser?.roles?.includes('store_keeper')
+  // Only inventory manager can fulfill (not store_keeper from detail page)
+  const canFulfill = isInventoryManager || isAdmin || isManager
+  // Requester can mark as received
+  const isRequester = request?.requestedBy?._id === currentUser?.id || request?.requestedBy === currentUser?.id
 
   useEffect(() => {
     try {
@@ -70,16 +86,116 @@ function MaterialRequestDetail() {
     }
   }
 
-  const handleFulfill = async () => {
-    if (!confirm('Mark this request as fulfilled?')) return
+  // Open fulfill modal and fetch material quantities
+  const openFulfillModal = async () => {
+    const quantities = {}
+    for (const item of request.items || []) {
+      if (item.materialId) {
+        try {
+          const matId = typeof item.materialId === 'object' ? item.materialId._id : item.materialId
+          const res = await api.get(`/api/materials/${matId}`)
+          quantities[matId] = res.data?.quantity || 0
+        } catch {
+          const matId = typeof item.materialId === 'object' ? item.materialId._id : item.materialId
+          quantities[matId] = 0
+        }
+      }
+    }
     
+    const assignedItems = (request.items || []).map(item => ({
+      itemId: item._id,
+      materialId: typeof item.materialId === 'object' ? item.materialId._id : item.materialId,
+      materialName: item.materialName,
+      requestedQuantity: item.quantity,
+      uom: item.uom,
+      assignedQuantity: item.quantity
+    }))
+    
+    setFulfillModal({ 
+      open: true, 
+      assignedItems,
+      notes: '',
+      materialQuantities: quantities 
+    })
+  }
+
+  const handleFulfill = async () => {
     setSaving(true)
     try {
-      await api.patch(`/api/material-requests/${requestId}/fulfill`, {})
-      setNotify({ open: true, title: 'Success', message: 'Request marked as fulfilled.' })
+      await api.patch(`/api/material-requests/${requestId}/fulfill`, {
+        assignedItems: fulfillModal.assignedItems.map(item => ({
+          itemId: item.itemId,
+          materialId: item.materialId,
+          assignedQuantity: item.assignedQuantity
+        })),
+        fulfillmentNotes: fulfillModal.notes
+      })
+      setNotify({ open: true, title: 'Success', message: 'Request fulfilled. Inventory updated.' })
+      setFulfillModal({ open: false, assignedItems: [], notes: '', materialQuantities: {} })
       fetchRequest()
     } catch (error) {
       setNotify({ open: true, title: 'Error', message: error.response?.data?.message || 'Failed to fulfill request.' })
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  // Open receive modal with items pre-populated
+  const openReceiveModal = () => {
+    const receivedItems = (request.items || []).map(item => ({
+      materialName: item.materialName,
+      requestedQuantity: item.assignedQuantity || item.quantity,
+      receivedQuantity: item.assignedQuantity || item.quantity,
+      uom: item.uom,
+      remarks: ''
+    }))
+    
+    setReceiveModal({
+      open: true,
+      deliveryDate: new Date().toISOString().split('T')[0],
+      deliveryPersonName: '',
+      deliveryPersonContact: '',
+      vehicleNumber: '',
+      materialCondition: 'good',
+      conditionNotes: '',
+      receivedItems,
+      receiverSignatureName: currentUser?.name || '',
+      acknowledgmentNotes: ''
+    })
+  }
+
+  const handleReceive = async () => {
+    // Validate required fields
+    if (!receiveModal.deliveryDate) {
+      setNotify({ open: true, title: 'Error', message: 'Delivery date is required.' })
+      return
+    }
+    if (!receiveModal.receiverSignatureName.trim()) {
+      setNotify({ open: true, title: 'Error', message: 'Receiver signature name is required.' })
+      return
+    }
+
+    setSaving(true)
+    try {
+      await api.patch(`/api/material-requests/${requestId}/receive`, {
+        receivedNotes: receiveModal.acknowledgmentNotes,
+        deliveryNote: {
+          deliveryDate: receiveModal.deliveryDate,
+          deliveryPersonName: receiveModal.deliveryPersonName,
+          deliveryPersonContact: receiveModal.deliveryPersonContact,
+          vehicleNumber: receiveModal.vehicleNumber,
+          materialCondition: receiveModal.materialCondition,
+          conditionNotes: receiveModal.conditionNotes,
+          receivedItems: receiveModal.receivedItems,
+          receiverSignatureName: receiveModal.receiverSignatureName,
+          acknowledgmentNotes: receiveModal.acknowledgmentNotes
+        }
+      })
+      setNotify({ open: true, title: 'Success', message: 'Delivery Note submitted. Materials marked as received!' })
+      setReceiveModal({ open: false, deliveryDate: '', deliveryPersonName: '', deliveryPersonContact: '', vehicleNumber: '', materialCondition: 'good', conditionNotes: '', receivedItems: [], receiverSignatureName: '', acknowledgmentNotes: '' })
+      fetchRequest()
+    } catch (error) {
+      setNotify({ open: true, title: 'Error', message: error.response?.data?.message || 'Failed to submit delivery note.' })
     } finally {
       setSaving(false)
     }
@@ -107,6 +223,7 @@ function MaterialRequestDetail() {
       partially_approved: { bg: 'rgba(59,130,246,0.1)', color: '#3b82f6' },
       rejected: { bg: 'rgba(239,68,68,0.1)', color: '#ef4444' },
       fulfilled: { bg: 'rgba(99,102,241,0.1)', color: '#6366f1' },
+      received: { bg: 'rgba(16,185,129,0.1)', color: '#059669' },
       cancelled: { bg: 'rgba(107,114,128,0.1)', color: '#6b7280' }
     }
     const s = styles[status] || styles.pending
@@ -177,11 +294,16 @@ function MaterialRequestDetail() {
           <button className="save-btn" onClick={() => setReviewModal({ open: true, status: '', notes: '' })}>Review Request</button>
         )}
         {canFulfill && ['approved', 'partially_approved'].includes(request.status) && (
-          <button className="save-btn" style={{ background: '#6366f1' }} onClick={handleFulfill} disabled={saving}>
-            <ButtonLoader loading={saving}>Mark as Fulfilled</ButtonLoader>
+          <button className="save-btn" style={{ background: '#6366f1' }} onClick={openFulfillModal} disabled={saving}>
+            Fulfill & Assign Materials
           </button>
         )}
-        {(request.requestedBy?._id === currentUser?.id || isAdmin || isManager) && ['pending', 'approved'].includes(request.status) && (
+        {(isRequester || isAdmin || isManager) && request.status === 'fulfilled' && (
+          <button className="save-btn" style={{ background: '#059669' }} onClick={openReceiveModal} disabled={saving}>
+            Mark as Received
+          </button>
+        )}
+        {(isRequester || isAdmin || isManager) && ['pending', 'approved'].includes(request.status) && (
           <button className="cancel-btn" onClick={handleCancel} disabled={saving}>Cancel Request</button>
         )}
       </div>
@@ -250,7 +372,9 @@ function MaterialRequestDetail() {
 
       {/* Requested Materials */}
       <div style={{ background: 'var(--card)', borderRadius: '12px', padding: '20px', border: '1px solid var(--border)', marginTop: '24px' }}>
-        <h3 style={{ margin: '0 0 16px', color: 'var(--text)', fontSize: '16px' }}>📦 Requested Materials ({request.items?.length || 0})</h3>
+        <h3 style={{ margin: '0 0 16px', color: 'var(--text)', fontSize: '16px' }}>
+          {request.status === 'fulfilled' ? '✅ Fulfilled Materials' : '📦 Requested Materials'} ({request.items?.length || 0})
+        </h3>
         <div style={{ overflowX: 'auto' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
@@ -258,29 +382,47 @@ function MaterialRequestDetail() {
                 <th style={{ padding: '12px', textAlign: 'left', color: 'var(--text-muted)', fontSize: '12px', fontWeight: '600' }}>#</th>
                 <th style={{ padding: '12px', textAlign: 'left', color: 'var(--text-muted)', fontSize: '12px', fontWeight: '600' }}>Material Name</th>
                 <th style={{ padding: '12px', textAlign: 'left', color: 'var(--text-muted)', fontSize: '12px', fontWeight: '600' }}>SKU</th>
-                <th style={{ padding: '12px', textAlign: 'right', color: 'var(--text-muted)', fontSize: '12px', fontWeight: '600' }}>Quantity</th>
+                <th style={{ padding: '12px', textAlign: 'right', color: 'var(--text-muted)', fontSize: '12px', fontWeight: '600' }}>Requested</th>
+                {request.status === 'fulfilled' && (
+                  <th style={{ padding: '12px', textAlign: 'right', color: 'var(--text-muted)', fontSize: '12px', fontWeight: '600' }}>Assigned</th>
+                )}
                 <th style={{ padding: '12px', textAlign: 'left', color: 'var(--text-muted)', fontSize: '12px', fontWeight: '600' }}>UOM</th>
                 <th style={{ padding: '12px', textAlign: 'left', color: 'var(--text-muted)', fontSize: '12px', fontWeight: '600' }}>Notes</th>
               </tr>
             </thead>
             <tbody>
-              {request.items?.map((item, index) => (
-                <tr key={index} style={{ borderBottom: '1px solid var(--border)' }}>
-                  <td style={{ padding: '12px', color: 'var(--text-muted)' }}>{index + 1}</td>
-                  <td style={{ padding: '12px', color: 'var(--text)', fontWeight: '500' }}>{item.materialName}</td>
-                  <td style={{ padding: '12px', color: 'var(--primary)', fontSize: '13px' }}>{item.sku || '-'}</td>
-                  <td style={{ padding: '12px', textAlign: 'right', fontWeight: '600', color: 'var(--text)' }}>{item.quantity}</td>
-                  <td style={{ padding: '12px', color: 'var(--text)' }}>{item.uom}</td>
-                  <td style={{ padding: '12px', color: 'var(--text-muted)', fontSize: '13px' }}>{item.notes || '-'}</td>
-                </tr>
-              ))}
+              {request.items?.map((item, index) => {
+                const hasDiscrepancy = request.status === 'fulfilled' && item.assignedQuantity !== item.quantity
+                return (
+                  <tr key={index} style={{ borderBottom: '1px solid var(--border)' }}>
+                    <td style={{ padding: '12px', color: 'var(--text-muted)' }}>{index + 1}</td>
+                    <td style={{ padding: '12px', color: 'var(--text)', fontWeight: '500' }}>{item.materialName}</td>
+                    <td style={{ padding: '12px', color: 'var(--primary)', fontSize: '13px' }}>{item.sku || '-'}</td>
+                    <td style={{ padding: '12px', textAlign: 'right', fontWeight: '600', color: 'var(--text)' }}>{item.quantity}</td>
+                    {request.status === 'fulfilled' && (
+                      <td style={{ padding: '12px', textAlign: 'right', fontWeight: '600' }}>
+                        <span style={{ 
+                          color: hasDiscrepancy ? '#f59e0b' : '#10b981',
+                          background: hasDiscrepancy ? 'rgba(251,191,36,0.1)' : 'rgba(16,185,129,0.1)',
+                          padding: '4px 8px',
+                          borderRadius: '4px'
+                        }}>
+                          {item.assignedQuantity || 0}
+                        </span>
+                      </td>
+                    )}
+                    <td style={{ padding: '12px', color: 'var(--text)' }}>{item.uom}</td>
+                    <td style={{ padding: '12px', color: 'var(--text-muted)', fontSize: '13px' }}>{item.notes || '-'}</td>
+                  </tr>
+                )
+              })}
             </tbody>
           </table>
         </div>
       </div>
 
       {/* Workflow History */}
-      {(request.reviewedBy || request.fulfilledBy) && (
+      {(request.reviewedBy || request.fulfilledBy || request.receivedBy) && (
         <div style={{ background: 'var(--card)', borderRadius: '12px', padding: '20px', border: '1px solid var(--border)', marginTop: '24px' }}>
           <h3 style={{ margin: '0 0 16px', color: 'var(--text)', fontSize: '16px' }}>📝 Workflow History</h3>
           
@@ -302,7 +444,7 @@ function MaterialRequestDetail() {
           )}
 
           {request.fulfilledBy && (
-            <div style={{ padding: '12px', background: 'var(--bg)', borderRadius: '8px' }}>
+            <div style={{ marginBottom: '16px', padding: '12px', background: 'var(--bg)', borderRadius: '8px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
                 <span style={{ fontWeight: '600', color: 'var(--text)' }}>📦 Fulfilled</span>
                 <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{new Date(request.fulfilledAt).toLocaleString()}</span>
@@ -315,6 +457,147 @@ function MaterialRequestDetail() {
               )}
             </div>
           )}
+
+          {request.receivedBy && (
+            <div style={{ padding: '12px', background: 'rgba(16,185,129,0.1)', borderRadius: '8px', border: '1px solid rgba(16,185,129,0.2)' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                <span style={{ fontWeight: '600', color: '#059669' }}>✅ Received</span>
+                <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{new Date(request.receivedAt).toLocaleString()}</span>
+              </div>
+              <div style={{ fontSize: '13px', color: 'var(--text-muted)' }}>
+                By {request.receivedBy?.name || 'N/A'}
+              </div>
+              {request.receivedNotes && (
+                <div style={{ marginTop: '8px', fontSize: '14px', color: 'var(--text)' }}>{request.receivedNotes}</div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Delivery Note Details */}
+      {request.deliveryNote && request.deliveryNote.deliveryDate && (
+        <div style={{ background: 'var(--card)', borderRadius: '12px', padding: '20px', border: '1px solid var(--border)', marginTop: '24px' }}>
+          <h3 style={{ margin: '0 0 16px', color: 'var(--text)', fontSize: '16px' }}>📋 Delivery Note</h3>
+          
+          {/* Delivery Information */}
+          <div style={{ marginBottom: '20px' }}>
+            <h4 style={{ margin: '0 0 12px', color: 'var(--text-muted)', fontSize: '13px', textTransform: 'uppercase' }}>🚚 Delivery Information</h4>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '16px', background: 'var(--bg)', padding: '12px', borderRadius: '8px' }}>
+              <div>
+                <label style={{ fontSize: '11px', color: 'var(--text-muted)', display: 'block' }}>Delivery Date</label>
+                <div style={{ fontWeight: '600', color: 'var(--text)' }}>{new Date(request.deliveryNote.deliveryDate).toLocaleDateString()}</div>
+              </div>
+              <div>
+                <label style={{ fontSize: '11px', color: 'var(--text-muted)', display: 'block' }}>Vehicle Number</label>
+                <div style={{ color: 'var(--text)' }}>{request.deliveryNote.vehicleNumber || '-'}</div>
+              </div>
+              <div>
+                <label style={{ fontSize: '11px', color: 'var(--text-muted)', display: 'block' }}>Delivery Person</label>
+                <div style={{ color: 'var(--text)' }}>{request.deliveryNote.deliveryPersonName || '-'}</div>
+              </div>
+              <div>
+                <label style={{ fontSize: '11px', color: 'var(--text-muted)', display: 'block' }}>Contact</label>
+                <div style={{ color: 'var(--text)' }}>{request.deliveryNote.deliveryPersonContact || '-'}</div>
+              </div>
+            </div>
+          </div>
+
+          {/* Material Condition */}
+          <div style={{ marginBottom: '20px' }}>
+            <h4 style={{ margin: '0 0 12px', color: 'var(--text-muted)', fontSize: '13px', textTransform: 'uppercase' }}>📦 Material Condition</h4>
+            <div style={{ display: 'flex', gap: '16px', alignItems: 'center', background: 'var(--bg)', padding: '12px', borderRadius: '8px' }}>
+              <span style={{ 
+                padding: '6px 12px', 
+                borderRadius: '6px', 
+                fontSize: '13px', 
+                fontWeight: '600',
+                background: request.deliveryNote.materialCondition === 'excellent' ? 'rgba(16,185,129,0.2)' :
+                           request.deliveryNote.materialCondition === 'good' ? 'rgba(59,130,246,0.2)' :
+                           request.deliveryNote.materialCondition === 'acceptable' ? 'rgba(251,191,36,0.2)' :
+                           'rgba(239,68,68,0.2)',
+                color: request.deliveryNote.materialCondition === 'excellent' ? '#059669' :
+                       request.deliveryNote.materialCondition === 'good' ? '#3b82f6' :
+                       request.deliveryNote.materialCondition === 'acceptable' ? '#d97706' :
+                       '#dc2626'
+              }}>
+                {request.deliveryNote.materialCondition?.replace('_', ' ').toUpperCase() || 'GOOD'}
+              </span>
+              {request.deliveryNote.conditionNotes && (
+                <span style={{ color: 'var(--text)', fontSize: '14px' }}>{request.deliveryNote.conditionNotes}</span>
+              )}
+            </div>
+          </div>
+
+          {/* Received Items */}
+          {request.deliveryNote.receivedItems && request.deliveryNote.receivedItems.length > 0 && (
+            <div style={{ marginBottom: '20px' }}>
+              <h4 style={{ margin: '0 0 12px', color: 'var(--text-muted)', fontSize: '13px', textTransform: 'uppercase' }}>✅ Received Items Verification</h4>
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <thead>
+                    <tr style={{ borderBottom: '1px solid var(--border)', background: 'var(--bg)' }}>
+                      <th style={{ padding: '10px', textAlign: 'left', fontSize: '12px', color: 'var(--text-muted)' }}>Material</th>
+                      <th style={{ padding: '10px', textAlign: 'center', fontSize: '12px', color: 'var(--text-muted)' }}>Assigned</th>
+                      <th style={{ padding: '10px', textAlign: 'center', fontSize: '12px', color: 'var(--text-muted)' }}>Received</th>
+                      <th style={{ padding: '10px', textAlign: 'left', fontSize: '12px', color: 'var(--text-muted)' }}>Remarks</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {request.deliveryNote.receivedItems.map((item, index) => {
+                      const hasDiscrepancy = item.receivedQuantity !== item.requestedQuantity
+                      return (
+                        <tr key={index} style={{ borderBottom: '1px solid var(--border)' }}>
+                          <td style={{ padding: '10px' }}>
+                            <div style={{ color: 'var(--text)', fontWeight: '500' }}>{item.materialName}</div>
+                            <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{item.uom}</div>
+                          </td>
+                          <td style={{ padding: '10px', textAlign: 'center', fontWeight: '600', color: 'var(--text)' }}>
+                            {item.requestedQuantity}
+                          </td>
+                          <td style={{ padding: '10px', textAlign: 'center' }}>
+                            <span style={{ 
+                              padding: '4px 8px', 
+                              borderRadius: '4px',
+                              fontWeight: '600',
+                              background: hasDiscrepancy ? 'rgba(251,191,36,0.2)' : 'rgba(16,185,129,0.2)',
+                              color: hasDiscrepancy ? '#d97706' : '#059669'
+                            }}>
+                              {item.receivedQuantity}
+                            </span>
+                          </td>
+                          <td style={{ padding: '10px', color: 'var(--text-muted)', fontSize: '13px' }}>
+                            {item.remarks || '-'}
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* Receiver Acknowledgment */}
+          <div>
+            <h4 style={{ margin: '0 0 12px', color: 'var(--text-muted)', fontSize: '13px', textTransform: 'uppercase' }}>✍️ Receiver Acknowledgment</h4>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', background: 'var(--bg)', padding: '12px', borderRadius: '8px' }}>
+              <div>
+                <label style={{ fontSize: '11px', color: 'var(--text-muted)', display: 'block' }}>Received By</label>
+                <div style={{ fontWeight: '600', color: 'var(--text)' }}>{request.deliveryNote.receiverSignatureName || request.receivedBy?.name || '-'}</div>
+              </div>
+              <div>
+                <label style={{ fontSize: '11px', color: 'var(--text-muted)', display: 'block' }}>Received At</label>
+                <div style={{ color: 'var(--text)' }}>{request.receivedAt ? new Date(request.receivedAt).toLocaleString() : '-'}</div>
+              </div>
+              {request.deliveryNote.acknowledgmentNotes && (
+                <div style={{ gridColumn: '1 / -1' }}>
+                  <label style={{ fontSize: '11px', color: 'var(--text-muted)', display: 'block' }}>Notes</label>
+                  <div style={{ color: 'var(--text)', fontSize: '14px' }}>{request.deliveryNote.acknowledgmentNotes}</div>
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       )}
 
@@ -359,6 +642,321 @@ function MaterialRequestDetail() {
                 <button type="button" className="cancel-btn" onClick={() => setReviewModal({ open: false, status: '', notes: '' })}>Cancel</button>
                 <button type="button" className="save-btn" onClick={handleReview} disabled={saving}>
                   <ButtonLoader loading={saving}>{saving ? 'Submitting...' : 'Submit Review'}</ButtonLoader>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Fulfill Modal with Assign Materials */}
+      {fulfillModal.open && (
+        <div className="modal-overlay" onClick={() => setFulfillModal({ open: false, assignedItems: [], notes: '', materialQuantities: {} })}>
+          <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: '700px', maxHeight: '90vh', overflowY: 'auto' }}>
+            <div className="modal-header">
+              <h2>Fulfill Request {request.requestNumber}</h2>
+              <button onClick={() => setFulfillModal({ open: false, assignedItems: [], notes: '', materialQuantities: {} })} className="close-btn">×</button>
+            </div>
+            <div className="lead-form">
+              <h4 style={{ margin: '0 0 16px', color: 'var(--text)' }}>📦 Assign Materials</h4>
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '16px' }}>
+                  <thead>
+                    <tr style={{ borderBottom: '1px solid var(--border)', background: 'var(--bg)' }}>
+                      <th style={{ padding: '10px', textAlign: 'left', fontSize: '12px', color: 'var(--text-muted)' }}>Material</th>
+                      <th style={{ padding: '10px', textAlign: 'center', fontSize: '12px', color: 'var(--text-muted)' }}>Available</th>
+                      <th style={{ padding: '10px', textAlign: 'center', fontSize: '12px', color: 'var(--text-muted)' }}>Requested</th>
+                      <th style={{ padding: '10px', textAlign: 'center', fontSize: '12px', color: 'var(--text-muted)' }}>Assign</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {fulfillModal.assignedItems.map((item, index) => {
+                      const available = fulfillModal.materialQuantities[item.materialId] || 0
+                      const isInsufficient = item.assignedQuantity > available
+                      return (
+                        <tr key={index} style={{ borderBottom: '1px solid var(--border)' }}>
+                          <td style={{ padding: '10px' }}>
+                            <div style={{ color: 'var(--text)', fontWeight: '500' }}>{item.materialName}</div>
+                            <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{item.uom}</div>
+                          </td>
+                          <td style={{ padding: '10px', textAlign: 'center' }}>
+                            <span style={{ color: available > 0 ? '#10b981' : '#ef4444', fontWeight: '600' }}>
+                              {available}
+                            </span>
+                          </td>
+                          <td style={{ padding: '10px', textAlign: 'center', color: 'var(--text)', fontWeight: '500' }}>
+                            {item.requestedQuantity}
+                          </td>
+                          <td style={{ padding: '10px', textAlign: 'center' }}>
+                            <input
+                              type="number"
+                              min="0"
+                              max={available}
+                              value={item.assignedQuantity}
+                              onChange={e => {
+                                const newItems = [...fulfillModal.assignedItems]
+                                newItems[index].assignedQuantity = parseInt(e.target.value) || 0
+                                setFulfillModal({ ...fulfillModal, assignedItems: newItems })
+                              }}
+                              style={{ 
+                                width: '80px', 
+                                textAlign: 'center', 
+                                padding: '6px',
+                                border: isInsufficient ? '2px solid #ef4444' : '1px solid var(--border)',
+                                borderRadius: '4px',
+                                background: 'var(--card)',
+                                color: 'var(--text)'
+                              }}
+                            />
+                            {isInsufficient && (
+                              <div style={{ fontSize: '10px', color: '#ef4444', marginTop: '2px' }}>Exceeds stock!</div>
+                            )}
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="form-group">
+                <label>Fulfillment Notes</label>
+                <textarea 
+                  value={fulfillModal.notes} 
+                  onChange={e => setFulfillModal({ ...fulfillModal, notes: e.target.value })}
+                  placeholder="Add any notes about this fulfillment..."
+                  rows={3}
+                />
+              </div>
+              <div className="form-actions">
+                <button type="button" className="cancel-btn" onClick={() => setFulfillModal({ open: false, assignedItems: [], notes: '', materialQuantities: {} })}>Cancel</button>
+                <button 
+                  type="button" 
+                  className="save-btn" 
+                  onClick={handleFulfill} 
+                  disabled={saving || fulfillModal.assignedItems.some(item => item.assignedQuantity > (fulfillModal.materialQuantities[item.materialId] || 0))}
+                  style={{ background: '#6366f1' }}
+                >
+                  <ButtonLoader loading={saving}>{saving ? 'Processing...' : 'Confirm & Update Inventory'}</ButtonLoader>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delivery Note Form Modal */}
+      {receiveModal.open && (
+        <div className="modal-overlay" onClick={() => setReceiveModal({ ...receiveModal, open: false })}>
+          <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: '800px', maxHeight: '90vh', overflowY: 'auto' }}>
+            <div className="modal-header">
+              <h2>📋 Delivery Note - {request.requestNumber}</h2>
+              <button onClick={() => setReceiveModal({ ...receiveModal, open: false })} className="close-btn">×</button>
+            </div>
+            <div className="lead-form">
+              {/* Delivery Details Section */}
+              <h4 style={{ margin: '0 0 16px', color: 'var(--text)', borderBottom: '1px solid var(--border)', paddingBottom: '8px' }}>
+                🚚 Delivery Information
+              </h4>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '24px' }}>
+                <div className="form-group" style={{ margin: 0 }}>
+                  <label>Delivery Date *</label>
+                  <input 
+                    type="date" 
+                    value={receiveModal.deliveryDate} 
+                    onChange={e => setReceiveModal({ ...receiveModal, deliveryDate: e.target.value })}
+                    style={{ borderColor: !receiveModal.deliveryDate ? '#ef4444' : undefined }}
+                  />
+                </div>
+                <div className="form-group" style={{ margin: 0 }}>
+                  <label>Vehicle Number</label>
+                  <input 
+                    type="text" 
+                    value={receiveModal.vehicleNumber} 
+                    onChange={e => setReceiveModal({ ...receiveModal, vehicleNumber: e.target.value })}
+                    placeholder="e.g., ABC-1234"
+                  />
+                </div>
+                <div className="form-group" style={{ margin: 0 }}>
+                  <label>Delivery Person Name</label>
+                  <input 
+                    type="text" 
+                    value={receiveModal.deliveryPersonName} 
+                    onChange={e => setReceiveModal({ ...receiveModal, deliveryPersonName: e.target.value })}
+                    placeholder="Name of delivery personnel"
+                  />
+                </div>
+                <div className="form-group" style={{ margin: 0 }}>
+                  <label>Delivery Person Contact</label>
+                  <input 
+                    type="text" 
+                    value={receiveModal.deliveryPersonContact} 
+                    onChange={e => setReceiveModal({ ...receiveModal, deliveryPersonContact: e.target.value })}
+                    placeholder="Phone number"
+                  />
+                </div>
+              </div>
+
+              {/* Material Condition Section */}
+              <h4 style={{ margin: '0 0 16px', color: 'var(--text)', borderBottom: '1px solid var(--border)', paddingBottom: '8px' }}>
+                📦 Material Condition
+              </h4>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: '16px', marginBottom: '24px' }}>
+                <div className="form-group" style={{ margin: 0 }}>
+                  <label>Overall Condition</label>
+                  <select 
+                    value={receiveModal.materialCondition} 
+                    onChange={e => setReceiveModal({ ...receiveModal, materialCondition: e.target.value })}
+                  >
+                    <option value="excellent">Excellent</option>
+                    <option value="good">Good</option>
+                    <option value="acceptable">Acceptable</option>
+                    <option value="partially_damaged">Partially Damaged</option>
+                    <option value="damaged">Damaged</option>
+                  </select>
+                </div>
+                <div className="form-group" style={{ margin: 0 }}>
+                  <label>Condition Notes</label>
+                  <input 
+                    type="text" 
+                    value={receiveModal.conditionNotes} 
+                    onChange={e => setReceiveModal({ ...receiveModal, conditionNotes: e.target.value })}
+                    placeholder="Any damage or issues to note..."
+                  />
+                </div>
+              </div>
+
+              {/* Received Items Verification */}
+              <h4 style={{ margin: '0 0 16px', color: 'var(--text)', borderBottom: '1px solid var(--border)', paddingBottom: '8px' }}>
+                ✅ Received Quantity Verification
+              </h4>
+              <div style={{ overflowX: 'auto', marginBottom: '24px' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <thead>
+                    <tr style={{ borderBottom: '1px solid var(--border)', background: 'var(--bg)' }}>
+                      <th style={{ padding: '10px', textAlign: 'left', fontSize: '12px', color: 'var(--text-muted)' }}>Material</th>
+                      <th style={{ padding: '10px', textAlign: 'center', fontSize: '12px', color: 'var(--text-muted)' }}>Assigned</th>
+                      <th style={{ padding: '10px', textAlign: 'center', fontSize: '12px', color: 'var(--text-muted)' }}>Received</th>
+                      <th style={{ padding: '10px', textAlign: 'left', fontSize: '12px', color: 'var(--text-muted)' }}>Remarks</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {receiveModal.receivedItems.map((item, index) => {
+                      const hasDiscrepancy = item.receivedQuantity !== item.requestedQuantity
+                      return (
+                        <tr key={index} style={{ borderBottom: '1px solid var(--border)' }}>
+                          <td style={{ padding: '10px' }}>
+                            <div style={{ color: 'var(--text)', fontWeight: '500' }}>{item.materialName}</div>
+                            <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{item.uom}</div>
+                          </td>
+                          <td style={{ padding: '10px', textAlign: 'center', fontWeight: '600', color: 'var(--text)' }}>
+                            {item.requestedQuantity}
+                          </td>
+                          <td style={{ padding: '10px', textAlign: 'center' }}>
+                            <input
+                              type="number"
+                              min="0"
+                              value={item.receivedQuantity}
+                              onChange={e => {
+                                const newItems = [...receiveModal.receivedItems]
+                                newItems[index].receivedQuantity = parseInt(e.target.value) || 0
+                                setReceiveModal({ ...receiveModal, receivedItems: newItems })
+                              }}
+                              style={{ 
+                                width: '80px', 
+                                textAlign: 'center', 
+                                padding: '6px',
+                                border: hasDiscrepancy ? '2px solid #f59e0b' : '1px solid var(--border)',
+                                borderRadius: '4px',
+                                background: 'var(--card)',
+                                color: 'var(--text)'
+                              }}
+                            />
+                          </td>
+                          <td style={{ padding: '10px' }}>
+                            <input
+                              type="text"
+                              value={item.remarks}
+                              onChange={e => {
+                                const newItems = [...receiveModal.receivedItems]
+                                newItems[index].remarks = e.target.value
+                                setReceiveModal({ ...receiveModal, receivedItems: newItems })
+                              }}
+                              placeholder="e.g., Damaged, Short..."
+                              style={{ 
+                                width: '100%', 
+                                padding: '6px',
+                                border: '1px solid var(--border)',
+                                borderRadius: '4px',
+                                background: 'var(--card)',
+                                color: 'var(--text)'
+                              }}
+                            />
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Receiver Acknowledgment */}
+              <h4 style={{ margin: '0 0 16px', color: 'var(--text)', borderBottom: '1px solid var(--border)', paddingBottom: '8px' }}>
+                ✍️ Receiver Acknowledgment
+              </h4>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '16px' }}>
+                <div className="form-group" style={{ margin: 0 }}>
+                  <label>Receiver Name / Signature *</label>
+                  <input 
+                    type="text" 
+                    value={receiveModal.receiverSignatureName} 
+                    onChange={e => setReceiveModal({ ...receiveModal, receiverSignatureName: e.target.value })}
+                    placeholder="Your full name"
+                    style={{ borderColor: !receiveModal.receiverSignatureName.trim() ? '#ef4444' : undefined }}
+                  />
+                </div>
+                <div className="form-group" style={{ margin: 0 }}>
+                  <label>Date & Time</label>
+                  <input 
+                    type="text" 
+                    value={new Date().toLocaleString()}
+                    disabled
+                    style={{ background: 'var(--bg)', color: 'var(--text-muted)' }}
+                  />
+                </div>
+              </div>
+              <div className="form-group">
+                <label>Additional Notes</label>
+                <textarea 
+                  value={receiveModal.acknowledgmentNotes} 
+                  onChange={e => setReceiveModal({ ...receiveModal, acknowledgmentNotes: e.target.value })}
+                  placeholder="Any additional notes or comments..."
+                  rows={2}
+                />
+              </div>
+
+              <div style={{ 
+                background: 'rgba(16,185,129,0.1)', 
+                border: '1px solid rgba(16,185,129,0.2)', 
+                borderRadius: '8px', 
+                padding: '12px', 
+                marginBottom: '16px',
+                fontSize: '13px',
+                color: '#059669'
+              }}>
+                ℹ️ By submitting this form, you confirm that you have received and verified the materials listed above.
+              </div>
+              
+              <div className="form-actions">
+                <button type="button" className="cancel-btn" onClick={() => setReceiveModal({ ...receiveModal, open: false })}>Cancel</button>
+                <button 
+                  type="button" 
+                  className="save-btn" 
+                  onClick={handleReceive} 
+                  disabled={saving || !receiveModal.deliveryDate || !receiveModal.receiverSignatureName.trim()}
+                  style={{ background: '#059669' }}
+                >
+                  <ButtonLoader loading={saving}>{saving ? 'Submitting...' : 'Submit Delivery Note'}</ButtonLoader>
                 </button>
               </div>
             </div>

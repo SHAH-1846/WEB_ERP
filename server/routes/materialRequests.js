@@ -141,6 +141,7 @@ router.get('/:id', auth, async (req, res) => {
       .populate('requestedBy', 'name email')
       .populate('reviewedBy', 'name email')
       .populate('fulfilledBy', 'name email')
+      .populate('receivedBy', 'name email')
       .populate('items.materialId', 'name sku uom');
 
     if (!request) {
@@ -281,7 +282,7 @@ router.patch('/:id/review', auth, async (req, res) => {
   }
 });
 
-// Mark as fulfilled
+// Mark as fulfilled with assigned quantities
 router.patch('/:id/fulfill', auth, async (req, res) => {
   try {
     const roles = req.user.roles || [];
@@ -299,7 +300,46 @@ router.patch('/:id/fulfill', auth, async (req, res) => {
       return res.status(400).json({ message: 'Only approved requests can be fulfilled.' });
     }
 
-    const { fulfillmentNotes } = req.body;
+    const { assignedItems, fulfillmentNotes } = req.body;
+
+    // Process assigned quantities and update inventory
+    if (assignedItems && Array.isArray(assignedItems)) {
+      for (const assigned of assignedItems) {
+        // Find the item in the request
+        const itemIndex = request.items.findIndex(item => 
+          item._id.toString() === assigned.itemId || 
+          (item.materialId && item.materialId.toString() === assigned.materialId)
+        );
+        
+        if (itemIndex !== -1 && assigned.assignedQuantity > 0) {
+          // Update assigned quantity on the request item
+          request.items[itemIndex].assignedQuantity = assigned.assignedQuantity;
+          
+          // Deduct from Material inventory if materialId exists
+          if (request.items[itemIndex].materialId) {
+            const material = await Material.findById(request.items[itemIndex].materialId);
+            if (material) {
+              if (material.quantity < assigned.assignedQuantity) {
+                return res.status(400).json({ 
+                  message: `Insufficient stock for ${material.name}. Available: ${material.quantity}, Requested: ${assigned.assignedQuantity}` 
+                });
+              }
+              material.quantity -= assigned.assignedQuantity;
+              // Add edit history
+              material.edits.push({
+                editedBy: req.user.userId,
+                changes: [{
+                  field: 'quantity',
+                  from: material.quantity + assigned.assignedQuantity,
+                  to: material.quantity
+                }]
+              });
+              await material.save();
+            }
+          }
+        }
+      }
+    }
 
     request.status = 'fulfilled';
     request.fulfilledBy = req.user.userId;
@@ -368,6 +408,59 @@ router.delete('/:id', auth, async (req, res) => {
     res.json({ message: 'Material request deleted successfully' });
   } catch (error) {
     console.error('Error deleting material request:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Mark as received (by requester/project engineer)
+router.patch('/:id/receive', auth, async (req, res) => {
+  try {
+    const request = await MaterialRequest.findById(req.params.id);
+    if (!request) {
+      return res.status(404).json({ message: 'Material request not found' });
+    }
+
+    // Only requester or admin/manager can mark as received
+    const roles = req.user.roles || [];
+    if (request.requestedBy.toString() !== req.user.userId && !roles.some(r => ['admin', 'manager'].includes(r))) {
+      return res.status(403).json({ message: 'Only the requester can mark materials as received.' });
+    }
+
+    if (request.status !== 'fulfilled') {
+      return res.status(400).json({ message: 'Only fulfilled requests can be marked as received.' });
+    }
+
+    const { receivedNotes, deliveryNote } = req.body;
+
+    // Validate delivery note (mandatory)
+    if (!deliveryNote || !deliveryNote.deliveryDate || !deliveryNote.receiverSignatureName) {
+      return res.status(400).json({ message: 'Delivery date and receiver signature are required.' });
+    }
+
+    request.status = 'received';
+    request.receivedBy = req.user.userId;
+    request.receivedAt = new Date();
+    request.receivedNotes = receivedNotes || '';
+    request.deliveryNote = {
+      deliveryDate: deliveryNote.deliveryDate,
+      deliveryPersonName: deliveryNote.deliveryPersonName || '',
+      deliveryPersonContact: deliveryNote.deliveryPersonContact || '',
+      vehicleNumber: deliveryNote.vehicleNumber || '',
+      materialCondition: deliveryNote.materialCondition || 'good',
+      conditionNotes: deliveryNote.conditionNotes || '',
+      receivedItems: deliveryNote.receivedItems || [],
+      receiverSignatureName: deliveryNote.receiverSignatureName,
+      acknowledgmentNotes: deliveryNote.acknowledgmentNotes || ''
+    };
+
+    await request.save();
+    await request.populate('projectId', 'name');
+    await request.populate('requestedBy', 'name email');
+    await request.populate('receivedBy', 'name email');
+
+    res.json(request);
+  } catch (error) {
+    console.error('Error marking request as received:', error);
     res.status(500).json({ message: 'Server error' });
   }
 });

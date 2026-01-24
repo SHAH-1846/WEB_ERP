@@ -19,6 +19,11 @@ const materialRequestItemSchema = new mongoose.Schema({
     required: true,
     min: 1
   },
+  assignedQuantity: {
+    type: Number,
+    default: 0,
+    min: 0
+  },
   uom: {
     type: String,
     required: true,
@@ -43,7 +48,7 @@ const materialRequestSchema = new mongoose.Schema({
   items: [materialRequestItemSchema],
   status: {
     type: String,
-    enum: ['pending', 'approved', 'partially_approved', 'rejected', 'fulfilled', 'cancelled'],
+    enum: ['pending', 'approved', 'partially_approved', 'rejected', 'fulfilled', 'received', 'cancelled'],
     default: 'pending'
   },
   priority: {
@@ -103,6 +108,60 @@ const materialRequestSchema = new mongoose.Schema({
   fulfillmentNotes: {
     type: String,
     trim: true
+  },
+  // Received tracking
+  receivedBy: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User'
+  },
+  receivedAt: {
+    type: Date
+  },
+  receivedNotes: {
+    type: String,
+    trim: true
+  },
+  // Delivery Note
+  deliveryNote: {
+    deliveryDate: {
+      type: Date
+    },
+    deliveryPersonName: {
+      type: String,
+      trim: true
+    },
+    deliveryPersonContact: {
+      type: String,
+      trim: true
+    },
+    vehicleNumber: {
+      type: String,
+      trim: true
+    },
+    materialCondition: {
+      type: String,
+      enum: ['excellent', 'good', 'acceptable', 'damaged', 'partially_damaged'],
+      default: 'good'
+    },
+    conditionNotes: {
+      type: String,
+      trim: true
+    },
+    receivedItems: [{
+      materialName: String,
+      requestedQuantity: Number,
+      receivedQuantity: Number,
+      uom: String,
+      remarks: String
+    }],
+    receiverSignatureName: {
+      type: String,
+      trim: true
+    },
+    acknowledgmentNotes: {
+      type: String,
+      trim: true
+    }
   }
 }, {
   timestamps: true

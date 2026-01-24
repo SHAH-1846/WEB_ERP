@@ -728,7 +728,8 @@ function ProjectDetail() {
   const [loadingAction, setLoadingAction] = useState(null)
   // Material Request state
   const [materialRequests, setMaterialRequests] = useState([])
-  const [materialRequestModal, setMaterialRequestModal] = useState({ open: false, form: { items: [{ materialName: '', quantity: 1, uom: 'Pcs', notes: '' }], priority: 'normal', requiredDate: '', purpose: '', notes: '', requesterPhone: '' } })
+  const [inventoryMaterials, setInventoryMaterials] = useState([])
+  const [materialRequestModal, setMaterialRequestModal] = useState({ open: false, form: { items: [{ materialId: '', materialName: '', sku: '', quantity: 1, uom: 'Pcs', notes: '' }], priority: 'normal', requiredDate: '', purpose: '', notes: '', requesterPhone: '' } })
 
   const defaultCompany = useMemo(() => ({
     logo: null,
@@ -1688,10 +1689,20 @@ function ProjectDetail() {
             }}>Create Variation Quotation</button>
           )}
           {canCreateMaterialRequest() && (
-            <button className="assign-btn" onClick={() => setMaterialRequestModal({ 
-              open: true, 
-              form: { items: [{ materialName: '', quantity: 1, uom: 'Pcs', notes: '' }], priority: 'normal', requiredDate: '', purpose: '', notes: '', requesterPhone: '' } 
-            })} style={{ background: '#6366f1' }}>Create Material Request</button>
+            <button className="assign-btn" onClick={async () => {
+              // Fetch inventory materials for dropdown
+              try {
+                const resMats = await api.get('/api/materials')
+                setInventoryMaterials(Array.isArray(resMats.data) ? resMats.data : [])
+              } catch (err) {
+                console.error('Error fetching materials:', err)
+                setInventoryMaterials([])
+              }
+              setMaterialRequestModal({ 
+                open: true, 
+                form: { items: [{ materialId: '', materialName: '', sku: '', quantity: 1, uom: 'Pcs', notes: '' }], priority: 'normal', requiredDate: '', purpose: '', notes: '', requesterPhone: '' } 
+              })
+            }} style={{ background: '#6366f1' }}>Create Material Request</button>
           )}
         </div>
       </div>
@@ -4130,7 +4141,7 @@ function ProjectDetail() {
                       ...materialRequestModal, 
                       form: { 
                         ...materialRequestModal.form, 
-                        items: [...materialRequestModal.form.items, { materialName: '', quantity: 1, uom: 'Pcs', notes: '' }] 
+                        items: [...materialRequestModal.form.items, { materialId: '', materialName: '', sku: '', quantity: 1, uom: 'Pcs', notes: '' }] 
                       }
                     })}
                   >
@@ -4141,17 +4152,33 @@ function ProjectDetail() {
                 {materialRequestModal.form.items.map((item, index) => (
                   <div key={index} style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr 1fr auto', gap: '8px', marginBottom: '8px', alignItems: 'end' }}>
                     <div className="form-group" style={{ margin: 0 }}>
-                      {index === 0 && <label style={{ fontSize: '11px' }}>Material Name *</label>}
-                      <input 
-                        type="text" 
-                        value={item.materialName}
+                      {index === 0 && <label style={{ fontSize: '11px' }}>Material *</label>}
+                      <select
+                        value={item.materialId}
                         onChange={e => {
+                          const selectedMat = inventoryMaterials.find(m => m._id === e.target.value)
                           const newItems = [...materialRequestModal.form.items]
-                          newItems[index].materialName = e.target.value
+                          if (selectedMat) {
+                            newItems[index].materialId = selectedMat._id
+                            newItems[index].materialName = selectedMat.name
+                            newItems[index].sku = selectedMat.sku || ''
+                            newItems[index].uom = selectedMat.uom || 'Pcs'
+                          } else {
+                            newItems[index].materialId = ''
+                            newItems[index].materialName = ''
+                            newItems[index].sku = ''
+                          }
                           setMaterialRequestModal({ ...materialRequestModal, form: { ...materialRequestModal.form, items: newItems }})
                         }}
-                        placeholder="e.g., Steel Pipe 2 inch"
-                      />
+                        style={{ width: '100%' }}
+                      >
+                        <option value="">-- Select Material --</option>
+                        {inventoryMaterials.map(mat => (
+                          <option key={mat._id} value={mat._id}>
+                            {mat.name} {mat.sku ? `(${mat.sku})` : ''} - {mat.storeId?.name || 'Unknown Store'}
+                          </option>
+                        ))}
+                      </select>
                     </div>
                     <div className="form-group" style={{ margin: 0 }}>
                       {index === 0 && <label style={{ fontSize: '11px' }}>Qty *</label>}
@@ -4235,7 +4262,7 @@ function ProjectDetail() {
                   style={{ background: '#6366f1' }}
                   onClick={async () => {
                     // Validate
-                    const validItems = materialRequestModal.form.items.filter(item => item.materialName.trim())
+                    const validItems = materialRequestModal.form.items.filter(item => item.materialId)
                     if (validItems.length === 0) {
                       setNotify({ open: true, title: 'Validation Error', message: 'Please add at least one material.' })
                       return

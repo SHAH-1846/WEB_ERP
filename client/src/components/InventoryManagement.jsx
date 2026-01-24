@@ -435,6 +435,7 @@ function InventoryManagement() {
                     <td style={{ padding: '12px', color: 'var(--text-muted)', fontSize: '13px' }}>{mat.uom}</td>
                     <td style={{ padding: '12px', textAlign: 'center' }}>
                       <div style={{ display: 'flex', gap: '8px', justifyContent: 'center' }}>
+                        <button className="save-btn" style={{ padding: '4px 8px', fontSize: '12px' }} onClick={() => window.location.href = `/material-detail?id=${mat._id}`}>View</button>
                         <button className="link-btn" style={{ padding: '4px 8px', fontSize: '12px' }} onClick={() => openMaterialModal('edit', mat)}>Edit</button>
                         <button className="cancel-btn" style={{ padding: '4px 8px', fontSize: '12px' }} onClick={() => setDeleteModal({ open: true, type: 'material', id: mat._id, name: mat.name })}>Delete</button>
                       </div>

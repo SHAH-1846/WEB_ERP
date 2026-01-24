@@ -18,6 +18,8 @@ function MaterialRequestManagement() {
   
   // Review modal
   const [reviewModal, setReviewModal] = useState({ open: false, request: null, status: '', notes: '' })
+  // Fulfill modal with assigned quantities
+  const [fulfillModal, setFulfillModal] = useState({ open: false, request: null, assignedItems: [], notes: '', materialQuantities: {} })
   const [saving, setSaving] = useState(false)
 
   const isAdmin = currentUser?.roles?.includes('admin')
@@ -26,6 +28,7 @@ function MaterialRequestManagement() {
   const isProjectEngineer = currentUser?.roles?.includes('project_engineer')
   const hasAccess = isAdmin || isManager || isInventoryManager || isProjectEngineer
   const canReview = isAdmin || isManager || isInventoryManager
+  const canFulfill = isAdmin || isManager || isInventoryManager
 
   useEffect(() => {
     try {
@@ -85,15 +88,59 @@ function MaterialRequestManagement() {
     }
   }
 
-  const handleFulfill = async (request) => {
-    if (!confirm('Mark this request as fulfilled?')) return
+  // Open fulfill modal and fetch material quantities
+  const openFulfillModal = async (request) => {
+    // Fetch available quantities for each material
+    const quantities = {}
+    for (const item of request.items) {
+      if (item.materialId) {
+        try {
+          const matId = typeof item.materialId === 'object' ? item.materialId._id : item.materialId
+          const res = await api.get(`/api/materials/${matId}`)
+          quantities[matId] = res.data?.quantity || 0
+        } catch {
+          quantities[item.materialId] = 0
+        }
+      }
+    }
     
+    // Initialize assigned items with requested quantities as default
+    const assignedItems = request.items.map(item => ({
+      itemId: item._id,
+      materialId: typeof item.materialId === 'object' ? item.materialId._id : item.materialId,
+      materialName: item.materialName,
+      requestedQuantity: item.quantity,
+      uom: item.uom,
+      assignedQuantity: item.quantity // Default to requested quantity
+    }))
+    
+    setFulfillModal({ 
+      open: true, 
+      request, 
+      assignedItems,
+      notes: '',
+      materialQuantities: quantities 
+    })
+  }
+
+  const handleFulfill = async () => {
+    setSaving(true)
     try {
-      await api.patch(`/api/material-requests/${request._id}/fulfill`, {})
-      setNotify({ open: true, title: 'Success', message: 'Request marked as fulfilled.' })
+      await api.patch(`/api/material-requests/${fulfillModal.request._id}/fulfill`, {
+        assignedItems: fulfillModal.assignedItems.map(item => ({
+          itemId: item.itemId,
+          materialId: item.materialId,
+          assignedQuantity: item.assignedQuantity
+        })),
+        fulfillmentNotes: fulfillModal.notes
+      })
+      setNotify({ open: true, title: 'Success', message: 'Request fulfilled. Inventory updated.' })
+      setFulfillModal({ open: false, request: null, assignedItems: [], notes: '', materialQuantities: {} })
       fetchRequests()
     } catch (error) {
       setNotify({ open: true, title: 'Error', message: error.response?.data?.message || 'Failed to fulfill request.' })
+    } finally {
+      setSaving(false)
     }
   }
 
@@ -104,6 +151,7 @@ function MaterialRequestManagement() {
       partially_approved: { bg: 'rgba(59,130,246,0.1)', color: '#3b82f6' },
       rejected: { bg: 'rgba(239,68,68,0.1)', color: '#ef4444' },
       fulfilled: { bg: 'rgba(99,102,241,0.1)', color: '#6366f1' },
+      received: { bg: 'rgba(16,185,129,0.1)', color: '#059669' },
       cancelled: { bg: 'rgba(107,114,128,0.1)', color: '#6b7280' }
     }
     const s = styles[status] || styles.pending
@@ -221,7 +269,14 @@ function MaterialRequestManagement() {
                 </td>
                 <td style={{ padding: '12px', textAlign: 'center', color: 'var(--text)' }}>{req.items?.length || 0}</td>
                 <td style={{ padding: '12px' }}>{getPriorityBadge(req.priority)}</td>
-                <td style={{ padding: '12px' }}>{getStatusBadge(req.status)}</td>
+                <td style={{ padding: '12px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    {getStatusBadge(req.status)}
+                    {req.deliveryNote && req.deliveryNote.deliveryDate && (
+                      <span title="Has Delivery Note" style={{ cursor: 'help' }}>📋</span>
+                    )}
+                  </div>
+                </td>
                 <td style={{ padding: '12px', color: 'var(--text-muted)', fontSize: '12px' }}>
                   {new Date(req.createdAt).toLocaleDateString()}
                 </td>
@@ -231,8 +286,8 @@ function MaterialRequestManagement() {
                     {canReview && req.status === 'pending' && (
                       <button className="save-btn" style={{ padding: '4px 8px', fontSize: '11px' }} onClick={() => setReviewModal({ open: true, request: req, status: '', notes: '' })}>Review</button>
                     )}
-                    {(isInventoryManager || isAdmin || isManager) && ['approved', 'partially_approved'].includes(req.status) && (
-                      <button className="save-btn" style={{ padding: '4px 8px', fontSize: '11px', background: '#6366f1' }} onClick={() => handleFulfill(req)}>Fulfill</button>
+                    {canFulfill && ['approved', 'partially_approved'].includes(req.status) && (
+                      <button className="save-btn" style={{ padding: '4px 8px', fontSize: '11px', background: '#6366f1' }} onClick={() => openFulfillModal(req)}>Fulfill</button>
                     )}
                   </div>
                 </td>
@@ -314,6 +369,105 @@ function MaterialRequestManagement() {
                 <button type="button" className="cancel-btn" onClick={() => setReviewModal({ open: false, request: null, status: '', notes: '' })}>Cancel</button>
                 <button type="button" className="save-btn" onClick={handleReview} disabled={saving}>
                   <ButtonLoader loading={saving}>{saving ? 'Submitting...' : 'Submit Review'}</ButtonLoader>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Fulfill Modal with Assign Materials */}
+      {fulfillModal.open && (
+        <div className="modal-overlay" onClick={() => setFulfillModal({ open: false, request: null, assignedItems: [], notes: '', materialQuantities: {} })}>
+          <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: '700px', maxHeight: '90vh', overflowY: 'auto' }}>
+            <div className="modal-header">
+              <h2>Fulfill Request {fulfillModal.request?.requestNumber}</h2>
+              <button onClick={() => setFulfillModal({ open: false, request: null, assignedItems: [], notes: '', materialQuantities: {} })} className="close-btn">×</button>
+            </div>
+            <div className="lead-form">
+              <h4 style={{ margin: '0 0 16px', color: 'var(--text)' }}>📦 Assign Materials</h4>
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '16px' }}>
+                  <thead>
+                    <tr style={{ borderBottom: '1px solid var(--border)', background: 'var(--bg)' }}>
+                      <th style={{ padding: '10px', textAlign: 'left', fontSize: '12px', color: 'var(--text-muted)' }}>Material</th>
+                      <th style={{ padding: '10px', textAlign: 'center', fontSize: '12px', color: 'var(--text-muted)' }}>Available</th>
+                      <th style={{ padding: '10px', textAlign: 'center', fontSize: '12px', color: 'var(--text-muted)' }}>Requested</th>
+                      <th style={{ padding: '10px', textAlign: 'center', fontSize: '12px', color: 'var(--text-muted)' }}>Assign</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {fulfillModal.assignedItems.map((item, index) => {
+                      const available = fulfillModal.materialQuantities[item.materialId] || 0
+                      const isInsufficient = item.assignedQuantity > available
+                      return (
+                        <tr key={index} style={{ borderBottom: '1px solid var(--border)' }}>
+                          <td style={{ padding: '10px' }}>
+                            <div style={{ color: 'var(--text)', fontWeight: '500' }}>{item.materialName}</div>
+                            <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{item.uom}</div>
+                          </td>
+                          <td style={{ padding: '10px', textAlign: 'center' }}>
+                            <span style={{ 
+                              color: available > 0 ? '#10b981' : '#ef4444', 
+                              fontWeight: '600' 
+                            }}>
+                              {available}
+                            </span>
+                          </td>
+                          <td style={{ padding: '10px', textAlign: 'center', color: 'var(--text)', fontWeight: '500' }}>
+                            {item.requestedQuantity}
+                          </td>
+                          <td style={{ padding: '10px', textAlign: 'center' }}>
+                            <input
+                              type="number"
+                              min="0"
+                              max={available}
+                              value={item.assignedQuantity}
+                              onChange={e => {
+                                const newItems = [...fulfillModal.assignedItems]
+                                newItems[index].assignedQuantity = parseInt(e.target.value) || 0
+                                setFulfillModal({ ...fulfillModal, assignedItems: newItems })
+                              }}
+                              style={{ 
+                                width: '80px', 
+                                textAlign: 'center', 
+                                padding: '6px',
+                                border: isInsufficient ? '2px solid #ef4444' : '1px solid var(--border)',
+                                borderRadius: '4px',
+                                background: 'var(--card)',
+                                color: 'var(--text)'
+                              }}
+                            />
+                            {isInsufficient && (
+                              <div style={{ fontSize: '10px', color: '#ef4444', marginTop: '2px' }}>Exceeds stock!</div>
+                            )}
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="form-group">
+                <label>Fulfillment Notes</label>
+                <textarea 
+                  value={fulfillModal.notes} 
+                  onChange={e => setFulfillModal({ ...fulfillModal, notes: e.target.value })}
+                  placeholder="Add any notes about this fulfillment..."
+                  rows={3}
+                />
+              </div>
+              <div className="form-actions">
+                <button type="button" className="cancel-btn" onClick={() => setFulfillModal({ open: false, request: null, assignedItems: [], notes: '', materialQuantities: {} })}>Cancel</button>
+                <button 
+                  type="button" 
+                  className="save-btn" 
+                  onClick={handleFulfill} 
+                  disabled={saving || fulfillModal.assignedItems.some(item => item.assignedQuantity > (fulfillModal.materialQuantities[item.materialId] || 0))}
+                  style={{ background: '#6366f1' }}
+                >
+                  <ButtonLoader loading={saving}>{saving ? 'Processing...' : 'Confirm & Update Inventory'}</ButtonLoader>
                 </button>
               </div>
             </div>

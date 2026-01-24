@@ -17,6 +17,7 @@ import LeadFormPage from './components/LeadFormPage'
 import ProjectFormPage from './components/ProjectFormPage'
 import VariationFormPage from './components/VariationFormPage'
 import MaterialRequestDetail from './components/MaterialRequestDetail'
+import MaterialDetail from './components/MaterialDetail'
 import { initTheme, setTheme } from './utils/theme'
 
 function Login() {
@@ -255,6 +256,11 @@ function App() {
         <Route path="/material-request-detail" element={
           <ProtectedRoute>
             <MaterialRequestDetail />
+          </ProtectedRoute>
+        } />
+        <Route path="/material-detail" element={
+          <ProtectedRoute>
+            <MaterialDetail />
           </ProtectedRoute>
         } />
         <Route path="/lead-detail" element={

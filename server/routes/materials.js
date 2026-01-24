@@ -26,6 +26,12 @@ const isStoreKeeper = (roles) => roles.includes('store_keeper');
 // Check if user has inventory access
 const hasInventoryAccess = (roles) => isInventoryManager(roles) || isStoreKeeper(roles);
 
+// Check if user can read materials (for material requests)
+const canReadMaterials = (roles) => hasInventoryAccess(roles) || 
+  roles.includes('project_engineer') || 
+  roles.includes('manager') || 
+  roles.includes('admin');
+
 // Get stores assigned to store_keeper
 const getAssignedStoreIds = async (userId) => {
   const stores = await Store.find({ assignedStoreKeeper: userId });
@@ -37,7 +43,8 @@ router.get('/', auth, async (req, res) => {
   try {
     const roles = req.user.roles || [];
     
-    if (!hasInventoryAccess(roles)) {
+    // Allow project engineers, managers, and admins to read materials (for material requests)
+    if (!canReadMaterials(roles)) {
       return res.status(403).json({ message: 'Access denied. Inventory roles required.' });
     }
 
