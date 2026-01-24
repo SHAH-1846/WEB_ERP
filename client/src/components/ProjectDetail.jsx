@@ -726,6 +726,9 @@ function ProjectDetail() {
   const [isLoading, setIsLoading] = useState(true)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [loadingAction, setLoadingAction] = useState(null)
+  // Material Request state
+  const [materialRequests, setMaterialRequests] = useState([])
+  const [materialRequestModal, setMaterialRequestModal] = useState({ open: false, form: { items: [{ materialName: '', quantity: 1, uom: 'Pcs', notes: '' }], priority: 'normal', requiredDate: '', purpose: '', notes: '', requesterPhone: '' } })
 
   const defaultCompany = useMemo(() => ({
     logo: null,
@@ -737,6 +740,10 @@ function ProjectDetail() {
 
   const canCreateVariation = () => {
     return currentUser?.roles?.some(role => ['admin', 'manager', 'estimation_engineer'].includes(role))
+  }
+
+  const canCreateMaterialRequest = () => {
+    return currentUser?.roles?.some(role => ['admin', 'manager', 'project_engineer'].includes(role))
   }
 
   const createVariation = async () => {
@@ -1003,6 +1010,14 @@ function ProjectDetail() {
         } catch (err) {
           console.error('Error fetching variations:', err)
           setVariations([])
+        }
+        // Fetch material requests
+        try {
+          const resMR = await api.get(`/api/material-requests/project/${focus}`)
+          setMaterialRequests(Array.isArray(resMR.data) ? resMR.data : [])
+        } catch (err) {
+          console.error('Error fetching material requests:', err)
+          setMaterialRequests([])
         }
         // Preload project engineers for name mapping and profile view
         try {
@@ -1672,6 +1687,12 @@ function ProjectDetail() {
               }
             }}>Create Variation Quotation</button>
           )}
+          {canCreateMaterialRequest() && (
+            <button className="assign-btn" onClick={() => setMaterialRequestModal({ 
+              open: true, 
+              form: { items: [{ materialName: '', quantity: 1, uom: 'Pcs', notes: '' }], priority: 'normal', requiredDate: '', purpose: '', notes: '', requesterPhone: '' } 
+            })} style={{ background: '#6366f1' }}>Create Material Request</button>
+          )}
         </div>
       </div>
 
@@ -1790,6 +1811,62 @@ function ProjectDetail() {
                       <td data-label="Grand Total">{(v.priceSchedule?.currency || 'AED')} {Number(v.priceSchedule?.grandTotal || 0).toFixed(2)}</td>
                       <td data-label="Actions">
                         <button className="link-btn" onClick={() => { try { localStorage.setItem('variationId', v._id) } catch {}; window.location.href = '/variation-detail' }}>View</button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {Array.isArray(materialRequests) && materialRequests.length > 0 && (
+          <div className="ld-card ld-section">
+            <h3>Material Requests ({materialRequests.length})</h3>
+            <div className="table">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Request #</th>
+                    <th>Priority</th>
+                    <th>Status</th>
+                    <th>Items</th>
+                    <th>Requested</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {materialRequests.map(mr => (
+                    <tr key={mr._id}>
+                      <td data-label="Request #" style={{ color: 'var(--primary)', fontWeight: '600' }}>{mr.requestNumber}</td>
+                      <td data-label="Priority">
+                        <span style={{
+                          padding: '4px 8px',
+                          borderRadius: '4px',
+                          fontSize: '11px',
+                          fontWeight: '600',
+                          background: mr.priority === 'urgent' ? 'rgba(239,68,68,0.1)' : mr.priority === 'high' ? 'rgba(251,191,36,0.1)' : 'rgba(59,130,246,0.1)',
+                          color: mr.priority === 'urgent' ? '#ef4444' : mr.priority === 'high' ? '#f59e0b' : '#3b82f6'
+                        }}>
+                          {mr.priority?.toUpperCase()}
+                        </span>
+                      </td>
+                      <td data-label="Status">
+                        <span style={{
+                          padding: '4px 8px',
+                          borderRadius: '4px',
+                          fontSize: '11px',
+                          fontWeight: '600',
+                          background: mr.status === 'approved' ? 'rgba(16,185,129,0.1)' : mr.status === 'pending' ? 'rgba(251,191,36,0.1)' : mr.status === 'rejected' ? 'rgba(239,68,68,0.1)' : 'rgba(99,102,241,0.1)',
+                          color: mr.status === 'approved' ? '#10b981' : mr.status === 'pending' ? '#f59e0b' : mr.status === 'rejected' ? '#ef4444' : '#6366f1'
+                        }}>
+                          {mr.status?.replace('_', ' ').toUpperCase()}
+                        </span>
+                      </td>
+                      <td data-label="Items">{mr.items?.length || 0} items</td>
+                      <td data-label="Requested">{new Date(mr.createdAt).toLocaleDateString()}</td>
+                      <td data-label="Actions">
+                        <button className="link-btn" onClick={() => window.location.href = `/material-request-detail?id=${mr._id}`}>View</button>
                       </td>
                     </tr>
                   ))}
@@ -3988,6 +4065,208 @@ function ProjectDetail() {
                 }}
                 title="PDF Preview"
               />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Material Request Modal */}
+      {materialRequestModal.open && (
+        <div className="modal-overlay" onClick={() => setMaterialRequestModal({ ...materialRequestModal, open: false })}>
+          <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: '700px', maxHeight: '90vh', overflowY: 'auto' }}>
+            <div className="modal-header">
+              <h2>Create Material Request</h2>
+              <button onClick={() => setMaterialRequestModal({ ...materialRequestModal, open: false })} className="close-btn">×</button>
+            </div>
+            <div className="lead-form">
+              <div className="form-group">
+                <label>Priority</label>
+                <select 
+                  value={materialRequestModal.form.priority}
+                  onChange={e => setMaterialRequestModal({ ...materialRequestModal, form: { ...materialRequestModal.form, priority: e.target.value }})}
+                >
+                  <option value="low">Low</option>
+                  <option value="normal">Normal</option>
+                  <option value="high">High</option>
+                  <option value="urgent">Urgent</option>
+                </select>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                <div className="form-group">
+                  <label>Required Date</label>
+                  <input 
+                    type="date" 
+                    value={materialRequestModal.form.requiredDate}
+                    onChange={e => setMaterialRequestModal({ ...materialRequestModal, form: { ...materialRequestModal.form, requiredDate: e.target.value }})}
+                  />
+                </div>
+                <div className="form-group">
+                  <label>Contact Phone</label>
+                  <input 
+                    type="text" 
+                    value={materialRequestModal.form.requesterPhone}
+                    onChange={e => setMaterialRequestModal({ ...materialRequestModal, form: { ...materialRequestModal.form, requesterPhone: e.target.value }})}
+                    placeholder="e.g., +971-50-123-4567"
+                  />
+                </div>
+              </div>
+              <div className="form-group">
+                <label>Purpose</label>
+                <input 
+                  type="text" 
+                  value={materialRequestModal.form.purpose}
+                  onChange={e => setMaterialRequestModal({ ...materialRequestModal, form: { ...materialRequestModal.form, purpose: e.target.value }})}
+                  placeholder="e.g., Phase 2 construction materials"
+                />
+              </div>
+
+              <div style={{ marginTop: '16px', borderTop: '1px solid var(--border)', paddingTop: '16px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                  <label style={{ fontWeight: '600', color: 'var(--text)' }}>Materials *</label>
+                  <button 
+                    type="button" 
+                    className="link-btn" 
+                    onClick={() => setMaterialRequestModal({ 
+                      ...materialRequestModal, 
+                      form: { 
+                        ...materialRequestModal.form, 
+                        items: [...materialRequestModal.form.items, { materialName: '', quantity: 1, uom: 'Pcs', notes: '' }] 
+                      }
+                    })}
+                  >
+                    + Add Item
+                  </button>
+                </div>
+                
+                {materialRequestModal.form.items.map((item, index) => (
+                  <div key={index} style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr 1fr auto', gap: '8px', marginBottom: '8px', alignItems: 'end' }}>
+                    <div className="form-group" style={{ margin: 0 }}>
+                      {index === 0 && <label style={{ fontSize: '11px' }}>Material Name *</label>}
+                      <input 
+                        type="text" 
+                        value={item.materialName}
+                        onChange={e => {
+                          const newItems = [...materialRequestModal.form.items]
+                          newItems[index].materialName = e.target.value
+                          setMaterialRequestModal({ ...materialRequestModal, form: { ...materialRequestModal.form, items: newItems }})
+                        }}
+                        placeholder="e.g., Steel Pipe 2 inch"
+                      />
+                    </div>
+                    <div className="form-group" style={{ margin: 0 }}>
+                      {index === 0 && <label style={{ fontSize: '11px' }}>Qty *</label>}
+                      <input 
+                        type="number" 
+                        min="1"
+                        value={item.quantity}
+                        onChange={e => {
+                          const newItems = [...materialRequestModal.form.items]
+                          newItems[index].quantity = parseInt(e.target.value) || 1
+                          setMaterialRequestModal({ ...materialRequestModal, form: { ...materialRequestModal.form, items: newItems }})
+                        }}
+                      />
+                    </div>
+                    <div className="form-group" style={{ margin: 0 }}>
+                      {index === 0 && <label style={{ fontSize: '11px' }}>UOM</label>}
+                      <select 
+                        value={item.uom}
+                        onChange={e => {
+                          const newItems = [...materialRequestModal.form.items]
+                          newItems[index].uom = e.target.value
+                          setMaterialRequestModal({ ...materialRequestModal, form: { ...materialRequestModal.form, items: newItems }})
+                        }}
+                      >
+                        <option value="Pcs">Pcs</option>
+                        <option value="Mtrs">Mtrs</option>
+                        <option value="Kg">Kg</option>
+                        <option value="Sets">Sets</option>
+                        <option value="Boxes">Boxes</option>
+                        <option value="Ltrs">Ltrs</option>
+                        <option value="Rolls">Rolls</option>
+                        <option value="Bags">Bags</option>
+                      </select>
+                    </div>
+                    <div className="form-group" style={{ margin: 0 }}>
+                      {index === 0 && <label style={{ fontSize: '11px' }}>Notes</label>}
+                      <input 
+                        type="text" 
+                        value={item.notes}
+                        onChange={e => {
+                          const newItems = [...materialRequestModal.form.items]
+                          newItems[index].notes = e.target.value
+                          setMaterialRequestModal({ ...materialRequestModal, form: { ...materialRequestModal.form, items: newItems }})
+                        }}
+                        placeholder="Optional"
+                      />
+                    </div>
+                    {materialRequestModal.form.items.length > 1 && (
+                      <button 
+                        type="button" 
+                        className="cancel-btn" 
+                        style={{ padding: '6px 10px', fontSize: '12px' }}
+                        onClick={() => {
+                          const newItems = materialRequestModal.form.items.filter((_, i) => i !== index)
+                          setMaterialRequestModal({ ...materialRequestModal, form: { ...materialRequestModal.form, items: newItems }})
+                        }}
+                      >
+                        ✕
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+
+              <div className="form-group" style={{ marginTop: '16px' }}>
+                <label>Additional Notes</label>
+                <textarea 
+                  value={materialRequestModal.form.notes}
+                  onChange={e => setMaterialRequestModal({ ...materialRequestModal, form: { ...materialRequestModal.form, notes: e.target.value }})}
+                  placeholder="Any additional notes for the inventory team..."
+                  rows={3}
+                />
+              </div>
+
+              <div className="form-actions">
+                <button type="button" className="cancel-btn" onClick={() => setMaterialRequestModal({ ...materialRequestModal, open: false })}>Cancel</button>
+                <button 
+                  type="button" 
+                  className="save-btn" 
+                  disabled={isSubmitting}
+                  style={{ background: '#6366f1' }}
+                  onClick={async () => {
+                    // Validate
+                    const validItems = materialRequestModal.form.items.filter(item => item.materialName.trim())
+                    if (validItems.length === 0) {
+                      setNotify({ open: true, title: 'Validation Error', message: 'Please add at least one material.' })
+                      return
+                    }
+
+                    setIsSubmitting(true)
+                    try {
+                      await api.post('/api/material-requests', {
+                        projectId: project._id,
+                        items: validItems,
+                        priority: materialRequestModal.form.priority,
+                        requiredDate: materialRequestModal.form.requiredDate || null,
+                        purpose: materialRequestModal.form.purpose,
+                        notes: materialRequestModal.form.notes,
+                        requesterPhone: materialRequestModal.form.requesterPhone
+                      })
+                      setNotify({ open: true, title: 'Success', message: 'Material request created successfully.' })
+                      setMaterialRequestModal({ ...materialRequestModal, open: false })
+                      // Refresh material requests
+                      const resMR = await api.get(`/api/material-requests/project/${project._id}`)
+                      setMaterialRequests(Array.isArray(resMR.data) ? resMR.data : [])
+                    } catch (error) {
+                      setNotify({ open: true, title: 'Error', message: error.response?.data?.message || 'Failed to create material request.' })
+                    } finally {
+                      setIsSubmitting(false)
+                    }
+                  }}
+                >
+                  <ButtonLoader loading={isSubmitting}>{isSubmitting ? 'Submitting...' : 'Submit Request'}</ButtonLoader>
+                </button>
+              </div>
             </div>
           </div>
         </div>

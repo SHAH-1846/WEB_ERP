@@ -12,6 +12,7 @@ import QuotationModal from './QuotationModal'
 import EstimationsDashboard from './EstimationsDashboard'
 import InventoryManagement from './InventoryManagement'
 import Settings from './Settings'
+import MaterialRequestManagement from './MaterialRequestManagement'
 import { initTheme, setTheme } from '../utils/theme'
 import { api } from '../lib/api'
 
@@ -60,7 +61,7 @@ function Dashboard() {
     if (isModalRoute && backgroundLocation) {
       const pathSegments = backgroundLocation.pathname.split('/').filter(Boolean)
       const basePath = pathSegments[0] || 'dashboard'
-      if (['dashboard','users','estimations-dashboard','leads','projects','quotations','revisions','project-variations','audit-logs','inventory','settings'].includes(basePath)) {
+      if (['dashboard','users','estimations-dashboard','leads','projects','quotations','revisions','project-variations','audit-logs','inventory','settings','material-requests'].includes(basePath)) {
         setActiveTab(basePath)
       }
     } else if (isModalRoute && !backgroundLocation) {
@@ -71,7 +72,7 @@ function Dashboard() {
       } else {
         const pathSegments = location.pathname.split('/').filter(Boolean)
         const basePath = pathSegments[0] || 'dashboard'
-        if (['dashboard','users','estimations-dashboard','leads','projects','quotations','revisions','project-variations','audit-logs','settings'].includes(basePath)) {
+        if (['dashboard','users','estimations-dashboard','leads','projects','quotations','revisions','project-variations','audit-logs','settings','material-requests'].includes(basePath)) {
           setActiveTab(basePath)
         }
       }
@@ -79,7 +80,7 @@ function Dashboard() {
       // Normal navigation - use current pathname
       const pathSegments = location.pathname.split('/').filter(Boolean)
       const basePath = pathSegments[0] || 'dashboard'
-      if (['dashboard','users','estimations-dashboard','leads','projects','quotations','revisions','project-variations','audit-logs','inventory','settings'].includes(basePath)) {
+      if (['dashboard','users','estimations-dashboard','leads','projects','quotations','revisions','project-variations','audit-logs','inventory','settings','material-requests'].includes(basePath)) {
         setActiveTab(basePath)
       }
     }
@@ -292,6 +293,15 @@ function Dashboard() {
               <span className="label">Settings</span>
             </NavLink>
           )}
+          {/* Material Requests - for admin, manager, inventory_manager, project_engineer */}
+          {(user?.roles?.includes('admin') || user?.roles?.includes('manager') || user?.roles?.includes('inventory_manager') || user?.roles?.includes('project_engineer')) && (
+            <NavLink to="/material-requests" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
+              <svg viewBox="0 0 24 24" fill="currentColor">
+                <path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-7 14l-5-5 1.41-1.41L12 14.17l7.59-7.59L21 8l-9 9z"/>
+              </svg>
+              <span className="label">Material Requests</span>
+            </NavLink>
+          )}
         </nav>
         
         <div className="sidebar-footer">
@@ -341,6 +351,7 @@ function Dashboard() {
               {activeTab === 'project-variations' && 'Project Variations'}
               {activeTab === 'inventory' && 'Inventory Management'}
               {activeTab === 'settings' && 'Settings'}
+              {activeTab === 'material-requests' && 'Material Requests'}
             </h1>
               <p>Welcome back, {user?.name}!</p>
             </div>
@@ -473,6 +484,7 @@ function Dashboard() {
           {activeTab === 'audit-logs' && <UnifiedAuditLogs />}
           {activeTab === 'inventory' && <InventoryManagement />}
           {activeTab === 'settings' && <Settings />}
+          {activeTab === 'material-requests' && <MaterialRequestManagement />}
         </div>
       </div>
       
