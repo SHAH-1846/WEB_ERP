@@ -17,6 +17,7 @@ const generalAuditLogRoutes = require('./routes/generalAuditLogs');
 const unifiedAuditLogRoutes = require('./routes/unifiedAuditLogs');
 const storeRoutes = require('./routes/stores');
 const materialRoutes = require('./routes/materials');
+const systemSettingsRoutes = require('./routes/systemSettings');
 
 const app = express();
 const path = require('path');
@@ -47,6 +48,7 @@ app.use('/api/general-audit-logs', generalAuditLogRoutes);
 app.use('/api/unified-audit-logs', unifiedAuditLogRoutes);
 app.use('/api/stores', storeRoutes);
 app.use('/api/materials', materialRoutes);
+app.use('/api/system-settings', systemSettingsRoutes);
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {

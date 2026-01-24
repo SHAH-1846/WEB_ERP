@@ -4,13 +4,14 @@ import { Spinner, ButtonLoader } from './LoadingComponents'
 
 function InventoryManagement() {
   const [currentUser, setCurrentUser] = useState(null)
-  const [activeTab, setActiveTab] = useState('stores')
+  const [activeTab, setActiveTab] = useState('materials')
   const [stores, setStores] = useState([])
   const [materials, setMaterials] = useState([])
   const [storeKeepers, setStoreKeepers] = useState([])
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [notify, setNotify] = useState({ open: false, title: '', message: '' })
+  const [storeCreationEnabled, setStoreCreationEnabled] = useState(true)
   
   // Store modal state
   const [storeModal, setStoreModal] = useState({ open: false, mode: 'create', data: null })
@@ -43,6 +44,7 @@ function InventoryManagement() {
     if (currentUser && hasAccess) {
       fetchStores()
       fetchMaterials()
+      fetchInventorySettings()
       if (isInventoryManager) {
         fetchStoreKeepers()
       }
@@ -50,6 +52,15 @@ function InventoryManagement() {
       setLoading(false)
     }
   }, [currentUser])
+
+  const fetchInventorySettings = async () => {
+    try {
+      const res = await api.get('/api/system-settings/inventory')
+      setStoreCreationEnabled(res.data.storeCreationEnabled ?? true)
+    } catch (error) {
+      console.error('Error fetching inventory settings:', error)
+    }
+  }
 
   const fetchStores = async () => {
     try {
@@ -243,20 +254,6 @@ function InventoryManagement() {
       {/* Tabs */}
       <div style={{ display: 'flex', gap: '8px', marginBottom: '24px', borderBottom: '1px solid var(--border)', paddingBottom: '16px' }}>
         <button
-          onClick={() => setActiveTab('stores')}
-          style={{
-            padding: '10px 20px',
-            border: 'none',
-            borderRadius: '8px',
-            background: activeTab === 'stores' ? 'var(--primary)' : 'var(--bg)',
-            color: activeTab === 'stores' ? 'white' : 'var(--text)',
-            cursor: 'pointer',
-            fontWeight: '500'
-          }}
-        >
-          📦 Stores
-        </button>
-        <button
           onClick={() => setActiveTab('materials')}
           style={{
             padding: '10px 20px',
@@ -270,6 +267,20 @@ function InventoryManagement() {
         >
           🏷️ Materials
         </button>
+        <button
+          onClick={() => setActiveTab('stores')}
+          style={{
+            padding: '10px 20px',
+            border: 'none',
+            borderRadius: '8px',
+            background: activeTab === 'stores' ? 'var(--primary)' : 'var(--bg)',
+            color: activeTab === 'stores' ? 'white' : 'var(--text)',
+            cursor: 'pointer',
+            fontWeight: '500'
+          }}
+        >
+          📦 Stores
+        </button>
       </div>
 
       {/* Stores Tab */}
@@ -277,10 +288,15 @@ function InventoryManagement() {
         <div>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
             <h3 style={{ margin: 0, color: 'var(--text)' }}>Store Locations</h3>
-            {isInventoryManager && (
+            {isInventoryManager && storeCreationEnabled && (
               <button className="save-btn" onClick={() => openStoreModal('create')}>
                 + Add Store
               </button>
+            )}
+            {isInventoryManager && !storeCreationEnabled && (
+              <span style={{ fontSize: '13px', color: 'var(--text-muted)', fontStyle: 'italic' }}>
+                Store creation is disabled by admin
+              </span>
             )}
           </div>
 
