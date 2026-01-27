@@ -58,6 +58,11 @@ router.get('/', auth, async (req, res) => {
       query.priority = req.query.priority;
     }
 
+    // Filter by requestType
+    if (req.query.requestType) {
+      query.requestType = req.query.requestType;
+    }
+
     // Project engineers can only see their own requests (unless admin/manager)
     if (roles.includes('project_engineer') && !roles.some(r => ['admin', 'manager', 'inventory_manager'].includes(r))) {
       query.requestedBy = req.user.userId;
@@ -160,11 +165,22 @@ router.post('/', auth, async (req, res) => {
   try {
     const roles = req.user.roles || [];
     
-    if (!canCreateMaterialRequest(roles)) {
-      return res.status(403).json({ message: 'Only project engineers, managers, and admins can create material requests.' });
+    const { projectId, items, priority, requiredDate, purpose, notes, requesterPhone, requestType } = req.body;
+    
+    // Role-based validation for request type
+    const isReturnRequest = requestType === 'return';
+    
+    if (isReturnRequest) {
+      // Only inventory_manager, admin, manager can create return requests
+      if (!roles.some(r => ['admin', 'manager', 'inventory_manager'].includes(r))) {
+        return res.status(403).json({ message: 'Only inventory managers can create material return requests.' });
+      }
+    } else {
+      // Regular material request - project engineers, managers, admins
+      if (!canCreateMaterialRequest(roles)) {
+        return res.status(403).json({ message: 'Only project engineers, managers, and admins can create material requests.' });
+      }
     }
-
-    const { projectId, items, priority, requiredDate, purpose, notes, requesterPhone } = req.body;
 
     if (!projectId || !items || items.length === 0) {
       return res.status(400).json({ message: 'Project and at least one item are required.' });
@@ -186,6 +202,7 @@ router.post('/', auth, async (req, res) => {
       requiredDate,
       purpose,
       notes,
+      requestType: requestType || 'request',
       requestedBy: req.user.userId,
       requesterName: requester?.name || '',
       requesterEmail: requester?.email || '',
@@ -245,14 +262,27 @@ router.put('/:id', auth, async (req, res) => {
 router.patch('/:id/review', auth, async (req, res) => {
   try {
     const roles = req.user.roles || [];
-    
-    if (!canReviewMaterialRequest(roles)) {
-      return res.status(403).json({ message: 'Only inventory managers, managers, and admins can review requests.' });
-    }
 
     const request = await MaterialRequest.findById(req.params.id);
     if (!request) {
       return res.status(404).json({ message: 'Material request not found' });
+    }
+
+    // Role check based on request type
+    const isReturnRequest = request.requestType === 'return';
+    
+    if (isReturnRequest) {
+      // Return requests can be reviewed by Project Engineers (requester of original project), admin, manager
+      const isProjectEngineer = roles.includes('project_engineer');
+      const isAdminOrManager = roles.some(r => ['admin', 'manager'].includes(r));
+      if (!isProjectEngineer && !isAdminOrManager) {
+        return res.status(403).json({ message: 'Only project engineers can review return requests.' });
+      }
+    } else {
+      // Regular requests reviewed by inventory managers
+      if (!canReviewMaterialRequest(roles)) {
+        return res.status(403).json({ message: 'Only inventory managers, managers, and admins can review requests.' });
+      }
     }
 
     if (request.status !== 'pending') {
@@ -420,10 +450,20 @@ router.patch('/:id/receive', auth, async (req, res) => {
       return res.status(404).json({ message: 'Material request not found' });
     }
 
-    // Only requester or admin/manager can mark as received
+    // Role-based check for who can mark as received
     const roles = req.user.roles || [];
-    if (request.requestedBy.toString() !== req.user.userId && !roles.some(r => ['admin', 'manager'].includes(r))) {
-      return res.status(403).json({ message: 'Only the requester can mark materials as received.' });
+    const isReturnRequest = request.requestType === 'return';
+    
+    if (isReturnRequest) {
+      // For return requests, Inventory Manager marks as received (they receive materials back)
+      if (!roles.some(r => ['admin', 'manager', 'inventory_manager'].includes(r))) {
+        return res.status(403).json({ message: 'Only inventory managers can mark return requests as received.' });
+      }
+    } else {
+      // For regular requests, the requester (Project Engineer) marks as received
+      if (request.requestedBy.toString() !== req.user.userId && !roles.some(r => ['admin', 'manager'].includes(r))) {
+        return res.status(403).json({ message: 'Only the requester can mark materials as received.' });
+      }
     }
 
     if (request.status !== 'fulfilled') {
@@ -435,6 +475,22 @@ router.patch('/:id/receive', auth, async (req, res) => {
     // Validate delivery note (mandatory)
     if (!deliveryNote || !deliveryNote.deliveryDate || !deliveryNote.receiverSignatureName) {
       return res.status(400).json({ message: 'Delivery date and receiver signature are required.' });
+    }
+
+    // For return requests, ADD quantities back to inventory
+    if (isReturnRequest && deliveryNote.receivedItems && deliveryNote.receivedItems.length > 0) {
+      for (const receivedItem of deliveryNote.receivedItems) {
+        if (receivedItem.receivedQuantity > 0) {
+          // Find the matching item in the request to get materialId
+          const requestItem = request.items.find(item => item.materialName === receivedItem.materialName);
+          if (requestItem && requestItem.materialId) {
+            await Material.findByIdAndUpdate(
+              requestItem.materialId,
+              { $inc: { currentStock: receivedItem.receivedQuantity } }
+            );
+          }
+        }
+      }
     }
 
     request.status = 'received';

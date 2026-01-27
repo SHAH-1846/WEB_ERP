@@ -25,16 +25,23 @@ function MaterialDetail() {
       const matRes = await api.get(`/api/materials/${materialId}`)
       setMaterial(matRes.data)
       
-      // Fetch material requests that used this material (fulfilled only)
-      const mrRes = await api.get('/api/material-requests?status=fulfilled')
-      const requests = mrRes.data.requests || []
+      // Fetch material requests that used this material (fulfilled or received)
+      // Fetch all and filter client-side to include both statuses
+      const mrRes = await api.get('/api/material-requests')
+      const requests = (mrRes.data.requests || []).filter(r => 
+        ['fulfilled', 'received'].includes(r.status)
+      )
       
       // Group by project and sum assigned quantities
       const usageMap = {}
       for (const req of requests) {
         for (const item of req.items || []) {
-          const itemMatId = typeof item.materialId === 'object' ? item.materialId?._id : item.materialId
-          if (itemMatId === materialId && item.assignedQuantity > 0) {
+          // Handle both populated and non-populated materialId
+          const itemMatId = item.materialId?._id || item.materialId
+          const compareId = String(itemMatId)
+          const targetId = String(materialId)
+          
+          if (compareId === targetId && item.assignedQuantity > 0) {
             const projectId = req.projectId?._id || 'unknown'
             const projectName = req.projectId?.name || 'Unknown Project'
             
@@ -50,7 +57,7 @@ function MaterialDetail() {
             usageMap[projectId].requests.push({
               requestNumber: req.requestNumber,
               quantity: item.assignedQuantity,
-              date: req.fulfilledAt
+              date: req.fulfilledAt || req.receivedAt
             })
           }
         }

@@ -249,6 +249,7 @@ function MaterialRequestManagement() {
           <thead>
             <tr style={{ borderBottom: '1px solid var(--border)' }}>
               <th style={{ padding: '12px', textAlign: 'left', color: 'var(--text-muted)', fontSize: '12px', fontWeight: '600' }}>Request #</th>
+              <th style={{ padding: '12px', textAlign: 'left', color: 'var(--text-muted)', fontSize: '12px', fontWeight: '600' }}>Type</th>
               <th style={{ padding: '12px', textAlign: 'left', color: 'var(--text-muted)', fontSize: '12px', fontWeight: '600' }}>Project</th>
               <th style={{ padding: '12px', textAlign: 'left', color: 'var(--text-muted)', fontSize: '12px', fontWeight: '600' }}>Requester</th>
               <th style={{ padding: '12px', textAlign: 'center', color: 'var(--text-muted)', fontSize: '12px', fontWeight: '600' }}>Items</th>
@@ -261,7 +262,23 @@ function MaterialRequestManagement() {
           <tbody>
             {requests.map(req => (
               <tr key={req._id} style={{ borderBottom: '1px solid var(--border)' }}>
-                <td style={{ padding: '12px', color: 'var(--primary)', fontWeight: '600', fontSize: '13px' }}>{req.requestNumber}</td>
+                <td style={{ padding: '12px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <span style={{ color: 'var(--primary)', fontWeight: '600', fontSize: '13px' }}>{req.requestNumber}</span>
+                  </div>
+                </td>
+                <td style={{ padding: '12px' }}>
+                  <span style={{
+                    padding: '4px 8px',
+                    borderRadius: '4px',
+                    fontSize: '10px',
+                    fontWeight: '700',
+                    background: req.requestType === 'return' ? 'rgba(245,158,11,0.15)' : 'rgba(99,102,241,0.15)',
+                    color: req.requestType === 'return' ? '#f59e0b' : '#6366f1'
+                  }}>
+                    {req.requestType === 'return' ? '🔄 RETURN' : '📦 REQUEST'}
+                  </span>
+                </td>
                 <td style={{ padding: '12px', color: 'var(--text)' }}>{req.projectId?.name || '-'}</td>
                 <td style={{ padding: '12px' }}>
                   <div style={{ color: 'var(--text)', fontSize: '13px' }}>{req.requesterName || req.requestedBy?.name}</div>

@@ -729,7 +729,7 @@ function ProjectDetail() {
   // Material Request state
   const [materialRequests, setMaterialRequests] = useState([])
   const [inventoryMaterials, setInventoryMaterials] = useState([])
-  const [materialRequestModal, setMaterialRequestModal] = useState({ open: false, form: { items: [{ materialId: '', materialName: '', sku: '', quantity: 1, uom: 'Pcs', notes: '' }], priority: 'normal', requiredDate: '', purpose: '', notes: '', requesterPhone: '' } })
+  const [materialRequestModal, setMaterialRequestModal] = useState({ open: false, requestType: 'request', form: { items: [{ materialId: '', materialName: '', sku: '', quantity: 1, uom: 'Pcs', notes: '' }], priority: 'normal', requiredDate: '', purpose: '', notes: '', requesterPhone: '' } })
 
   const defaultCompany = useMemo(() => ({
     logo: null,
@@ -745,6 +745,10 @@ function ProjectDetail() {
 
   const canCreateMaterialRequest = () => {
     return currentUser?.roles?.some(role => ['admin', 'manager', 'project_engineer'].includes(role))
+  }
+
+  const canCreateReturnRequest = () => {
+    return currentUser?.roles?.some(role => ['admin', 'manager', 'inventory_manager'].includes(role))
   }
 
   const createVariation = async () => {
@@ -1700,9 +1704,27 @@ function ProjectDetail() {
               }
               setMaterialRequestModal({ 
                 open: true, 
+                requestType: 'request',
                 form: { items: [{ materialId: '', materialName: '', sku: '', quantity: 1, uom: 'Pcs', notes: '' }], priority: 'normal', requiredDate: '', purpose: '', notes: '', requesterPhone: '' } 
               })
             }} style={{ background: '#6366f1' }}>Create Material Request</button>
+          )}
+          {canCreateReturnRequest() && (
+            <button className="assign-btn" onClick={async () => {
+              // Fetch inventory materials for dropdown
+              try {
+                const resMats = await api.get('/api/materials')
+                setInventoryMaterials(Array.isArray(resMats.data) ? resMats.data : [])
+              } catch (err) {
+                console.error('Error fetching materials:', err)
+                setInventoryMaterials([])
+              }
+              setMaterialRequestModal({ 
+                open: true, 
+                requestType: 'return',
+                form: { items: [{ materialId: '', materialName: '', sku: '', quantity: 1, uom: 'Pcs', notes: '' }], priority: 'normal', requiredDate: '', purpose: 'Material Return', notes: '', requesterPhone: '' } 
+              })
+            }} style={{ background: '#f59e0b' }}>Request Material Return</button>
           )}
         </div>
       </div>
@@ -1839,6 +1861,7 @@ function ProjectDetail() {
                 <thead>
                   <tr>
                     <th>Request #</th>
+                    <th>Type</th>
                     <th>Priority</th>
                     <th>Status</th>
                     <th>Items</th>
@@ -1849,7 +1872,24 @@ function ProjectDetail() {
                 <tbody>
                   {materialRequests.map(mr => (
                     <tr key={mr._id}>
-                      <td data-label="Request #" style={{ color: 'var(--primary)', fontWeight: '600' }}>{mr.requestNumber}</td>
+                      <td data-label="Request #">
+                        <span style={{ color: 'var(--primary)', fontWeight: '600' }}>{mr.requestNumber}</span>
+                        {mr.requestType === 'return' && (
+                          <span style={{ marginLeft: '6px', padding: '2px 6px', borderRadius: '4px', fontSize: '9px', fontWeight: '700', background: 'rgba(245,158,11,0.1)', color: '#f59e0b' }}>↩</span>
+                        )}
+                      </td>
+                      <td data-label="Type">
+                        <span style={{
+                          padding: '4px 8px',
+                          borderRadius: '4px',
+                          fontSize: '10px',
+                          fontWeight: '700',
+                          background: mr.requestType === 'return' ? 'rgba(245,158,11,0.15)' : 'rgba(99,102,241,0.15)',
+                          color: mr.requestType === 'return' ? '#f59e0b' : '#6366f1'
+                        }}>
+                          {mr.requestType === 'return' ? '🔄 RETURN' : '📦 REQUEST'}
+                        </span>
+                      </td>
                       <td data-label="Priority">
                         <span style={{
                           padding: '4px 8px',
@@ -1868,8 +1908,8 @@ function ProjectDetail() {
                           borderRadius: '4px',
                           fontSize: '11px',
                           fontWeight: '600',
-                          background: mr.status === 'approved' ? 'rgba(16,185,129,0.1)' : mr.status === 'pending' ? 'rgba(251,191,36,0.1)' : mr.status === 'rejected' ? 'rgba(239,68,68,0.1)' : 'rgba(99,102,241,0.1)',
-                          color: mr.status === 'approved' ? '#10b981' : mr.status === 'pending' ? '#f59e0b' : mr.status === 'rejected' ? '#ef4444' : '#6366f1'
+                          background: mr.status === 'approved' ? 'rgba(16,185,129,0.1)' : mr.status === 'pending' ? 'rgba(251,191,36,0.1)' : mr.status === 'rejected' ? 'rgba(239,68,68,0.1)' : mr.status === 'received' ? 'rgba(16,185,129,0.1)' : 'rgba(99,102,241,0.1)',
+                          color: mr.status === 'approved' ? '#10b981' : mr.status === 'pending' ? '#f59e0b' : mr.status === 'rejected' ? '#ef4444' : mr.status === 'received' ? '#059669' : '#6366f1'
                         }}>
                           {mr.status?.replace('_', ' ').toUpperCase()}
                         </span>
@@ -4086,7 +4126,7 @@ function ProjectDetail() {
         <div className="modal-overlay" onClick={() => setMaterialRequestModal({ ...materialRequestModal, open: false })}>
           <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: '700px', maxHeight: '90vh', overflowY: 'auto' }}>
             <div className="modal-header">
-              <h2>Create Material Request</h2>
+              <h2>{materialRequestModal.requestType === 'return' ? '🔄 Request Material Return' : '📦 Create Material Request'}</h2>
               <button onClick={() => setMaterialRequestModal({ ...materialRequestModal, open: false })} className="close-btn">×</button>
             </div>
             <div className="lead-form">
@@ -4277,9 +4317,13 @@ function ProjectDetail() {
                         requiredDate: materialRequestModal.form.requiredDate || null,
                         purpose: materialRequestModal.form.purpose,
                         notes: materialRequestModal.form.notes,
-                        requesterPhone: materialRequestModal.form.requesterPhone
+                        requesterPhone: materialRequestModal.form.requesterPhone,
+                        requestType: materialRequestModal.requestType || 'request'
                       })
-                      setNotify({ open: true, title: 'Success', message: 'Material request created successfully.' })
+                      const successMsg = materialRequestModal.requestType === 'return' 
+                        ? 'Material return request created successfully.' 
+                        : 'Material request created successfully.'
+                      setNotify({ open: true, title: 'Success', message: successMsg })
                       setMaterialRequestModal({ ...materialRequestModal, open: false })
                       // Refresh material requests
                       const resMR = await api.get(`/api/material-requests/project/${project._id}`)
@@ -4291,7 +4335,7 @@ function ProjectDetail() {
                     }
                   }}
                 >
-                  <ButtonLoader loading={isSubmitting}>{isSubmitting ? 'Submitting...' : 'Submit Request'}</ButtonLoader>
+                  <ButtonLoader loading={isSubmitting}>{isSubmitting ? 'Submitting...' : (materialRequestModal.requestType === 'return' ? 'Submit Return Request' : 'Submit Request')}</ButtonLoader>
                 </button>
               </div>
             </div>

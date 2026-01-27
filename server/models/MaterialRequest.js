@@ -51,6 +51,11 @@ const materialRequestSchema = new mongoose.Schema({
     enum: ['pending', 'approved', 'partially_approved', 'rejected', 'fulfilled', 'received', 'cancelled'],
     default: 'pending'
   },
+  requestType: {
+    type: String,
+    enum: ['request', 'return'],
+    default: 'request'
+  },
   priority: {
     type: String,
     enum: ['low', 'normal', 'high', 'urgent'],

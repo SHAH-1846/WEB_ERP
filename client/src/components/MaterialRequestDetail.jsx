@@ -26,16 +26,22 @@ function MaterialRequestDetail() {
     receiverSignatureName: '',
     acknowledgmentNotes: ''
   })
+  const [cancelModal, setCancelModal] = useState({ open: false })
   const [currentUser, setCurrentUser] = useState(null)
 
   const isAdmin = currentUser?.roles?.includes('admin')
   const isManager = currentUser?.roles?.includes('manager')
   const isInventoryManager = currentUser?.roles?.includes('inventory_manager')
-  const canReview = isAdmin || isManager || isInventoryManager
+  const isProjectEngineer = currentUser?.roles?.includes('project_engineer')
+  const isReturnRequest = request?.requestType === 'return'
+  
+  // Review: For regular requests, inventory manager reviews. For return requests, project engineers review.
+  const canReview = isAdmin || isManager || (isReturnRequest ? isProjectEngineer : isInventoryManager)
   // Only inventory manager can fulfill (not store_keeper from detail page)
   const canFulfill = isInventoryManager || isAdmin || isManager
-  // Requester can mark as received
+  // Requester can mark as received for regular requests. Inventory manager can mark as received for return requests.
   const isRequester = request?.requestedBy?._id === currentUser?.id || request?.requestedBy === currentUser?.id
+  const canReceive = isAdmin || isManager || (isReturnRequest ? isInventoryManager : isRequester)
 
   useEffect(() => {
     try {
@@ -202,12 +208,11 @@ function MaterialRequestDetail() {
   }
 
   const handleCancel = async () => {
-    if (!confirm('Cancel this material request?')) return
-    
     setSaving(true)
     try {
       await api.patch(`/api/material-requests/${requestId}/cancel`, {})
       setNotify({ open: true, title: 'Success', message: 'Request cancelled.' })
+      setCancelModal({ open: false })
       fetchRequest()
     } catch (error) {
       setNotify({ open: true, title: 'Error', message: error.response?.data?.message || 'Failed to cancel request.' })
@@ -277,7 +282,12 @@ function MaterialRequestDetail() {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '24px', flexWrap: 'wrap', gap: '16px' }}>
         <div>
           <button className="link-btn" onClick={() => navigate(-1)} style={{ marginBottom: '8px' }}>← Back</button>
-          <h2 style={{ margin: 0, color: 'var(--text)' }}>Material Request {request.requestNumber}</h2>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <h2 style={{ margin: 0, color: 'var(--text)' }}>{request.requestType === 'return' ? 'Material Return Request' : 'Material Request'} {request.requestNumber}</h2>
+            {request.requestType === 'return' && (
+              <span style={{ padding: '4px 10px', borderRadius: '6px', fontSize: '11px', fontWeight: '700', background: 'rgba(245,158,11,0.2)', color: '#f59e0b' }}>🔄 RETURN</span>
+            )}
+          </div>
           <p style={{ margin: '8px 0 0', color: 'var(--text-muted)', fontSize: '14px' }}>
             Created on {new Date(request.createdAt).toLocaleString()}
           </p>
@@ -298,13 +308,13 @@ function MaterialRequestDetail() {
             Fulfill & Assign Materials
           </button>
         )}
-        {(isRequester || isAdmin || isManager) && request.status === 'fulfilled' && (
+        {canReceive && request.status === 'fulfilled' && (
           <button className="save-btn" style={{ background: '#059669' }} onClick={openReceiveModal} disabled={saving}>
-            Mark as Received
+            {isReturnRequest ? 'Receive Returned Materials' : 'Mark as Received'}
           </button>
         )}
         {(isRequester || isAdmin || isManager) && ['pending', 'approved'].includes(request.status) && (
-          <button className="cancel-btn" onClick={handleCancel} disabled={saving}>Cancel Request</button>
+          <button className="cancel-btn" onClick={() => setCancelModal({ open: true })} disabled={saving}>Cancel Request</button>
         )}
       </div>
 
@@ -642,6 +652,42 @@ function MaterialRequestDetail() {
                 <button type="button" className="cancel-btn" onClick={() => setReviewModal({ open: false, status: '', notes: '' })}>Cancel</button>
                 <button type="button" className="save-btn" onClick={handleReview} disabled={saving}>
                   <ButtonLoader loading={saving}>{saving ? 'Submitting...' : 'Submit Review'}</ButtonLoader>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Cancel Confirmation Modal */}
+      {cancelModal.open && (
+        <div className="modal-overlay" onClick={() => setCancelModal({ open: false })}>
+          <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: '450px' }}>
+            <div className="modal-header">
+              <h2>Cancel Request</h2>
+              <button onClick={() => setCancelModal({ open: false })} className="close-btn">×</button>
+            </div>
+            <div className="lead-form">
+              <div style={{ textAlign: 'center', marginBottom: '20px' }}>
+                <div style={{ fontSize: '48px', marginBottom: '12px' }}>⚠️</div>
+                <p style={{ color: 'var(--text)', fontSize: '16px', margin: 0 }}>
+                  Are you sure you want to cancel this material request?
+                </p>
+                <p style={{ color: 'var(--text-muted)', fontSize: '14px', marginTop: '8px' }}>
+                  This action cannot be undone.
+                </p>
+              </div>
+              
+              <div className="form-actions" style={{ justifyContent: 'center' }}>
+                <button type="button" className="save-btn" onClick={() => setCancelModal({ open: false })}>No, Keep Request</button>
+                <button 
+                  type="button" 
+                  className="cancel-btn" 
+                  onClick={handleCancel} 
+                  disabled={saving}
+                  style={{ background: 'rgba(239,68,68,0.1)', color: '#ef4444', border: '1px solid #ef4444' }}
+                >
+                  <ButtonLoader loading={saving}>{saving ? 'Cancelling...' : 'Yes, Cancel Request'}</ButtonLoader>
                 </button>
               </div>
             </div>
