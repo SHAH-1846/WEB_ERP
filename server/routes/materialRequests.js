@@ -63,9 +63,16 @@ router.get('/', auth, async (req, res) => {
       query.requestType = req.query.requestType;
     }
 
-    // Project engineers can only see their own requests (unless admin/manager)
+    // Project engineers can only see requests for projects they're involved in
+    // If querying by projectId, show all requests for that project (needed for return flow)
+    // Otherwise, only show their own requests
     if (roles.includes('project_engineer') && !roles.some(r => ['admin', 'manager', 'inventory_manager'].includes(r))) {
-      query.requestedBy = req.user.userId;
+      if (!req.query.projectId) {
+        // If not filtering by project, only show their own requests
+        query.requestedBy = req.user.userId;
+      }
+      // If filtering by projectId, show all requests for that project
+      // This allows Project Engineers to see return requests created by Inventory Manager
     }
 
     // Search
@@ -168,12 +175,19 @@ router.post('/', auth, async (req, res) => {
     const { projectId, items, priority, requiredDate, purpose, notes, requesterPhone, requestType } = req.body;
     
     // Role-based validation for request type
+    // Role-based validation for request type
     const isReturnRequest = requestType === 'return';
+    const isRemainingReturn = requestType === 'remaining_return';
     
     if (isReturnRequest) {
-      // Only inventory_manager, admin, manager can create return requests
+      // Only inventory_manager, admin, manager can create standard return requests (Inventory -> Project)
       if (!roles.some(r => ['admin', 'manager', 'inventory_manager'].includes(r))) {
         return res.status(403).json({ message: 'Only inventory managers can create material return requests.' });
+      }
+    } else if (isRemainingReturn) {
+      // Only project_engineer, admin, manager can create remaining return requests (Project -> Inventory)
+      if (!roles.some(r => ['admin', 'manager', 'project_engineer'].includes(r))) {
+        return res.status(403).json({ message: 'Only project engineers can create remaining material return requests.' });
       }
     } else {
       // Regular material request - project engineers, managers, admins
@@ -269,7 +283,9 @@ router.patch('/:id/review', auth, async (req, res) => {
     }
 
     // Role check based on request type
+    // Role check based on request type
     const isReturnRequest = request.requestType === 'return';
+    const isRemainingReturn = request.requestType === 'remaining_return';
     
     if (isReturnRequest) {
       // Return requests can be reviewed by Project Engineers (requester of original project), admin, manager
@@ -277,6 +293,13 @@ router.patch('/:id/review', auth, async (req, res) => {
       const isAdminOrManager = roles.some(r => ['admin', 'manager'].includes(r));
       if (!isProjectEngineer && !isAdminOrManager) {
         return res.status(403).json({ message: 'Only project engineers can review return requests.' });
+      }
+    } else if (isRemainingReturn) {
+      // Remaining return requests are reviewed by Inventory Manager
+      const isInventoryManager = roles.includes('inventory_manager');
+      const isAdminOrManager = roles.some(r => ['admin', 'manager'].includes(r));
+      if (!isInventoryManager && !isAdminOrManager) {
+        return res.status(403).json({ message: 'Only inventory managers can review remaining return requests.' });
       }
     } else {
       // Regular requests reviewed by inventory managers
@@ -323,14 +346,21 @@ router.patch('/:id/fulfill', auth, async (req, res) => {
     }
 
     // Role-based validation based on request type
-    // For return requests: Project Engineer fulfills (specifies materials to return)
-    // For regular requests: Inventory Manager fulfills (assigns materials from stock)
+    // Role-based validation based on request type
+    // For return requests: Project Engineer fulfills
+    // For remaining returns: Inventory Manager fulfills
+    // For regular requests: Inventory Manager fulfills
     const isReturnRequest = request.requestType === 'return';
+    const isRemainingReturn = request.requestType === 'remaining_return';
+    
     const canFulfillRegular = roles.some(r => ['admin', 'manager', 'inventory_manager', 'store_keeper'].includes(r));
     const canFulfillReturn = roles.some(r => ['admin', 'manager', 'project_engineer'].includes(r));
-
+    
     if (isReturnRequest && !canFulfillReturn) {
       return res.status(403).json({ message: 'Only Project Engineers can fulfill return requests.' });
+    }
+    if ((isRemainingReturn || !isReturnRequest) && !canFulfillRegular) {
+      return res.status(403).json({ message: 'Only inventory staff can mark requests as fulfilled.' });
     }
     if (!isReturnRequest && !canFulfillRegular) {
       return res.status(403).json({ message: 'Only inventory staff can mark requests as fulfilled.' });
@@ -355,8 +385,14 @@ router.patch('/:id/fulfill', auth, async (req, res) => {
           // Update assigned quantity on the request item
           request.items[itemIndex].assignedQuantity = assigned.assignedQuantity;
           
-          // Deduct from Material inventory if materialId exists
-          if (request.items[itemIndex].materialId) {
+          // For Standard Requests ('request'):
+          // Moves Inventory -> Project, so we DEDUCT from Inventory.
+          // For Returns ('return') and Remaining Returns ('remaining_return'):
+          // Moves Project -> Inventory, so we SKIP deduction here (will add on receive).
+          
+          const shouldDeductInventory = !isRemainingReturn && !isReturnRequest;
+
+          if (shouldDeductInventory && request.items[itemIndex].materialId) {
             const material = await Material.findById(request.items[itemIndex].materialId);
             if (material) {
               if (material.quantity < assigned.assignedQuantity) {
@@ -462,15 +498,16 @@ router.patch('/:id/receive', auth, async (req, res) => {
 
     // Role-based check for who can mark as received
     const roles = req.user.roles || [];
+    const isRemainingReturn = request.requestType === 'remaining_return';
     const isReturnRequest = request.requestType === 'return';
     
-    if (isReturnRequest) {
-      // For return requests, Inventory Manager marks as received (they receive materials back)
+    // Returns (Both types): Project -> Inventory. Received by Inventory Manager.
+    if (isRemainingReturn || isReturnRequest) {
       if (!roles.some(r => ['admin', 'manager', 'inventory_manager'].includes(r))) {
         return res.status(403).json({ message: 'Only inventory managers can mark return requests as received.' });
       }
     } else {
-      // For regular requests, the requester (Project Engineer) marks as received
+      // Regular requests: Inventory -> Project. Received by Requester (PE).
       if (request.requestedBy.toString() !== req.user.userId && !roles.some(r => ['admin', 'manager'].includes(r))) {
         return res.status(403).json({ message: 'Only the requester can mark materials as received.' });
       }
@@ -487,17 +524,35 @@ router.patch('/:id/receive', auth, async (req, res) => {
       return res.status(400).json({ message: 'Delivery date and receiver signature are required.' });
     }
 
-    // For return requests, ADD quantities back to inventory
-    if (isReturnRequest && deliveryNote.receivedItems && deliveryNote.receivedItems.length > 0) {
-      for (const receivedItem of deliveryNote.receivedItems) {
+    // For ALL Return requests (Project -> Inventory), ADD quantities back to inventory
+    // (Both 'remaining_return' and 'return' flow back to inventory)
+    if ((isRemainingReturn || isReturnRequest) && deliveryNote.receivedItems && deliveryNote.receivedItems.length > 0) {
+      console.log('Processing return request receive, items:', deliveryNote.receivedItems.length);
+      
+      for (let i = 0; i < deliveryNote.receivedItems.length; i++) {
+        const receivedItem = deliveryNote.receivedItems[i];
         if (receivedItem.receivedQuantity > 0) {
-          // Find the matching item in the request to get materialId
-          const requestItem = request.items.find(item => item.materialName === receivedItem.materialName);
+          // Try to find matching item by index first (most reliable), then by name
+          let requestItem = request.items[i];
+          
+          // If index doesn't match by name, search by materialName
+          if (!requestItem || requestItem.materialName !== receivedItem.materialName) {
+            requestItem = request.items.find(item => item.materialName === receivedItem.materialName);
+          }
+          
+          console.log(`Processing item ${i}: ${receivedItem.materialName}, qty: ${receivedItem.receivedQuantity}`);
+          console.log(`Found request item:`, requestItem ? { name: requestItem.materialName, materialId: requestItem.materialId } : 'NOT FOUND');
+          
           if (requestItem && requestItem.materialId) {
-            const material = await Material.findById(requestItem.materialId);
+            // Handle both ObjectId and string
+            const matId = requestItem.materialId._id || requestItem.materialId;
+            const material = await Material.findById(matId);
+            
             if (material) {
               const oldQuantity = material.quantity;
               const newQuantity = oldQuantity + receivedItem.receivedQuantity;
+              
+              console.log(`Updating material ${material.name}: ${oldQuantity} -> ${newQuantity}`);
               
               // Update quantity
               material.quantity = newQuantity;
@@ -513,7 +568,12 @@ router.patch('/:id/receive', auth, async (req, res) => {
               });
               
               await material.save();
+              console.log(`Material ${material.name} saved successfully`);
+            } else {
+              console.log(`Material not found for ID: ${matId}`);
             }
+          } else {
+            console.log(`No materialId found for item: ${receivedItem.materialName}`);
           }
         }
       }

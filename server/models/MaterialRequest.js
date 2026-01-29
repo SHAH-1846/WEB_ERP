@@ -53,7 +53,7 @@ const materialRequestSchema = new mongoose.Schema({
   },
   requestType: {
     type: String,
-    enum: ['request', 'return'],
+    enum: ['request', 'return', 'remaining_return'],
     default: 'request'
   },
   priority: {

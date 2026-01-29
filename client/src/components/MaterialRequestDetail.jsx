@@ -34,14 +34,26 @@ function MaterialRequestDetail() {
   const isInventoryManager = currentUser?.roles?.includes('inventory_manager')
   const isProjectEngineer = currentUser?.roles?.includes('project_engineer')
   const isReturnRequest = request?.requestType === 'return'
+  const isRemainingReturn = request?.requestType === 'remaining_return'
   
-  // Review: For regular requests, inventory manager reviews. For return requests, project engineers review.
+  // Review: 
+  // - Regular: IM
+  // - Return (IM->Project): PE
+  // - Remaining (Project->IM): IM
   const canReview = isAdmin || isManager || (isReturnRequest ? isProjectEngineer : isInventoryManager)
-  // Fulfill: For regular requests, inventory manager fulfills. For return requests, project engineers fulfill (specify materials to return).
+  
+  // Fulfill:
+  // - Regular: IM
+  // - Return (IM->Project): PE (Fulfills return request by sending materials)
+  // - Remaining (Project->IM): IM (Acknowledge/Confirm)
   const canFulfill = isAdmin || isManager || (isReturnRequest ? isProjectEngineer : isInventoryManager)
-  // Requester can mark as received for regular requests. Inventory manager can mark as received for return requests.
+  
+  // Receive:
+  // - Regular: Requester (PE)
+  // - Return (IM->Project): Requester (IM) 
+  // - Remaining (Project->IM): IM receives.
   const isRequester = request?.requestedBy?._id === currentUser?.id || request?.requestedBy === currentUser?.id
-  const canReceive = isAdmin || isManager || (isReturnRequest ? isInventoryManager : isRequester)
+  const canReceive = isAdmin || isManager || (isRemainingReturn ? isInventoryManager : isRequester)
 
   useEffect(() => {
     try {
@@ -95,35 +107,61 @@ function MaterialRequestDetail() {
   // Open fulfill modal and fetch material quantities
   const openFulfillModal = async () => {
     const quantities = {}
-    const isReturnReq = request?.requestType === 'return'
+    const isRemainingReturn = request?.requestType === 'remaining_return'
+    const isReturnRequest = request?.requestType === 'return'
     
-    if (isReturnReq && request.projectId) {
-      // For return requests: Get materials assigned to the project from received material requests
+    // Both 'remaining_return' and 'return' are Project -> Inventory
+    // So we need to calculate Available Project Stock for both.
+    if ((isRemainingReturn || isReturnRequest) && request.projectId) {
+      // For return requests (Project -> Inventory): 
+      // Get materials assigned to the project (Incoming) MINUS materials already returned (Outgoing)
       try {
         const projectId = request.projectId._id || request.projectId
-        const mrRes = await api.get(`/api/material-requests?projectId=${projectId}&status=received`)
-        const receivedRequests = (mrRes.data.requests || []).filter(r => r.requestType !== 'return')
+        console.log('=== RETURN MODAL DEBUG ===')
+        console.log('Project ID:', projectId)
         
-        // Aggregate materials assigned to the project
+        const mrRes = await api.get(`/api/material-requests?projectId=${projectId}`)
+        const allRequests = mrRes.data.requests || []
+        
+        // Revised Logic:
+        // Incoming: 'request' (Standard Issue)
+        // Outgoing: 'remaining_return' OR 'return' (Project -> Inventory)
+        const requests = allRequests || []
+        const incoming = requests.filter(r => r.status === 'received' && r.requestType === 'request')
+        const outgoing = requests.filter(r => r.status === 'received' && (r.requestType === 'remaining_return' || r.requestType === 'return'))
+        
         const projectMaterials = {}
-        for (const req of receivedRequests) {
+        
+        // Add Incoming
+        for (const req of incoming) {
           for (const item of req.items || []) {
             if (item.assignedQuantity > 0) {
               const matId = item.materialId?._id || item.materialId
               const key = String(matId)
-              if (!projectMaterials[key]) {
-                projectMaterials[key] = 0
-              }
+              if (!projectMaterials[key]) projectMaterials[key] = 0
               projectMaterials[key] += item.assignedQuantity
             }
           }
         }
         
-        // Set quantities based on what's assigned to the project
+        // Subtract Outgoing
+        for (const req of outgoing) {
+          for (const item of req.items || []) {
+            const returnedQty = item.assignedQuantity || 0
+            if (returnedQty > 0) {
+              const matId = item.materialId?._id || item.materialId
+              const key = String(matId)
+              if (projectMaterials[key]) projectMaterials[key] -= returnedQty
+            }
+          }
+        }
+        
+        // Set quantities based on what's still available in the project
         for (const item of request.items || []) {
           if (item.materialId) {
             const matId = typeof item.materialId === 'object' ? item.materialId._id : item.materialId
-            quantities[matId] = projectMaterials[String(matId)] || 0
+            const available = Math.max(0, projectMaterials[String(matId)] || 0)
+            quantities[matId] = available
           }
         }
       } catch (err) {
@@ -137,7 +175,7 @@ function MaterialRequestDetail() {
         }
       }
     } else {
-      // For regular requests: Get available inventory stock
+      // For regular requests ('request') AND standard returns ('return'): Get available INVENTORY stock
       for (const item of request.items || []) {
         if (item.materialId) {
           try {
@@ -327,9 +365,15 @@ function MaterialRequestDetail() {
         <div>
           <button className="link-btn" onClick={() => navigate(-1)} style={{ marginBottom: '8px' }}>← Back</button>
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <h2 style={{ margin: 0, color: 'var(--text)' }}>{request.requestType === 'return' ? 'Material Return Request' : 'Material Request'} {request.requestNumber}</h2>
+            <h2 style={{ margin: 0, color: 'var(--text)' }}>
+              {request.requestType === 'remaining_return' ? 'Remaining Material Return' : 
+               request.requestType === 'return' ? 'Material Return Request' : 'Material Request'} {request.requestNumber}
+            </h2>
             {request.requestType === 'return' && (
               <span style={{ padding: '4px 10px', borderRadius: '6px', fontSize: '11px', fontWeight: '700', background: 'rgba(245,158,11,0.2)', color: '#f59e0b' }}>🔄 RETURN</span>
+            )}
+            {request.requestType === 'remaining_return' && (
+              <span style={{ padding: '4px 10px', borderRadius: '6px', fontSize: '11px', fontWeight: '700', background: 'rgba(245,158,11,0.2)', color: '#f59e0b' }}>📦 RETURN TO INVENTORY</span>
             )}
           </div>
           <p style={{ margin: '8px 0 0', color: 'var(--text-muted)', fontSize: '14px' }}>
@@ -756,14 +800,16 @@ function MaterialRequestDetail() {
                   <thead>
                     <tr style={{ borderBottom: '1px solid var(--border)', background: 'var(--bg)' }}>
                       <th style={{ padding: '10px', textAlign: 'left', fontSize: '12px', color: 'var(--text-muted)' }}>Material</th>
-                      <th style={{ padding: '10px', textAlign: 'center', fontSize: '12px', color: 'var(--text-muted)' }}>{isReturnRequest ? 'In Project' : 'In Stock'}</th>
-                      <th style={{ padding: '10px', textAlign: 'center', fontSize: '12px', color: 'var(--text-muted)' }}>{isReturnRequest ? 'To Return' : 'Requested'}</th>
-                      <th style={{ padding: '10px', textAlign: 'center', fontSize: '12px', color: 'var(--text-muted)' }}>{isReturnRequest ? 'Return Qty' : 'Assign Qty'}</th>
+                      <th style={{ padding: '10px', textAlign: 'center', fontSize: '12px', color: 'var(--text-muted)' }}>{(request.requestType === 'remaining_return' || request.requestType === 'return') ? 'In Project' : 'In Stock'}</th>
+                      <th style={{ padding: '10px', textAlign: 'center', fontSize: '12px', color: 'var(--text-muted)' }}>{request.requestType === 'return' ? 'Return Qty' : 'Requested'}</th>
+                      <th style={{ padding: '10px', textAlign: 'center', fontSize: '12px', color: 'var(--text-muted)' }}>{request.requestType === 'return' ? 'Sending Qty' : 'Assign Qty'}</th>
                     </tr>
                   </thead>
                   <tbody>
                     {fulfillModal.assignedItems.map((item, index) => {
+                      console.log(`Modal row ${index}:`, { materialId: item.materialId, type: typeof item.materialId, quantities: fulfillModal.materialQuantities })
                       const available = fulfillModal.materialQuantities[item.materialId] || 0
+                      console.log(`  Lookup result: ${available}`)
                       const isInsufficient = item.assignedQuantity > available
                       return (
                         <tr key={index} style={{ borderBottom: '1px solid var(--border)' }}>
@@ -802,7 +848,7 @@ function MaterialRequestDetail() {
                             />
                             {isInsufficient && (
                               <div style={{ fontSize: '10px', color: '#ef4444', marginTop: '2px' }}>
-                                {isReturnRequest ? 'Exceeds project stock!' : 'Exceeds inventory!'}
+                                {(request.requestType === 'remaining_return' || request.requestType === 'return') ? 'Exceeds project stock!' : 'Exceeds inventory!'}
                               </div>
                             )}
                           </td>

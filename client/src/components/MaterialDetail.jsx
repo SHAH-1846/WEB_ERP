@@ -33,8 +33,9 @@ function MaterialDetail() {
       )
       
       // Separate regular requests and return requests
-      const regularRequests = allRequests.filter(r => r.requestType !== 'return')
-      const returnRequests = allRequests.filter(r => r.requestType === 'return' && r.status === 'received')
+      // Separate regular requests and return requests
+      const regularRequests = allRequests.filter(r => !r.requestType || r.requestType === 'request')
+      const returnRequests = allRequests.filter(r => (r.requestType === 'return' || r.requestType === 'remaining_return') && r.status === 'received')
       
       // Group by project and sum assigned quantities
       const usageMap = {}

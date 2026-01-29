@@ -730,6 +730,97 @@ function ProjectDetail() {
   const [materialRequests, setMaterialRequests] = useState([])
   const [inventoryMaterials, setInventoryMaterials] = useState([])
   const [materialRequestModal, setMaterialRequestModal] = useState({ open: false, requestType: 'request', form: { items: [{ materialId: '', materialName: '', sku: '', quantity: 1, uom: 'Pcs', notes: '' }], priority: 'normal', requiredDate: '', purpose: '', notes: '', requesterPhone: '' } })
+  const [returnModal, setReturnModal] = useState({ open: false, items: [], notes: '' })
+
+  const openReturnModal = async () => {
+    try {
+      const mrRes = await api.get(`/api/material-requests?projectId=${project._id}`)
+      const allRequests = mrRes.data.requests || []
+      
+      // Changed Logic: 'return' is now Outgoing (Project->Inventory) along with 'remaining_return'
+      const requests = allRequests || []
+      const incoming = requests.filter(r => r.status === 'received' && r.requestType === 'request')
+      const outgoing = requests.filter(r => r.status === 'received' && (r.requestType === 'remaining_return' || r.requestType === 'return'))
+      
+      const projectMaterials = {} 
+      const materialDetails = {} 
+      
+      // Add Incoming
+      for (const req of incoming) {
+        for (const item of req.items || []) {
+          if (item.assignedQuantity > 0) {
+            const matId = item.materialId?._id || item.materialId
+            const key = String(matId)
+            if (!projectMaterials[key]) projectMaterials[key] = 0
+            projectMaterials[key] += item.assignedQuantity
+            if (!materialDetails[key]) {
+              materialDetails[key] = {
+                id: key, name: item.materialName, sku: item.sku || '-', uom: item.uom
+              }
+            }
+          }
+        }
+      }
+      
+      // Subtract Outgoing
+      for (const req of outgoing) {
+        for (const item of req.items || []) {
+          const returnedQty = item.assignedQuantity || 0
+          if (returnedQty > 0) {
+            const matId = item.materialId?._id || item.materialId
+            const key = String(matId)
+            if (projectMaterials[key]) projectMaterials[key] -= returnedQty
+          }
+        }
+      }
+      
+      const items = Object.values(materialDetails).map(mat => ({
+        materialId: mat.id, materialName: mat.name, sku: mat.sku, uom: mat.uom,
+        inProjectQty: Math.max(0, projectMaterials[mat.id] || 0), returnQty: 0
+      })).filter(item => item.inProjectQty > 0)
+      
+      setReturnModal({ open: true, items, notes: '' })
+    } catch (err) {
+      console.error('Error fetching project stock:', err)
+      setNotify({ open: true, title: 'Error', message: 'Failed to fetch project stock.' })
+    }
+  }
+
+  const handleSubmitReturn = async () => {
+    if (isSubmitting) return
+    const itemsToReturn = returnModal.items.filter(item => item.returnQty > 0)
+    if (itemsToReturn.length === 0) {
+      setNotify({ open: true, title: 'Error', message: 'Please enter quantity to return.' })
+      return
+    }
+    
+    setIsSubmitting(true)
+    try {
+      const requestItems = itemsToReturn.map(item => ({
+        materialId: item.materialId, materialName: item.materialName, sku: item.sku,
+        quantity: item.returnQty, uom: item.uom, notes: ''
+      }))
+      
+      const payload = {
+        projectId: project._id, items: requestItems, priority: 'normal',
+        requiredDate: new Date().toISOString().split('T')[0],
+        purpose: 'Remaining Material Return',
+        requestType: 'remaining_return',
+        notes: returnModal.notes
+      }
+      
+      await api.post('/api/material-requests', payload)
+      setNotify({ open: true, title: 'Success', message: 'Return request submitted successfully.' })
+      setReturnModal({ open: false, items: [], notes: '' })
+      
+      const resMR = await api.get(`/api/material-requests/project/${project._id}`)
+      setMaterialRequests(Array.isArray(resMR.data) ? resMR.data : [])
+    } catch (error) {
+       setNotify({ open: true, title: 'Error', message: error.response?.data?.message || 'Failed to submit return request.' })
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
 
   const defaultCompany = useMemo(() => ({
     logo: null,
@@ -1692,6 +1783,28 @@ function ProjectDetail() {
               }
             }}>Create Variation Quotation</button>
           )}
+          
+          {(currentUser?.roles?.some(role => ['admin', 'manager', 'inventory_manager'].includes(role))) && (
+            <button className="assign-btn" onClick={async () => {
+              // Fetch inventory materials for dropdown
+              try {
+                const resMats = await api.get('/api/materials')
+                setInventoryMaterials(Array.isArray(resMats.data) ? resMats.data : [])
+              } catch (err) {
+                console.error('Error fetching materials:', err)
+                setInventoryMaterials([])
+              }
+              setMaterialRequestModal({ 
+                open: true, 
+                requestType: 'return',
+                form: { items: [{ materialId: '', materialName: '', sku: '', quantity: 1, uom: 'Pcs', notes: '' }], priority: 'normal', requiredDate: '', purpose: 'Material Return', notes: '', requesterPhone: '' } 
+              })
+            }} style={{ background: '#f59e0b', marginRight: '8px' }}>Request Material Return</button>
+          )}
+
+          {(currentUser?.roles?.includes('project_engineer')) && (
+            <button className="assign-btn" onClick={openReturnModal} style={{ background: '#f59e0b' }}>📦 Return Remaining Materials</button>
+          )}
           {canCreateMaterialRequest() && (
             <button className="assign-btn" onClick={async () => {
               // Fetch inventory materials for dropdown
@@ -1709,23 +1822,7 @@ function ProjectDetail() {
               })
             }} style={{ background: '#6366f1' }}>Create Material Request</button>
           )}
-          {canCreateReturnRequest() && (
-            <button className="assign-btn" onClick={async () => {
-              // Fetch inventory materials for dropdown
-              try {
-                const resMats = await api.get('/api/materials')
-                setInventoryMaterials(Array.isArray(resMats.data) ? resMats.data : [])
-              } catch (err) {
-                console.error('Error fetching materials:', err)
-                setInventoryMaterials([])
-              }
-              setMaterialRequestModal({ 
-                open: true, 
-                requestType: 'return',
-                form: { items: [{ materialId: '', materialName: '', sku: '', quantity: 1, uom: 'Pcs', notes: '' }], priority: 'normal', requiredDate: '', purpose: 'Material Return', notes: '', requesterPhone: '' } 
-              })
-            }} style={{ background: '#f59e0b' }}>Request Material Return</button>
-          )}
+
         </div>
       </div>
 
@@ -1884,10 +1981,10 @@ function ProjectDetail() {
                           borderRadius: '4px',
                           fontSize: '10px',
                           fontWeight: '700',
-                          background: mr.requestType === 'return' ? 'rgba(245,158,11,0.15)' : 'rgba(99,102,241,0.15)',
-                          color: mr.requestType === 'return' ? '#f59e0b' : '#6366f1'
+                          background: mr.requestType === 'return' || mr.requestType === 'remaining_return' ? 'rgba(245,158,11,0.15)' : 'rgba(99,102,241,0.15)',
+                          color: mr.requestType === 'return' || mr.requestType === 'remaining_return' ? '#f59e0b' : '#6366f1'
                         }}>
-                          {mr.requestType === 'return' ? '🔄 RETURN' : '📦 REQUEST'}
+                          {mr.requestType === 'return' ? '🔄 RETURN' : mr.requestType === 'remaining_return' ? '↩️ REMAINING RETURN' : '📦 REQUEST'}
                         </span>
                       </td>
                       <td data-label="Priority">
@@ -1928,20 +2025,23 @@ function ProjectDetail() {
         )}
 
         {/* Project Materials Summary - Only show if there are received material requests */}
+        {/* Project Materials Summary - Only show if there are received material requests */}
         {(() => {
-          const receivedRequests = (materialRequests || []).filter(mr => mr.status === 'received' && mr.requestType !== 'return')
-          const receivedReturnRequests = (materialRequests || []).filter(mr => mr.status === 'received' && mr.requestType === 'return')
+          // Changed Logic: 'return' is now Outgoing (Project->Inventory) along with 'remaining_return'
+          const allRec = materialRequests || []
+          const incoming = allRec.filter(r => r.status === 'received' && r.requestType === 'request')
+          const outgoing = allRec.filter(r => r.status === 'received' && (r.requestType === 'remaining_return' || r.requestType === 'return'))
           
-          if (receivedRequests.length === 0 && receivedReturnRequests.length === 0) return null
+          if (incoming.length === 0 && outgoing.length === 0) return null
           
-          // Aggregate materials from all received requests (add quantities)
           const materialSummary = {}
-          for (const req of receivedRequests) {
+
+          // Add Incoming
+          for (const req of incoming) {
             for (const item of req.items || []) {
               if (item.assignedQuantity > 0) {
                 const matId = item.materialId?._id || item.materialId || item.materialName
                 const key = String(matId)
-                
                 if (!materialSummary[key]) {
                   materialSummary[key] = {
                     materialId: matId,
@@ -1955,35 +2055,34 @@ function ProjectDetail() {
                 }
                 materialSummary[key].totalQuantity += item.assignedQuantity
                 materialSummary[key].sourceRequests.push({
-                  requestNumber: req.requestNumber,
-                  quantity: item.assignedQuantity,
-                  date: req.receivedAt,
-                  type: 'received'
+                   requestNumber: req.requestNumber,
+                   quantity: item.assignedQuantity,
+                   date: req.receivedAt,
+                   type: 'received'
                 })
               }
             }
           }
-          
-          // Subtract quantities from received return requests
-          for (const req of receivedReturnRequests) {
-            for (const item of req.items || []) {
-              const returnedQty = item.assignedQuantity || 0
-              if (returnedQty > 0) {
-                const matId = item.materialId?._id || item.materialId || item.materialName
-                const key = String(matId)
-                
-                if (materialSummary[key]) {
-                  materialSummary[key].totalQuantity -= returnedQty
-                  materialSummary[key].returnedQuantity += returnedQty
-                  materialSummary[key].sourceRequests.push({
-                    requestNumber: req.requestNumber,
-                    quantity: -returnedQty,
-                    date: req.receivedAt,
-                    type: 'returned'
-                  })
+
+          // Subtract Outgoing
+          for (const req of outgoing) {
+             for (const item of req.items || []) {
+                const returnedQty = item.assignedQuantity || 0
+                if (returnedQty > 0) {
+                    const matId = item.materialId?._id || item.materialId || item.materialName
+                    const key = String(matId)
+                    if (materialSummary[key]) {
+                        materialSummary[key].totalQuantity -= returnedQty
+                        materialSummary[key].returnedQuantity += returnedQty
+                        materialSummary[key].sourceRequests.push({
+                            requestNumber: req.requestNumber,
+                            quantity: -returnedQty,
+                            date: req.receivedAt,
+                            type: 'returned'
+                        })
+                    }
                 }
-              }
-            }
+             }
           }
           
           // Filter out materials with 0 or negative quantities
@@ -4500,6 +4599,96 @@ function ProjectDetail() {
                 >
                   <ButtonLoader loading={isSubmitting}>{isSubmitting ? 'Submitting...' : (materialRequestModal.requestType === 'return' ? 'Submit Return Request' : 'Submit Request')}</ButtonLoader>
                 </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+      
+      {/* Remaining Material Return Modal */}
+      {returnModal.open && (
+        <div className="modal-overlay" onClick={() => setReturnModal({ open: false, items: [], notes: '' })}>
+          <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: '800px', maxHeight: '90vh', overflowY: 'auto' }}>
+            <div className="modal-header">
+              <h2>📦 Remaining Material Return</h2>
+              <button onClick={() => setReturnModal({ open: false, items: [], notes: '' })} className="close-btn">×</button>
+            </div>
+            <div className="lead-form">
+              <p style={{ color: 'var(--text-muted)', marginBottom: '16px', fontSize: '14px' }}>
+                Select materials to return to inventory. Only materials currently assigned to this project are shown.
+              </p>
+              
+              <div style={{ overflowX: 'auto', marginBottom: '16px' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <thead>
+                    <tr style={{ background: 'var(--bg)', borderBottom: '1px solid var(--border)' }}>
+                      <th style={{ padding: '10px', textAlign: 'left', fontSize: '12px', color: 'var(--text-muted)' }}>Material</th>
+                      <th style={{ padding: '10px', textAlign: 'center', fontSize: '12px', color: 'var(--text-muted)' }}>In Project</th>
+                      <th style={{ padding: '10px', textAlign: 'center', fontSize: '12px', color: 'var(--text-muted)' }}>Return Qty</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {returnModal.items.length === 0 ? (
+                      <tr>
+                        <td colSpan="3" style={{ padding: '20px', textAlign: 'center', color: 'var(--text-muted)' }}>
+                          No materials found in project stock.
+                        </td>
+                      </tr>
+                    ) : (
+                      returnModal.items.map((item, index) => (
+                        <tr key={index} style={{ borderBottom: '1px solid var(--border)' }}>
+                          <td style={{ padding: '10px' }}>
+                            <div style={{ fontWeight: '500', color: 'var(--text)' }}>{item.materialName}</div>
+                            <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{item.sku} • {item.uom}</div>
+                          </td>
+                          <td style={{ padding: '10px', textAlign: 'center' }}>
+                            <span style={{ fontWeight: '600', color: 'var(--primary)' }}>{item.inProjectQty}</span>
+                          </td>
+                          <td style={{ padding: '10px', textAlign: 'center' }}>
+                            <input
+                              type="number"
+                              min="0"
+                              max={item.inProjectQty}
+                              value={item.returnQty}
+                              onChange={e => {
+                                const newItems = [...returnModal.items]
+                                let val = parseInt(e.target.value) || 0
+                                if (val < 0) val = 0
+                                if (val > item.inProjectQty) val = item.inProjectQty
+                                newItems[index].returnQty = val
+                                setReturnModal({ ...returnModal, items: newItems })
+                              }}
+                              style={{ 
+                                width: '80px', 
+                                textAlign: 'center', 
+                                padding: '6px',
+                                border: '1px solid var(--border)',
+                                borderRadius: '4px',
+                                background: 'var(--input)',
+                                color: 'var(--text)'
+                              }}
+                            />
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="form-group">
+                <label>Notes</label>
+                <textarea
+                  value={returnModal.notes}
+                  onChange={e => setReturnModal({ ...returnModal, notes: e.target.value })}
+                  placeholder="Reason for return..."
+                  rows="3"
+                />
+              </div>
+
+              <div className="form-actions">
+                <button className="cancel-btn" onClick={() => setReturnModal({ open: false, items: [], notes: '' })}>Cancel</button>
+                <button className="save-btn" onClick={handleSubmitReturn}>Submit Return</button>
               </div>
             </div>
           </div>
