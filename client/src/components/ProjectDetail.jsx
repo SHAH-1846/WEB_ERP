@@ -1927,6 +1927,169 @@ function ProjectDetail() {
           </div>
         )}
 
+        {/* Project Materials Summary - Only show if there are received material requests */}
+        {(() => {
+          const receivedRequests = (materialRequests || []).filter(mr => mr.status === 'received' && mr.requestType !== 'return')
+          const receivedReturnRequests = (materialRequests || []).filter(mr => mr.status === 'received' && mr.requestType === 'return')
+          
+          if (receivedRequests.length === 0 && receivedReturnRequests.length === 0) return null
+          
+          // Aggregate materials from all received requests (add quantities)
+          const materialSummary = {}
+          for (const req of receivedRequests) {
+            for (const item of req.items || []) {
+              if (item.assignedQuantity > 0) {
+                const matId = item.materialId?._id || item.materialId || item.materialName
+                const key = String(matId)
+                
+                if (!materialSummary[key]) {
+                  materialSummary[key] = {
+                    materialId: matId,
+                    materialName: item.materialName,
+                    sku: item.sku || '-',
+                    uom: item.uom,
+                    totalQuantity: 0,
+                    returnedQuantity: 0,
+                    sourceRequests: []
+                  }
+                }
+                materialSummary[key].totalQuantity += item.assignedQuantity
+                materialSummary[key].sourceRequests.push({
+                  requestNumber: req.requestNumber,
+                  quantity: item.assignedQuantity,
+                  date: req.receivedAt,
+                  type: 'received'
+                })
+              }
+            }
+          }
+          
+          // Subtract quantities from received return requests
+          for (const req of receivedReturnRequests) {
+            for (const item of req.items || []) {
+              const returnedQty = item.assignedQuantity || 0
+              if (returnedQty > 0) {
+                const matId = item.materialId?._id || item.materialId || item.materialName
+                const key = String(matId)
+                
+                if (materialSummary[key]) {
+                  materialSummary[key].totalQuantity -= returnedQty
+                  materialSummary[key].returnedQuantity += returnedQty
+                  materialSummary[key].sourceRequests.push({
+                    requestNumber: req.requestNumber,
+                    quantity: -returnedQty,
+                    date: req.receivedAt,
+                    type: 'returned'
+                  })
+                }
+              }
+            }
+          }
+          
+          // Filter out materials with 0 or negative quantities
+          const summaryList = Object.values(materialSummary)
+            .filter(m => m.totalQuantity > 0)
+            .sort((a, b) => b.totalQuantity - a.totalQuantity)
+          const totalMaterials = summaryList.length
+          const totalQuantity = summaryList.reduce((sum, m) => sum + m.totalQuantity, 0)
+          
+          return (
+            <div className="ld-card ld-section">
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                <h3 style={{ margin: 0 }}>📦 Project Materials Summary</h3>
+                <div style={{ display: 'flex', gap: '16px' }}>
+                  <span style={{ padding: '6px 12px', background: 'rgba(99,102,241,0.1)', borderRadius: '6px', color: '#6366f1', fontWeight: '600', fontSize: '13px' }}>
+                    {totalMaterials} Materials
+                  </span>
+                  <span style={{ padding: '6px 12px', background: 'rgba(16,185,129,0.1)', borderRadius: '6px', color: '#10b981', fontWeight: '600', fontSize: '13px' }}>
+                    {totalQuantity} Total Units
+                  </span>
+                </div>
+              </div>
+              
+              <div className="table">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Material</th>
+                      <th>SKU</th>
+                      <th style={{ textAlign: 'center' }}>Total Qty</th>
+                      <th>UOM</th>
+                      <th>Source Request(s)</th>
+                      <th>Last Received</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {summaryList.map((mat, index) => (
+                      <tr key={index}>
+                        <td>
+                          <span style={{ fontWeight: '600', color: 'var(--text)' }}>{mat.materialName}</span>
+                        </td>
+                        <td>
+                          <span style={{ color: 'var(--primary)', fontSize: '12px' }}>{mat.sku}</span>
+                        </td>
+                        <td style={{ textAlign: 'center' }}>
+                          <span style={{ 
+                            padding: '4px 10px', 
+                            background: 'rgba(16,185,129,0.15)', 
+                            borderRadius: '6px', 
+                            fontWeight: '700', 
+                            color: '#059669',
+                            fontSize: '14px'
+                          }}>
+                            {mat.totalQuantity}
+                          </span>
+                        </td>
+                        <td style={{ color: 'var(--text-muted)', fontSize: '12px' }}>{mat.uom}</td>
+                        <td>
+                          <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+                            {mat.sourceRequests.filter(sr => sr.type === 'received').map((sr, i) => (
+                              <span key={`r-${i}`} style={{ 
+                                padding: '2px 6px', 
+                                background: 'rgba(16,185,129,0.1)', 
+                                borderRadius: '4px', 
+                                fontSize: '11px', 
+                                color: '#059669',
+                                cursor: 'pointer'
+                              }} title={`Received: ${sr.quantity} units`}>
+                                {sr.requestNumber} (+{sr.quantity})
+                              </span>
+                            ))}
+                            {mat.sourceRequests.filter(sr => sr.type === 'returned').map((sr, i) => (
+                              <span key={`rt-${i}`} style={{ 
+                                padding: '2px 6px', 
+                                background: 'rgba(245,158,11,0.1)', 
+                                borderRadius: '4px', 
+                                fontSize: '11px', 
+                                color: '#f59e0b',
+                                cursor: 'pointer'
+                              }} title={`Returned: ${Math.abs(sr.quantity)} units`}>
+                                ↩ {sr.requestNumber} ({sr.quantity})
+                              </span>
+                            ))}
+                          </div>
+                        </td>
+                        <td style={{ color: 'var(--text-muted)', fontSize: '12px' }}>
+                          {mat.sourceRequests.length > 0 && mat.sourceRequests[mat.sourceRequests.length - 1].date
+                            ? new Date(mat.sourceRequests[mat.sourceRequests.length - 1].date).toLocaleDateString()
+                            : '-'}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot>
+                    <tr style={{ background: 'var(--bg)' }}>
+                      <td colSpan={2} style={{ fontWeight: '600', color: 'var(--text)' }}>Total</td>
+                      <td style={{ textAlign: 'center', fontWeight: '700', color: 'var(--text)', fontSize: '15px' }}>{totalQuantity}</td>
+                      <td colSpan={3}></td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            </div>
+          )
+        })()}
+
         {Array.isArray(project.edits) && project.edits.length > 0 && (
           <div className="ld-card ld-section">
             <div className="edit-header">

@@ -316,14 +316,24 @@ router.patch('/:id/review', auth, async (req, res) => {
 router.patch('/:id/fulfill', auth, async (req, res) => {
   try {
     const roles = req.user.roles || [];
-    
-    if (!roles.some(r => ['admin', 'manager', 'inventory_manager', 'store_keeper'].includes(r))) {
-      return res.status(403).json({ message: 'Only inventory staff can mark requests as fulfilled.' });
-    }
 
     const request = await MaterialRequest.findById(req.params.id);
     if (!request) {
       return res.status(404).json({ message: 'Material request not found' });
+    }
+
+    // Role-based validation based on request type
+    // For return requests: Project Engineer fulfills (specifies materials to return)
+    // For regular requests: Inventory Manager fulfills (assigns materials from stock)
+    const isReturnRequest = request.requestType === 'return';
+    const canFulfillRegular = roles.some(r => ['admin', 'manager', 'inventory_manager', 'store_keeper'].includes(r));
+    const canFulfillReturn = roles.some(r => ['admin', 'manager', 'project_engineer'].includes(r));
+
+    if (isReturnRequest && !canFulfillReturn) {
+      return res.status(403).json({ message: 'Only Project Engineers can fulfill return requests.' });
+    }
+    if (!isReturnRequest && !canFulfillRegular) {
+      return res.status(403).json({ message: 'Only inventory staff can mark requests as fulfilled.' });
     }
 
     if (!['approved', 'partially_approved'].includes(request.status)) {
@@ -484,10 +494,26 @@ router.patch('/:id/receive', auth, async (req, res) => {
           // Find the matching item in the request to get materialId
           const requestItem = request.items.find(item => item.materialName === receivedItem.materialName);
           if (requestItem && requestItem.materialId) {
-            await Material.findByIdAndUpdate(
-              requestItem.materialId,
-              { $inc: { currentStock: receivedItem.receivedQuantity } }
-            );
+            const material = await Material.findById(requestItem.materialId);
+            if (material) {
+              const oldQuantity = material.quantity;
+              const newQuantity = oldQuantity + receivedItem.receivedQuantity;
+              
+              // Update quantity
+              material.quantity = newQuantity;
+              
+              // Add edit history
+              material.edits.push({
+                editedBy: req.user.userId,
+                changes: [{
+                  field: 'quantity',
+                  from: oldQuantity,
+                  to: newQuantity
+                }]
+              });
+              
+              await material.save();
+            }
           }
         }
       }

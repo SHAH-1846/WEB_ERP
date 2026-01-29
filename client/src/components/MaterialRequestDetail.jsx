@@ -37,8 +37,8 @@ function MaterialRequestDetail() {
   
   // Review: For regular requests, inventory manager reviews. For return requests, project engineers review.
   const canReview = isAdmin || isManager || (isReturnRequest ? isProjectEngineer : isInventoryManager)
-  // Only inventory manager can fulfill (not store_keeper from detail page)
-  const canFulfill = isInventoryManager || isAdmin || isManager
+  // Fulfill: For regular requests, inventory manager fulfills. For return requests, project engineers fulfill (specify materials to return).
+  const canFulfill = isAdmin || isManager || (isReturnRequest ? isProjectEngineer : isInventoryManager)
   // Requester can mark as received for regular requests. Inventory manager can mark as received for return requests.
   const isRequester = request?.requestedBy?._id === currentUser?.id || request?.requestedBy === currentUser?.id
   const canReceive = isAdmin || isManager || (isReturnRequest ? isInventoryManager : isRequester)
@@ -95,15 +95,59 @@ function MaterialRequestDetail() {
   // Open fulfill modal and fetch material quantities
   const openFulfillModal = async () => {
     const quantities = {}
-    for (const item of request.items || []) {
-      if (item.materialId) {
-        try {
-          const matId = typeof item.materialId === 'object' ? item.materialId._id : item.materialId
-          const res = await api.get(`/api/materials/${matId}`)
-          quantities[matId] = res.data?.quantity || 0
-        } catch {
-          const matId = typeof item.materialId === 'object' ? item.materialId._id : item.materialId
-          quantities[matId] = 0
+    const isReturnReq = request?.requestType === 'return'
+    
+    if (isReturnReq && request.projectId) {
+      // For return requests: Get materials assigned to the project from received material requests
+      try {
+        const projectId = request.projectId._id || request.projectId
+        const mrRes = await api.get(`/api/material-requests?projectId=${projectId}&status=received`)
+        const receivedRequests = (mrRes.data.requests || []).filter(r => r.requestType !== 'return')
+        
+        // Aggregate materials assigned to the project
+        const projectMaterials = {}
+        for (const req of receivedRequests) {
+          for (const item of req.items || []) {
+            if (item.assignedQuantity > 0) {
+              const matId = item.materialId?._id || item.materialId
+              const key = String(matId)
+              if (!projectMaterials[key]) {
+                projectMaterials[key] = 0
+              }
+              projectMaterials[key] += item.assignedQuantity
+            }
+          }
+        }
+        
+        // Set quantities based on what's assigned to the project
+        for (const item of request.items || []) {
+          if (item.materialId) {
+            const matId = typeof item.materialId === 'object' ? item.materialId._id : item.materialId
+            quantities[matId] = projectMaterials[String(matId)] || 0
+          }
+        }
+      } catch (err) {
+        console.error('Error fetching project materials for return:', err)
+        // Fallback to 0
+        for (const item of request.items || []) {
+          if (item.materialId) {
+            const matId = typeof item.materialId === 'object' ? item.materialId._id : item.materialId
+            quantities[matId] = 0
+          }
+        }
+      }
+    } else {
+      // For regular requests: Get available inventory stock
+      for (const item of request.items || []) {
+        if (item.materialId) {
+          try {
+            const matId = typeof item.materialId === 'object' ? item.materialId._id : item.materialId
+            const res = await api.get(`/api/materials/${matId}`)
+            quantities[matId] = res.data?.quantity || 0
+          } catch {
+            const matId = typeof item.materialId === 'object' ? item.materialId._id : item.materialId
+            quantities[matId] = 0
+          }
         }
       }
     }
@@ -304,8 +348,8 @@ function MaterialRequestDetail() {
           <button className="save-btn" onClick={() => setReviewModal({ open: true, status: '', notes: '' })}>Review Request</button>
         )}
         {canFulfill && ['approved', 'partially_approved'].includes(request.status) && (
-          <button className="save-btn" style={{ background: '#6366f1' }} onClick={openFulfillModal} disabled={saving}>
-            Fulfill & Assign Materials
+          <button className="save-btn" style={{ background: isReturnRequest ? '#f59e0b' : '#6366f1' }} onClick={openFulfillModal} disabled={saving}>
+            {isReturnRequest ? '🔄 Fulfill Return' : 'Fulfill & Assign Materials'}
           </button>
         )}
         {canReceive && request.status === 'fulfilled' && (
@@ -700,19 +744,21 @@ function MaterialRequestDetail() {
         <div className="modal-overlay" onClick={() => setFulfillModal({ open: false, assignedItems: [], notes: '', materialQuantities: {} })}>
           <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: '700px', maxHeight: '90vh', overflowY: 'auto' }}>
             <div className="modal-header">
-              <h2>Fulfill Request {request.requestNumber}</h2>
+              <h2>{isReturnRequest ? '🔄 Return Materials' : 'Fulfill Request'} {request.requestNumber}</h2>
               <button onClick={() => setFulfillModal({ open: false, assignedItems: [], notes: '', materialQuantities: {} })} className="close-btn">×</button>
             </div>
             <div className="lead-form">
-              <h4 style={{ margin: '0 0 16px', color: 'var(--text)' }}>📦 Assign Materials</h4>
+              <h4 style={{ margin: '0 0 16px', color: 'var(--text)' }}>
+                {isReturnRequest ? '🔄 Return Materials to Inventory' : '📦 Assign Materials'}
+              </h4>
               <div style={{ overflowX: 'auto' }}>
                 <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '16px' }}>
                   <thead>
                     <tr style={{ borderBottom: '1px solid var(--border)', background: 'var(--bg)' }}>
                       <th style={{ padding: '10px', textAlign: 'left', fontSize: '12px', color: 'var(--text-muted)' }}>Material</th>
-                      <th style={{ padding: '10px', textAlign: 'center', fontSize: '12px', color: 'var(--text-muted)' }}>Available</th>
-                      <th style={{ padding: '10px', textAlign: 'center', fontSize: '12px', color: 'var(--text-muted)' }}>Requested</th>
-                      <th style={{ padding: '10px', textAlign: 'center', fontSize: '12px', color: 'var(--text-muted)' }}>Assign</th>
+                      <th style={{ padding: '10px', textAlign: 'center', fontSize: '12px', color: 'var(--text-muted)' }}>{isReturnRequest ? 'In Project' : 'In Stock'}</th>
+                      <th style={{ padding: '10px', textAlign: 'center', fontSize: '12px', color: 'var(--text-muted)' }}>{isReturnRequest ? 'To Return' : 'Requested'}</th>
+                      <th style={{ padding: '10px', textAlign: 'center', fontSize: '12px', color: 'var(--text-muted)' }}>{isReturnRequest ? 'Return Qty' : 'Assign Qty'}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -755,7 +801,9 @@ function MaterialRequestDetail() {
                               }}
                             />
                             {isInsufficient && (
-                              <div style={{ fontSize: '10px', color: '#ef4444', marginTop: '2px' }}>Exceeds stock!</div>
+                              <div style={{ fontSize: '10px', color: '#ef4444', marginTop: '2px' }}>
+                                {isReturnRequest ? 'Exceeds project stock!' : 'Exceeds inventory!'}
+                              </div>
                             )}
                           </td>
                         </tr>
@@ -781,9 +829,11 @@ function MaterialRequestDetail() {
                   className="save-btn" 
                   onClick={handleFulfill} 
                   disabled={saving || fulfillModal.assignedItems.some(item => item.assignedQuantity > (fulfillModal.materialQuantities[item.materialId] || 0))}
-                  style={{ background: '#6366f1' }}
+                  style={{ background: isReturnRequest ? '#f59e0b' : '#6366f1' }}
                 >
-                  <ButtonLoader loading={saving}>{saving ? 'Processing...' : 'Confirm & Update Inventory'}</ButtonLoader>
+                  <ButtonLoader loading={saving}>
+                    {saving ? 'Processing...' : (isReturnRequest ? 'Confirm Return' : 'Confirm & Update Inventory')}
+                  </ButtonLoader>
                 </button>
               </div>
             </div>

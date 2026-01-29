@@ -28,13 +28,19 @@ function MaterialDetail() {
       // Fetch material requests that used this material (fulfilled or received)
       // Fetch all and filter client-side to include both statuses
       const mrRes = await api.get('/api/material-requests')
-      const requests = (mrRes.data.requests || []).filter(r => 
+      const allRequests = (mrRes.data.requests || []).filter(r => 
         ['fulfilled', 'received'].includes(r.status)
       )
       
+      // Separate regular requests and return requests
+      const regularRequests = allRequests.filter(r => r.requestType !== 'return')
+      const returnRequests = allRequests.filter(r => r.requestType === 'return' && r.status === 'received')
+      
       // Group by project and sum assigned quantities
       const usageMap = {}
-      for (const req of requests) {
+      
+      // Add quantities from regular requests
+      for (const req of regularRequests) {
         for (const item of req.items || []) {
           // Handle both populated and non-populated materialId
           const itemMatId = item.materialId?._id || item.materialId
@@ -49,7 +55,8 @@ function MaterialDetail() {
               usageMap[projectId] = { 
                 projectId, 
                 projectName, 
-                totalAssigned: 0, 
+                totalAssigned: 0,
+                totalReturned: 0,
                 requests: [] 
               }
             }
@@ -57,13 +64,52 @@ function MaterialDetail() {
             usageMap[projectId].requests.push({
               requestNumber: req.requestNumber,
               quantity: item.assignedQuantity,
-              date: req.fulfilledAt || req.receivedAt
+              date: req.fulfilledAt || req.receivedAt,
+              type: 'assigned'
             })
           }
         }
       }
       
-      setProjectUsage(Object.values(usageMap).sort((a, b) => b.totalAssigned - a.totalAssigned))
+      // Subtract quantities from received return requests
+      for (const req of returnRequests) {
+        for (const item of req.items || []) {
+          const itemMatId = item.materialId?._id || item.materialId
+          const compareId = String(itemMatId)
+          const targetId = String(materialId)
+          
+          const returnedQty = item.assignedQuantity || 0
+          if (compareId === targetId && returnedQty > 0) {
+            const projectId = req.projectId?._id || 'unknown'
+            const projectName = req.projectId?.name || 'Unknown Project'
+            
+            if (!usageMap[projectId]) {
+              usageMap[projectId] = { 
+                projectId, 
+                projectName, 
+                totalAssigned: 0,
+                totalReturned: 0,
+                requests: [] 
+              }
+            }
+            usageMap[projectId].totalAssigned -= returnedQty
+            usageMap[projectId].totalReturned += returnedQty
+            usageMap[projectId].requests.push({
+              requestNumber: req.requestNumber,
+              quantity: -returnedQty,
+              date: req.receivedAt,
+              type: 'returned'
+            })
+          }
+        }
+      }
+      
+      // Filter out projects with 0 or negative net usage
+      const filteredUsage = Object.values(usageMap)
+        .filter(p => p.totalAssigned > 0)
+        .sort((a, b) => b.totalAssigned - a.totalAssigned)
+      
+      setProjectUsage(filteredUsage)
     } catch (error) {
       console.error('Error fetching material data:', error)
       setNotify({ open: true, title: 'Error', message: 'Failed to load material details.' })
@@ -226,16 +272,30 @@ function MaterialDetail() {
               <thead>
                 <tr style={{ borderBottom: '1px solid var(--border)' }}>
                   <th style={{ padding: '12px', textAlign: 'left', color: 'var(--text-muted)', fontSize: '12px', fontWeight: '600' }}>Project</th>
-                  <th style={{ padding: '12px', textAlign: 'right', color: 'var(--text-muted)', fontSize: '12px', fontWeight: '600' }}>Total Assigned</th>
-                  <th style={{ padding: '12px', textAlign: 'center', color: 'var(--text-muted)', fontSize: '12px', fontWeight: '600' }}>Requests</th>
-                  <th style={{ padding: '12px', textAlign: 'left', color: 'var(--text-muted)', fontSize: '12px', fontWeight: '600' }}>Last Fulfilled</th>
+                  <th style={{ padding: '12px', textAlign: 'right', color: 'var(--text-muted)', fontSize: '12px', fontWeight: '600' }}>Net Usage</th>
+                  <th style={{ padding: '12px', textAlign: 'right', color: 'var(--text-muted)', fontSize: '12px', fontWeight: '600' }}>Returned</th>
+                  <th style={{ padding: '12px', textAlign: 'center', color: 'var(--text-muted)', fontSize: '12px', fontWeight: '600' }}>Transactions</th>
+                  <th style={{ padding: '12px', textAlign: 'left', color: 'var(--text-muted)', fontSize: '12px', fontWeight: '600' }}>Last Activity</th>
                 </tr>
               </thead>
               <tbody>
                 {projectUsage.map((usage, index) => (
                   <tr key={index} style={{ borderBottom: '1px solid var(--border)' }}>
                     <td style={{ padding: '12px' }}>
-                      <span style={{ color: 'var(--text)', fontWeight: '500' }}>{usage.projectName}</span>
+                      <span 
+                        style={{ 
+                          color: 'var(--primary)', 
+                          fontWeight: '500', 
+                          cursor: 'pointer',
+                          textDecoration: 'none'
+                        }}
+                        onClick={() => navigate(`/project-detail?id=${usage.projectId}`)}
+                        onMouseEnter={(e) => e.target.style.textDecoration = 'underline'}
+                        onMouseLeave={(e) => e.target.style.textDecoration = 'none'}
+                        title="View Project Details"
+                      >
+                        {usage.projectName}
+                      </span>
                     </td>
                     <td style={{ padding: '12px', textAlign: 'right' }}>
                       <span style={{ fontWeight: '700', color: '#6366f1', fontSize: '16px' }}>
@@ -245,10 +305,28 @@ function MaterialDetail() {
                         {material.uom}
                       </span>
                     </td>
+                    <td style={{ padding: '12px', textAlign: 'right' }}>
+                      {usage.totalReturned > 0 ? (
+                        <span style={{ fontWeight: '600', color: '#f59e0b', fontSize: '14px' }}>
+                          ↩ {usage.totalReturned}
+                        </span>
+                      ) : (
+                        <span style={{ color: 'var(--text-muted)', fontSize: '12px' }}>-</span>
+                      )}
+                    </td>
                     <td style={{ padding: '12px', textAlign: 'center' }}>
-                      <span style={{ padding: '4px 8px', background: 'var(--bg)', borderRadius: '4px', fontSize: '12px', color: 'var(--text)' }}>
-                        {usage.requests.length} request{usage.requests.length !== 1 ? 's' : ''}
-                      </span>
+                      <div style={{ display: 'flex', gap: '4px', justifyContent: 'center', flexWrap: 'wrap' }}>
+                        {usage.requests.filter(r => r.type === 'assigned').length > 0 && (
+                          <span style={{ padding: '4px 8px', background: 'rgba(16,185,129,0.1)', borderRadius: '4px', fontSize: '11px', color: '#059669' }}>
+                            +{usage.requests.filter(r => r.type === 'assigned').length}
+                          </span>
+                        )}
+                        {usage.requests.filter(r => r.type === 'returned').length > 0 && (
+                          <span style={{ padding: '4px 8px', background: 'rgba(245,158,11,0.1)', borderRadius: '4px', fontSize: '11px', color: '#f59e0b' }}>
+                            ↩{usage.requests.filter(r => r.type === 'returned').length}
+                          </span>
+                        )}
+                      </div>
                     </td>
                     <td style={{ padding: '12px', color: 'var(--text-muted)', fontSize: '13px' }}>
                       {usage.requests.length > 0 ? new Date(usage.requests[usage.requests.length - 1].date).toLocaleDateString() : '-'}
@@ -261,6 +339,11 @@ function MaterialDetail() {
                   <td style={{ padding: '12px', fontWeight: '600', color: 'var(--text)' }}>Total</td>
                   <td style={{ padding: '12px', textAlign: 'right', fontWeight: '700', color: 'var(--text)', fontSize: '16px' }}>
                     {totalUsed} {material.uom}
+                  </td>
+                  <td style={{ padding: '12px', textAlign: 'right', fontWeight: '600', color: '#f59e0b', fontSize: '14px' }}>
+                    {projectUsage.reduce((sum, p) => sum + (p.totalReturned || 0), 0) > 0 
+                      ? `↩ ${projectUsage.reduce((sum, p) => sum + (p.totalReturned || 0), 0)}` 
+                      : '-'}
                   </td>
                   <td colSpan={2}></td>
                 </tr>
