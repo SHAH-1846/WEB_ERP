@@ -71,9 +71,9 @@ router.post('/', auth, canManageUsers, async (req, res) => {
     let allowedRoles = [];
     
     if (userRoles.includes('admin')) {
-      allowedRoles = ['admin', 'manager', 'account_manager', 'hr', 'inventory_manager', 'store_keeper', 'supervisor', 'site_engineer', 'sales_engineer', 'project_engineer', 'estimation_engineer', 'vendor', 'employee'];
+      allowedRoles = ['admin', 'manager', 'account_manager', 'hr', 'inventory_manager', 'procurement_engineer', 'store_keeper', 'supervisor', 'site_engineer', 'sales_engineer', 'project_engineer', 'estimation_engineer', 'vendor', 'employee'];
     } else if (userRoles.includes('manager')) {
-      allowedRoles = ['account_manager', 'hr', 'inventory_manager', 'store_keeper', 'supervisor', 'site_engineer', 'sales_engineer', 'project_engineer', 'estimation_engineer', 'vendor', 'employee'];
+      allowedRoles = ['account_manager', 'hr', 'inventory_manager', 'procurement_engineer', 'store_keeper', 'supervisor', 'site_engineer', 'sales_engineer', 'project_engineer', 'estimation_engineer', 'vendor', 'employee'];
     } else if (userRoles.includes('hr')) {
       allowedRoles = ['account_manager', 'inventory_manager', 'store_keeper', 'supervisor', 'site_engineer', 'employee'];
     } else if (userRoles.includes('supervisor') || userRoles.includes('site_engineer')) {
@@ -131,9 +131,9 @@ router.put('/:id', auth, canManageUsers, async (req, res) => {
     let allowedRoles = [];
     
     if (userRoles.includes('admin')) {
-      allowedRoles = ['admin', 'manager', 'account_manager', 'hr', 'inventory_manager', 'store_keeper', 'supervisor', 'site_engineer', 'vendor', 'employee'];
+      allowedRoles = ['admin', 'manager', 'account_manager', 'hr', 'inventory_manager', 'procurement_engineer', 'store_keeper', 'supervisor', 'site_engineer', 'sales_engineer', 'project_engineer', 'estimation_engineer', 'vendor', 'employee'];
     } else if (userRoles.includes('manager')) {
-      allowedRoles = ['account_manager', 'hr', 'inventory_manager', 'store_keeper', 'supervisor', 'site_engineer', 'vendor', 'employee'];
+      allowedRoles = ['account_manager', 'hr', 'inventory_manager', 'procurement_engineer', 'store_keeper', 'supervisor', 'site_engineer', 'sales_engineer', 'project_engineer', 'estimation_engineer', 'vendor', 'employee'];
     } else if (userRoles.includes('hr')) {
       allowedRoles = ['account_manager', 'inventory_manager', 'store_keeper', 'supervisor', 'site_engineer', 'employee'];
     } else if (userRoles.includes('supervisor') || userRoles.includes('site_engineer')) {

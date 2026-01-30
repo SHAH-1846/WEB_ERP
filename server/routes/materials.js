@@ -26,9 +26,10 @@ const isStoreKeeper = (roles) => roles.includes('store_keeper');
 // Check if user has inventory access
 const hasInventoryAccess = (roles) => isInventoryManager(roles) || isStoreKeeper(roles);
 
-// Check if user can read materials (for material requests)
+// Check if user can read materials (for material requests and purchase orders)
 const canReadMaterials = (roles) => hasInventoryAccess(roles) || 
   roles.includes('project_engineer') || 
+  roles.includes('procurement_engineer') ||
   roles.includes('manager') || 
   roles.includes('admin');
 

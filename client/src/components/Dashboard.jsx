@@ -13,6 +13,7 @@ import EstimationsDashboard from './EstimationsDashboard'
 import InventoryManagement from './InventoryManagement'
 import Settings from './Settings'
 import MaterialRequestManagement from './MaterialRequestManagement'
+import PurchaseOrderManagement from './PurchaseOrderManagement'
 import { initTheme, setTheme } from '../utils/theme'
 import { api } from '../lib/api'
 
@@ -61,7 +62,7 @@ function Dashboard() {
     if (isModalRoute && backgroundLocation) {
       const pathSegments = backgroundLocation.pathname.split('/').filter(Boolean)
       const basePath = pathSegments[0] || 'dashboard'
-      if (['dashboard','users','estimations-dashboard','leads','projects','quotations','revisions','project-variations','audit-logs','inventory','settings','material-requests'].includes(basePath)) {
+      if (['dashboard','users','estimations-dashboard','leads','projects','quotations','revisions','project-variations','audit-logs','inventory','settings','material-requests','purchase-orders'].includes(basePath)) {
         setActiveTab(basePath)
       }
     } else if (isModalRoute && !backgroundLocation) {
@@ -72,7 +73,7 @@ function Dashboard() {
       } else {
         const pathSegments = location.pathname.split('/').filter(Boolean)
         const basePath = pathSegments[0] || 'dashboard'
-        if (['dashboard','users','estimations-dashboard','leads','projects','quotations','revisions','project-variations','audit-logs','settings','material-requests'].includes(basePath)) {
+        if (['dashboard','users','estimations-dashboard','leads','projects','quotations','revisions','project-variations','audit-logs','settings','material-requests','purchase-orders'].includes(basePath)) {
           setActiveTab(basePath)
         }
       }
@@ -80,7 +81,7 @@ function Dashboard() {
       // Normal navigation - use current pathname
       const pathSegments = location.pathname.split('/').filter(Boolean)
       const basePath = pathSegments[0] || 'dashboard'
-      if (['dashboard','users','estimations-dashboard','leads','projects','quotations','revisions','project-variations','audit-logs','inventory','settings','material-requests'].includes(basePath)) {
+      if (['dashboard','users','estimations-dashboard','leads','projects','quotations','revisions','project-variations','audit-logs','inventory','settings','material-requests','purchase-orders'].includes(basePath)) {
         setActiveTab(basePath)
       }
     }
@@ -302,6 +303,15 @@ function Dashboard() {
               <span className="label">Material Requests</span>
             </NavLink>
           )}
+          {/* Purchase Orders - for inventory_manager and procurement_engineer */}
+          {(user?.roles?.includes('inventory_manager') || user?.roles?.includes('procurement_engineer') || user?.roles?.includes('admin') || user?.roles?.includes('manager')) && (
+            <NavLink to="/purchase-orders" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
+              <svg viewBox="0 0 24 24" fill="currentColor">
+                <path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-3 10H8v-2h8v2zm0-4H8V7h8v2z"/>
+              </svg>
+              <span className="label">Purchase Orders</span>
+            </NavLink>
+          )}
         </nav>
         
         <div className="sidebar-footer">
@@ -352,6 +362,7 @@ function Dashboard() {
               {activeTab === 'inventory' && 'Inventory Management'}
               {activeTab === 'settings' && 'Settings'}
               {activeTab === 'material-requests' && 'Material Requests'}
+              {activeTab === 'purchase-orders' && 'Purchase Orders'}
             </h1>
               <p>Welcome back, {user?.name}!</p>
             </div>
@@ -485,6 +496,7 @@ function Dashboard() {
           {activeTab === 'inventory' && <InventoryManagement />}
           {activeTab === 'settings' && <Settings />}
           {activeTab === 'material-requests' && <MaterialRequestManagement />}
+          {activeTab === 'purchase-orders' && <PurchaseOrderManagement />}
         </div>
       </div>
       

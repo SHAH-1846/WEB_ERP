@@ -18,6 +18,7 @@ import ProjectFormPage from './components/ProjectFormPage'
 import VariationFormPage from './components/VariationFormPage'
 import MaterialRequestDetail from './components/MaterialRequestDetail'
 import MaterialDetail from './components/MaterialDetail'
+import PurchaseOrderDetail from './components/PurchaseOrderDetail'
 import { initTheme, setTheme } from './utils/theme'
 
 function Login() {
@@ -253,6 +254,11 @@ function App() {
             <Dashboard />
           </ProtectedRoute>
         } />
+        <Route path="/purchase-orders" element={
+          <ProtectedRoute>
+            <Dashboard />
+          </ProtectedRoute>
+        } />
         <Route path="/material-request-detail" element={
           <ProtectedRoute>
             <MaterialRequestDetail />
@@ -261,6 +267,11 @@ function App() {
         <Route path="/material-detail" element={
           <ProtectedRoute>
             <MaterialDetail />
+          </ProtectedRoute>
+        } />
+        <Route path="/purchase-order-detail" element={
+          <ProtectedRoute>
+            <PurchaseOrderDetail />
           </ProtectedRoute>
         } />
         <Route path="/lead-detail" element={

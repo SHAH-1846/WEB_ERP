@@ -9,6 +9,7 @@ const STATIC_FALLBACK_ROLES = [
   { key: 'account_manager', name: 'Account Manager' },
   { key: 'hr', name: 'HR' },
   { key: 'inventory_manager', name: 'Inventory Manager' },
+  { key: 'procurement_engineer', name: 'Procurement Engineer' },
   { key: 'store_keeper', name: 'Store Keeper' },
   { key: 'supervisor', name: 'Supervisor' },
   { key: 'site_engineer', name: 'Site Engineer' },
@@ -17,8 +18,8 @@ const STATIC_FALLBACK_ROLES = [
 ]
 
 const ROLE_PERMISSIONS = {
-  admin: ['admin', 'manager', 'account_manager', 'hr', 'inventory_manager', 'store_keeper', 'supervisor', 'site_engineer', 'sales_engineer', 'project_engineer', 'estimation_engineer', 'vendor', 'employee'],
-  manager: ['account_manager', 'hr', 'inventory_manager', 'store_keeper', 'supervisor', 'site_engineer', 'sales_engineer', 'project_engineer', 'estimation_engineer', 'vendor', 'employee'],
+  admin: ['admin', 'manager', 'account_manager', 'hr', 'inventory_manager', 'procurement_engineer', 'store_keeper', 'supervisor', 'site_engineer', 'sales_engineer', 'project_engineer', 'estimation_engineer', 'vendor', 'employee'],
+  manager: ['account_manager', 'hr', 'inventory_manager', 'procurement_engineer', 'store_keeper', 'supervisor', 'site_engineer', 'sales_engineer', 'project_engineer', 'estimation_engineer', 'vendor', 'employee'],
   hr: ['account_manager', 'inventory_manager', 'store_keeper', 'supervisor', 'site_engineer', 'employee'],
   supervisor: ['vendor'],
   site_engineer: ['vendor'],

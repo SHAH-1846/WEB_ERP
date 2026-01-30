@@ -18,6 +18,7 @@ async function seedRoles() {
       { key: 'sales_engineer', name: 'Sales Engineer' },
       { key: 'project_engineer', name: 'Project Engineer' },
       { key: 'estimation_engineer', name: 'Estimation Engineer' },
+      { key: 'procurement_engineer', name: 'Procurement Engineer' },
       { key: 'vendor', name: 'Vendor' },
       { key: 'employee', name: 'Employee' }
     ];

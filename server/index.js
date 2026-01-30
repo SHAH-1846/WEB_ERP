@@ -19,6 +19,7 @@ const storeRoutes = require('./routes/stores');
 const materialRoutes = require('./routes/materials');
 const systemSettingsRoutes = require('./routes/systemSettings');
 const materialRequestRoutes = require('./routes/materialRequests');
+const purchaseOrderRoutes = require('./routes/purchaseOrders');
 
 const app = express();
 const path = require('path');
@@ -51,6 +52,7 @@ app.use('/api/stores', storeRoutes);
 app.use('/api/materials', materialRoutes);
 app.use('/api/system-settings', systemSettingsRoutes);
 app.use('/api/material-requests', materialRequestRoutes);
+app.use('/api/purchase-orders', purchaseOrderRoutes);
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {

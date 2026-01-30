@@ -10,6 +10,7 @@ function MaterialDetail() {
   
   const [material, setMaterial] = useState(null)
   const [projectUsage, setProjectUsage] = useState([])
+  const [purchaseOrders, setPurchaseOrders] = useState([])
   const [loading, setLoading] = useState(true)
   const [notify, setNotify] = useState({ open: false, title: '', message: '' })
 
@@ -111,6 +112,36 @@ function MaterialDetail() {
         .sort((a, b) => b.totalAssigned - a.totalAssigned)
       
       setProjectUsage(filteredUsage)
+      
+      // Fetch purchase orders that include this material
+      try {
+        const poRes = await api.get('/api/purchase-orders')
+        const allOrders = poRes.data.orders || []
+        const materialPOs = allOrders.filter(order => 
+          order.items?.some(item => 
+            String(item.materialId?._id || item.materialId) === String(materialId)
+          )
+        ).map(order => {
+          const materialItem = order.items.find(item => 
+            String(item.materialId?._id || item.materialId) === String(materialId)
+          )
+          const receivedItem = order.receivedItems?.find(item => 
+            String(item.materialId) === String(materialId)
+          )
+          return {
+            orderNumber: order.orderNumber,
+            grnNumber: order.grnNumber,
+            supplier: order.supplier?.name || '-',
+            requestedQty: materialItem?.quantity || 0,
+            receivedQty: receivedItem?.receivedQty || 0,
+            status: order.status,
+            date: order.createdAt
+          }
+        })
+        setPurchaseOrders(materialPOs)
+      } catch (err) {
+        console.error('Error fetching purchase orders:', err)
+      }
     } catch (error) {
       console.error('Error fetching material data:', error)
       setNotify({ open: true, title: 'Error', message: 'Failed to load material details.' })
@@ -353,6 +384,84 @@ function MaterialDetail() {
           </div>
         )}
       </div>
+
+      {/* Purchase Orders */}
+      {purchaseOrders.length > 0 && (
+        <div style={{ background: 'var(--card)', borderRadius: '12px', padding: '20px', border: '1px solid var(--border)', marginTop: '24px' }}>
+          <h3 style={{ margin: '0 0 16px', color: 'var(--text)', fontSize: '16px' }}>📦 Purchase Orders</h3>
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead>
+                <tr style={{ borderBottom: '2px solid var(--border)' }}>
+                  <th style={{ padding: '12px', textAlign: 'left', color: 'var(--text-muted)', fontWeight: '600', fontSize: '12px', textTransform: 'uppercase' }}>Order #</th>
+                  <th style={{ padding: '12px', textAlign: 'left', color: 'var(--text-muted)', fontWeight: '600', fontSize: '12px', textTransform: 'uppercase' }}>Supplier</th>
+                  <th style={{ padding: '12px', textAlign: 'right', color: 'var(--text-muted)', fontWeight: '600', fontSize: '12px', textTransform: 'uppercase' }}>Ordered</th>
+                  <th style={{ padding: '12px', textAlign: 'right', color: 'var(--text-muted)', fontWeight: '600', fontSize: '12px', textTransform: 'uppercase' }}>Received</th>
+                  <th style={{ padding: '12px', textAlign: 'center', color: 'var(--text-muted)', fontWeight: '600', fontSize: '12px', textTransform: 'uppercase' }}>Status</th>
+                  <th style={{ padding: '12px', textAlign: 'left', color: 'var(--text-muted)', fontWeight: '600', fontSize: '12px', textTransform: 'uppercase' }}>Date</th>
+                </tr>
+              </thead>
+              <tbody>
+                {purchaseOrders.map((po, index) => (
+                  <tr key={index} style={{ borderBottom: '1px solid var(--border)' }}>
+                    <td style={{ padding: '12px' }}>
+                      <span style={{ color: 'var(--primary)', fontWeight: '600' }}>{po.orderNumber}</span>
+                      {po.grnNumber && (
+                        <span style={{ display: 'block', fontSize: '11px', color: 'var(--text-muted)' }}>{po.grnNumber}</span>
+                      )}
+                    </td>
+                    <td style={{ padding: '12px', color: 'var(--text)' }}>{po.supplier}</td>
+                    <td style={{ padding: '12px', textAlign: 'right', fontWeight: '600', color: 'var(--text)' }}>
+                      {po.requestedQty} {material.uom}
+                    </td>
+                    <td style={{ padding: '12px', textAlign: 'right' }}>
+                      {po.status === 'received' ? (
+                        <span style={{ fontWeight: '600', color: '#22c55e' }}>{po.receivedQty} {material.uom}</span>
+                      ) : (
+                        <span style={{ color: 'var(--text-muted)' }}>-</span>
+                      )}
+                    </td>
+                    <td style={{ padding: '12px', textAlign: 'center' }}>
+                      <span style={{
+                        padding: '4px 10px',
+                        borderRadius: '4px',
+                        fontSize: '11px',
+                        fontWeight: '600',
+                        textTransform: 'uppercase',
+                        background: po.status === 'received' ? 'rgba(34,197,94,0.1)' : 
+                                    po.status === 'fulfilled' ? 'rgba(99,102,241,0.1)' :
+                                    po.status === 'approved' ? 'rgba(16,185,129,0.1)' :
+                                    po.status === 'pending' ? 'rgba(251,191,36,0.1)' : 'rgba(107,114,128,0.1)',
+                        color: po.status === 'received' ? '#22c55e' : 
+                               po.status === 'fulfilled' ? '#6366f1' :
+                               po.status === 'approved' ? '#10b981' :
+                               po.status === 'pending' ? '#f59e0b' : '#6b7280'
+                      }}>
+                        {po.status}
+                      </span>
+                    </td>
+                    <td style={{ padding: '12px', color: 'var(--text-muted)', fontSize: '13px' }}>
+                      {new Date(po.date).toLocaleDateString()}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr style={{ background: 'var(--bg)' }}>
+                  <td colSpan={2} style={{ padding: '12px', fontWeight: '600', color: 'var(--text)' }}>Total</td>
+                  <td style={{ padding: '12px', textAlign: 'right', fontWeight: '700', color: 'var(--text)', fontSize: '16px' }}>
+                    {purchaseOrders.reduce((sum, po) => sum + po.requestedQty, 0)} {material.uom}
+                  </td>
+                  <td style={{ padding: '12px', textAlign: 'right', fontWeight: '700', color: '#22c55e', fontSize: '16px' }}>
+                    {purchaseOrders.reduce((sum, po) => sum + po.receivedQty, 0)} {material.uom}
+                  </td>
+                  <td colSpan={2}></td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        </div>
+      )}
 
       {/* Edit History */}
       {material.edits && material.edits.length > 0 && (
